@@ -1,0 +1,76 @@
+{
+  "name": "@browserx/query-engine",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.ts",
+    "./core": "./core/mod.ts",
+    "./types": "./types/mod.ts",
+    "./lexer": "./lexer/mod.ts",
+    "./parser": "./parser/mod.ts",
+    "./analyzer": "./analyzer/mod.ts",
+    "./optimizer": "./optimizer/mod.ts",
+    "./planner": "./planner/mod.ts",
+    "./executor": "./executor/mod.ts",
+    "./controllers": "./controllers/mod.ts",
+    "./security": "./security/mod.ts",
+    "./metrics": "./metrics/mod.ts",
+    "./errors": "./errors/mod.ts",
+    "./formatter": "./formatter/mod.ts"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.0"
+  },
+  "tasks": {
+    "check": "deno check mod.ts",
+    "check:watch": "deno check --watch mod.ts",
+    "test": "deno test --allow-all",
+    "test:unit": "deno test --allow-all tests/unit/",
+    "test:integration": "deno test --allow-all tests/integration/",
+    "test:performance": "deno test --allow-all tests/performance/",
+    "test:coverage": "deno test --allow-all --coverage=coverage/",
+    "test:watch": "deno test --allow-all --watch",
+    "lint": "deno lint",
+    "lint:fix": "deno lint --fix",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "example": "deno run --allow-all example.ts",
+    "example:watch": "deno run --allow-all --watch example.ts",
+    "dev": "deno run --allow-all --watch mod.ts",
+    "bench": "deno bench --allow-all",
+    "doc": "deno doc --html --name=\"Query Engine\" mod.ts",
+    "cache": "deno cache --reload mod.ts"
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": ["no-explicit-any"]
+    },
+    "exclude": [
+      "tests/fixtures/",
+      "coverage/",
+      "docs/"
+    ]
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve",
+    "exclude": [
+      "tests/fixtures/",
+      "coverage/",
+      "docs/"
+    ]
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true
+  }
+}

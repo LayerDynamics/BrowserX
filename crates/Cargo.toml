@@ -1,0 +1,6 @@
+[workspace]
+members = ["pixpane", "webgpu_x"]
+resolver = "2"
+
+# This workspace is a child of the parent geoprox workspace
+# It allows the crates directory to be built independently

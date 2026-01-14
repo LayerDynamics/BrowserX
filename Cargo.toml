@@ -1,0 +1,33 @@
+[workspace]
+members = ["crates/pixpane"]
+exclude = ["crates/target", "target"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["geoprox"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/geoprox/geoprox"
+
+[workspace.dependencies]
+# Windowing
+winit = "0.30"
+raw-window-handle = "0.6"
+
+# FFI
+deno_bindgen = "0.8.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Concurrency
+lazy_static = "1.5.0"
+parking_lot = "0.12"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

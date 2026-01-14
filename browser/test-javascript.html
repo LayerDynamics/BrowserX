@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>JavaScript Test - Phase 7</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        #heading {
+            color: #333;
+            font-size: 24px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1 id="heading">Phase 7: JavaScript Integration Test</h1>
+    <p>This page tests the following JavaScript features:</p>
+    <ul>
+        <li>Console logging</li>
+        <li>DOM manipulation</li>
+        <li>Event listeners</li>
+        <li>Timers (setTimeout)</li>
+    </ul>
+
+    <button id="btn">Click Me!</button>
+    <div id="output" class="result">
+        <p>Waiting for button click...</p>
+    </div>
+
+    <script>
+        console.log('='.repeat(60));
+        console.log('Phase 7 JavaScript Test - Script loaded!');
+        console.log('='.repeat(60));
+
+        // Test 1: DOM Query
+        const heading = document.getElementById('heading');
+        const button = document.getElementById('btn');
+        const output = document.getElementById('output');
+
+        console.log('Found elements:');
+        console.log('  - heading:', heading ? heading.nodeName : 'not found');
+        console.log('  - button:', button ? button.nodeName : 'not found');
+        console.log('  - output:', output ? output.nodeName : 'not found');
+
+        // Test 2: Event Listener
+        if (button) {
+            button.addEventListener('click', function(event) {
+                console.log('\n--- Button Click Event ---');
+                console.log('Event type:', event.type);
+                console.log('Event target:', event.target);
+
+                // Test 3: DOM Manipulation
+                if (heading) {
+                    heading.textContent = 'JavaScript is Working!';
+                    console.log('Updated heading text');
+                }
+
+                if (output) {
+                    output.innerHTML = '<p><strong>Success!</strong></p><p>Button was clicked and JavaScript modified the DOM!</p>';
+                    console.log('Updated output div');
+                }
+
+                event.preventDefault();
+                console.log('Event prevented default action');
+            });
+
+            console.log('Added click event listener to button');
+        }
+
+        // Test 4: Timers
+        console.log('\nSetting up timers...');
+
+        setTimeout(function() {
+            console.log('✓ Timer 1: Executed after 1 second');
+        }, 1000);
+
+        setTimeout(function() {
+            console.log('✓ Timer 2: Executed after 2 seconds');
+        }, 2000);
+
+        // Test 5: Window object
+        console.log('\nWindow object properties:');
+        console.log('  - innerWidth:', window.innerWidth);
+        console.log('  - innerHeight:', window.innerHeight);
+        console.log('  - location.href:', window.location.href);
+        console.log('  - navigator.userAgent:', navigator.userAgent);
+
+        console.log('\n' + '='.repeat(60));
+        console.log('All tests initialized successfully!');
+        console.log('='.repeat(60) + '\n');
+    </script>
+</body>
+</html>

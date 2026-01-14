@@ -1,0 +1,42 @@
+[package]
+name = "pixpane"
+version = "0.1.0"
+edition = "2021"
+authors = ["geoprox"]
+license = "MIT OR Apache-2.0"
+description = "Cross-platform windowing library for Deno via FFI"
+repository = "https://github.com/geoprox/geoprox"
+readme = "README.md"
+keywords = ["deno", "ffi", "windowing", "winit"]
+categories = ["gui", "api-bindings"]
+
+[lib]
+name = "pixpane"
+crate-type = ["cdylib"]
+
+[dependencies]
+deno_bindgen = "0.8.1"
+winit = "0.30"
+raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lazy_static = "1.5.0"
+parking_lot = "0.12"
+
+# Rendering
+wgpu = "22"
+egui = "0.29"
+egui-wgpu = "0.29"
+egui-winit = "0.29"
+pollster = "0.4"
+bytemuck = "1.14"
+
+[build-dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0

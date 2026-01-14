@@ -1,0 +1,207 @@
+{
+  "environment": "production",
+  "logLevel": "info",
+  "gracefulShutdown": true,
+  "gracefulShutdownTimeout": 30000,
+  "handleSignals": true,
+  "metrics": true,
+  "metricsPort": 9090,
+  "gateways": [
+    {
+      "host": "0.0.0.0",
+      "port": 8080,
+      "connectionTimeout": 30000,
+      "requestTimeout": 30000,
+      "maxConnections": 10000,
+      "keepAlive": true,
+      "keepAliveTimeout": 60000,
+      "routes": [
+        {
+          "id": "api-route",
+          "pathPattern": "/api/*",
+          "methods": ["GET", "POST", "PUT", "DELETE"],
+          "priority": 10,
+          "upstream": {
+            "servers": [
+              {
+                "id": "api-server-1",
+                "host": "localhost",
+                "port": 3000,
+                "protocol": "http",
+                "weight": 1
+              },
+              {
+                "id": "api-server-2",
+                "host": "localhost",
+                "port": 3001,
+                "protocol": "http",
+                "weight": 1
+              }
+            ],
+            "loadBalancing": "round_robin",
+            "healthCheck": {
+              "type": "http",
+              "path": "/health",
+              "interval": 30000,
+              "timeout": 5000,
+              "unhealthyThreshold": 3,
+              "healthyThreshold": 2
+            },
+            "sessionAffinity": {
+              "type": "cookie",
+              "cookieName": "session_id",
+              "ttl": 3600000
+            },
+            "failover": {
+              "enabled": true,
+              "maxFailures": 5,
+              "failureWindow": 60000,
+              "cooldownPeriod": 30000
+            },
+            "retryPolicy": {
+              "maxRetries": 3,
+              "retryDelay": 1000,
+              "retryOn": [502, 503, 504]
+            }
+          },
+          "timeout": 30000,
+          "retries": 3
+        },
+        {
+          "id": "static-route",
+          "pathPattern": "/static/*",
+          "methods": ["GET", "HEAD"],
+          "priority": 20,
+          "upstream": {
+            "servers": [
+              {
+                "id": "static-server",
+                "host": "localhost",
+                "port": 8000,
+                "protocol": "http"
+              }
+            ],
+            "loadBalancing": "round_robin"
+          }
+        },
+        {
+          "id": "default-route",
+          "pathPattern": "/*",
+          "priority": 100,
+          "upstream": {
+            "servers": [
+              {
+                "id": "default-server",
+                "host": "localhost",
+                "port": 4000,
+                "protocol": "http"
+              }
+            ]
+          }
+        }
+      ],
+      "middleware": {
+        "request": [
+          {
+            "middleware": {
+              "name": "rate_limit",
+              "config": {
+                "algorithm": "token_bucket",
+                "maxRequests": 100,
+                "windowMs": 60000
+              }
+            },
+            "config": {
+              "enabled": true,
+              "priority": 10
+            }
+          },
+          {
+            "middleware": {
+              "name": "auth",
+              "config": {
+                "method": "bearer"
+              }
+            },
+            "config": {
+              "enabled": false,
+              "priority": 20
+            }
+          },
+          {
+            "middleware": {
+              "name": "request_logging"
+            },
+            "config": {
+              "enabled": true,
+              "priority": 100
+            }
+          }
+        ],
+        "response": [
+          {
+            "middleware": {
+              "name": "cors",
+              "config": {
+                "origin": "*",
+                "methods": ["GET", "POST", "PUT", "DELETE"],
+                "credentials": false
+              }
+            },
+            "config": {
+              "enabled": true,
+              "priority": 10
+            }
+          },
+          {
+            "middleware": {
+              "name": "compression",
+              "config": {
+                "encodings": ["gzip", "deflate"],
+                "threshold": 1024
+              }
+            },
+            "config": {
+              "enabled": true,
+              "priority": 20
+            }
+          },
+          {
+            "middleware": {
+              "name": "response_logging"
+            },
+            "config": {
+              "enabled": true,
+              "priority": 100
+            }
+          }
+        ]
+      }
+    },
+    {
+      "host": "0.0.0.0",
+      "port": 8443,
+      "tls": {
+        "certFile": "./certs/server.crt",
+        "keyFile": "./certs/server.key",
+        "alpnProtocols": ["h2", "http/1.1"]
+      },
+      "routes": [
+        {
+          "id": "secure-api",
+          "pathPattern": "/api/*",
+          "upstream": {
+            "servers": [
+              {
+                "id": "secure-api-server",
+                "host": "localhost",
+                "port": 5000,
+                "protocol": "https"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
