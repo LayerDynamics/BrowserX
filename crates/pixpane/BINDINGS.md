@@ -31,7 +31,7 @@ This will:
 ### 3. Test the bindings
 
 ```bash
-deno run --allow-all test.ts
+deno run --allow-all tests/test.ts
 ```
 
 ## What Gets Generated

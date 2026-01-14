@@ -2,7 +2,68 @@
 
 > ⚠️ **Work in Progress** - BrowserX is in active development. Many components are experimental, incomplete, or undergoing significant changes. This project is not yet production-ready.
 
-A multi-layered browser and proxy system built with TypeScript/Deno and Rust, designed for programmability, composability, and extensibility. BrowserX aims to provide a queryable interface to browser and proxy functionality, enabling both humans and AI/ML systems to interact with web content programmatically.
+**A browser toolkit built with TypeScript/Deno and Rust.** BrowserX is a fully composable, programmable browser system where every component—from networking to rendering to GPU acceleration—can be used independently or combined to create custom browser experiences.
+
+## 🎯 What is BrowserX?
+
+BrowserX is not a traditional browser. It's a **toolkit for building anything browser-related**. Whether you need a headless scraper, a custom renderer, a programmable proxy, or a full-featured browser with AI integration, BrowserX provides the building blocks.
+
+### The BrowserX Toolkit
+
+All modules and crates are designed to work together as an integrated system:
+
+**TypeScript/Deno Modules:**
+
+- **Browser Engine** - Complete rendering pipeline: HTML/CSS parsing, layout, JavaScript execution, DOM manipulation
+- **Proxy Engine** - Programmable traffic routing: middleware, load balancing, caching, request/response transformation
+- **Query Engine** - SQL-like interface: query browser state, DOM tree, network activity, and proxy metrics
+
+**Rust Crates (via FFI):**
+
+- **Pixpane** - Native windowing: cross-platform windows, GPU rendering via wgpu, immediate-mode UI with egui
+- **webgpu_x** - GPU compute: WebGPU bindings for compute shaders, tensor operations, and custom GPU workloads
+
+### Built to Work Together
+
+The toolkit is designed for **composability at every level**:
+
+- Use the **Browser Engine** alone for server-side rendering or scraping
+- Combine **Browser + Proxy** for traffic inspection and modification
+- Add **Pixpane** for native window output with GPU acceleration
+- Layer on **Query Engine** for AI/ML-friendly programmatic access
+- Use **webgpu_x** for custom GPU compute alongside rendering
+
+Every component exposes its internals through public APIs, allowing you to compose exactly what you need—nothing more, nothing less.
+
+### What You Can Build
+
+**Testing & Automation:**
+
+- Headless browser testing with full DOM/layout introspection
+- Visual regression testing with pixel-perfect rendering
+- Performance testing with detailed timing breakdowns
+- AI-powered test generation using query interface
+
+**AI & Machine Learning:**
+
+- AI agents that inspect render trees and layout information
+- Browser automation driven by natural language queries
+- Training data collection from real browser sessions
+- Custom rendering for vision model inputs
+
+**Development Tools:**
+
+- Custom DevTools with deep protocol visibility
+- Traffic debugging and manipulation proxies
+- Performance profiling at every layer
+- Browser experimentation and research
+
+**Production Services:**
+
+- Programmable CDN with edge rendering
+- Screenshot and PDF generation services
+- Web scraping with full JavaScript support
+- API gateway with browser-level protocol handling
 
 ## 🎯 Project Vision
 
@@ -14,6 +75,7 @@ BrowserX reimagines the browser as a composable, queryable system where every la
 - **Native Windowing**: Cross-platform GPU-accelerated rendering via Rust FFI
 
 This architecture enables use cases like:
+
 - Automated testing with deep introspection
 - AI agents that can inspect render trees and layout
 - Traffic analysis and manipulation at any protocol layer
@@ -46,19 +108,26 @@ Understanding the Layers:
 │  - Network stack (TCP/TLS/HTTP)     │
 └─────────────────────────────────────┘
                  ↓
-┌─────────────────────────────────────┐
-│      Pixpane (Optional)             │  Native windowing & GPU
-│  - Cross-platform windows (Rust)    │  rendering via FFI
-│  - GPU acceleration (wgpu)          │
-│  - Immediate-mode UI (egui)         │
-└─────────────────────────────────────┘
+      ┌──────────┴──────────┐
+      ↓                     ↓
+┌──────────────────┐  ┌──────────────────┐
+│ Pixpane (Rust)   │  │ webgpu_x (Rust)  │
+│ - Windows/UI     │  │ - GPU Compute    │
+│ - GPU Rendering  │  │ - Kernels        │
+│ - egui (FFI)     │  │ - Tensors (FFI)  │
+└──────────────────┘  └──────────────────┘
 ```
 
-**Data Flow**: User requests flow down through the query engine → proxy engine → browser engine → pixpane (if visual output needed). Each layer can be used independently or composed together.
+**Data Flow**: User requests flow down through the query engine → proxy engine → browser engine. The browser engine can then output to:
+
+- **Pixpane** for visual rendering (windows, UI, display)
+- **webgpu_x** for GPU compute workloads (ML, custom shaders, tensor operations)
+
+Each layer can be used independently or composed together.
 
 ## 🏗️ Repository Structure
 
-```
+```text
 BrowserX/
 ├── browser/                  # Browser Engine (TypeScript/Deno)
 │   ├── src/
@@ -81,10 +150,18 @@ BrowserX/
 │   └── adapters/           # Adapters for browser/proxy backends
 │
 ├── crates/
-│   └── pixpane/            # Native windowing layer (Rust)
+│   ├── pixpane/            # Native windowing layer (Rust)
+│   │   ├── src/
+│   │   │   ├── window/     # Window management (winit)
+│   │   │   ├── rendering/  # GPU rendering (wgpu, egui)
+│   │   │   └── deno_bindings.rs  # FFI exports via deno_bindgen
+│   │   └── bindings/       # Generated TypeScript bindings
+│   │
+│   └── webgpu_x/           # GPU compute layer (Rust)
 │       ├── src/
-│       │   ├── window/     # Window management (winit)
-│       │   ├── rendering/  # GPU rendering (wgpu, egui)
+│       │   ├── compute/    # Compute kernels and workgroups
+│       │   ├── tensor/     # Tensor operations and storage
+│       │   ├── shader/     # WGSL shader generation
 │       │   └── deno_bindings.rs  # FFI exports via deno_bindgen
 │       └── bindings/       # Generated TypeScript bindings
 │
@@ -102,6 +179,13 @@ BrowserX/
 ```
 
 ## 🚀 Getting Started
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/LayerDynamics/BrowserX.git
+cd BrowserX
+```
 
 ### Prerequisites
 
@@ -152,7 +236,22 @@ cargo build --release
 deno run --allow-all gen_bindings.ts
 
 # Run FFI test
-deno run --allow-ffi --unstable-ffi test.ts
+deno run --allow-ffi --unstable-ffi tests/test.ts
+```
+
+#### webgpu_x (GPU Compute)
+
+```bash
+cd crates/webgpu_x
+
+# Build Rust library
+cargo build --release
+
+# Generate TypeScript bindings
+deno run --allow-all gen_bindings.ts
+
+# Run FFI test
+deno run --allow-ffi --unstable-ffi tests/test.ts
 ```
 
 ## 📚 Documentation
@@ -170,6 +269,7 @@ deno run --allow-ffi --unstable-ffi test.ts
 - **[proxy-engine/README.md](./proxy-engine/README.md)** - Proxy engine configuration and middleware
 - **[query-engine/README.md](./query-engine/README.md)** - Query syntax and execution
 - **[crates/pixpane/README.md](./crates/pixpane/README.md)** - FFI bindings and window management
+- **[crates/webgpu_x/README.md](./crates/webgpu_x/README.md)** - GPU compute, kernels, and tensor operations
 
 ## 🛠️ Development
 
@@ -185,49 +285,159 @@ cd proxy-engine && deno check core/runtime.ts
 # Build Pixpane + generate bindings
 cd crates/pixpane && cargo build --release && deno run --allow-all gen_bindings.ts
 
+# Build webgpu_x + generate bindings
+cd crates/webgpu_x && cargo build --release && deno run --allow-all gen_bindings.ts
+
 # Run all tests
 cd browser && deno test --allow-all
 cd crates/pixpane && cargo test
+cd crates/webgpu_x && cargo test
 ```
 
 ### Key Technologies
 
 **Browser & Proxy Engines:**
+
 - TypeScript/Deno for type-safe, modern JavaScript runtime
 - Multi-process architecture inspired by Chromium
 - Event-driven async I/O for high performance
 
 **Pixpane (Native Layer):**
+
 - Rust for systems-level performance and safety
 - wgpu 22 for cross-platform GPU acceleration
 - winit 0.30 for window management
 - egui 0.29 for immediate-mode UI
 - deno_bindgen 0.8.1 for FFI code generation
 
+**webgpu_x (GPU Compute Layer):**
+
+- Rust for high-performance compute kernels
+- wgpu 22 for GPU compute and shader execution
+- WGSL shader language support
+- Tensor operations for ML workloads
+- deno_bindgen 0.8.1 for FFI code generation
+
 ## 📊 Current Status
 
 ### ✅ Implemented
 
-- **Browser Engine**: Core type system, network primitives (TCP/TLS), HTTP parsing, DOM types, CSS types, rendering types
-- **Proxy Engine**: Gateway routing, connection pooling, transport protocols (HTTP/1.1, HTTP/2, HTTP/3), cache manager, middleware system
-- **Pixpane**: Window creation, GPU rendering, FFI bindings, egui UI integration
+**Browser Engine** :
+
+- Complete type system (11 type files: HTTP, DOM, CSS, rendering, network, JavaScript, storage, events, WebGPU)
+- Network layer: TCP connection management, TLS 1.3 implementation with handshake and certificate validation, connection pooling, DNS resolution
+- HTTP protocol: Request/response parsing, header handling, connection reuse
+- HTML tokenizer: Full state machine with 60+ tokenization states
+- CSS parser: Selector matching, specificity calculation, cascade resolution
+- JavaScript engine: V8 isolate management, execution contexts, heap management
+- Storage types: Interfaces for localStorage, sessionStorage, IndexedDB, cookies, quota management
+
+**Proxy Engine** :
+
+- Runtime orchestration: Lifecycle management, graceful shutdown, signal handling
+- Gateway layer: Request/response routing with pattern matching, middleware chain execution
+- Connection management: Pooling with configurable size limits, health checking, lifecycle tracking
+- Transport protocols: HTTP/1.1, HTTP/2, HTTP/3, WebSocket, TLS termination
+- Cache layer: Memory/disk storage with encryption, TTL management, LRU/LFU/FIFO eviction policies
+- Middleware system: Auth, rate limiting, logging, CORS, compression, header manipulation
+- Network primitives: TCP sockets, IP address handling, buffer pools
+- Event system: Event loop, async handling, priority queuing
+- Process/thread management: Multi-process architecture, worker pools, task scheduling
+
+**Query Engine** :
+
+- Lexer: Token generation from query strings
+- Parser: Recursive descent parser building Abstract Syntax Trees (AST)
+- SQL-like statements: SELECT, INSERT, UPDATE, DELETE, NAVIGATE, SET, SHOW, FOR, IF, WITH
+- Query analysis: Semantic analysis, type checking, validation
+- Planner: Query plan generation
+- Optimizer: Query optimization strategies
+- Executor: Query execution engine
+- Type system: Primitive types, collections, functions
+- Error handling: Comprehensive error types and recovery
+
+**Pixpane** :
+
+- Window management: Creation, configuration, lifecycle control (winit 0.30)
+- Event loop: pump_events model with non-blocking polling, thread-safe event queue
+- GPU rendering: wgpu 22 integration with surface management, texture uploads
+- egui integration: Immediate-mode UI (egui 0.29) with full widget support
+- FFI layer: deno_bindgen 0.8.1 with comprehensive TypeScript bindings
+- Thread safety: Lazy-static window registry with parking_lot synchronization
+- Pixel rendering: RGBA8 buffer uploads, fullscreen texture rendering
+- Window operations: Resize, move, minimize, maximize, fullscreen, visibility control
+
+**webgpu_x** :
+
+- Compute kernels: Kernel specification, parameter binding, workgroup configuration
+- WGSL generation: Automatic shader code generation from kernel specs
+- Tensor types: Float32, Float16, Int32, Int8, UInt8 with size calculations
+- Tensor access: ReadOnly, WriteOnly, ReadWrite, Uniform patterns
+- GPU infrastructure: Device management, queue handling, buffer operations
+- FFI bindings: Comprehensive Deno integration for GPU compute
+- Shader support: WGSL type mapping, storage qualifiers
 
 ### 🚧 In Progress
 
-- **Browser Engine**: HTML parser, CSS parser, layout engine, JavaScript V8 integration, compositor
-- **Proxy Engine**: Load balancing implementations, WebSocket proxying, metrics collection
-- **Query Engine**: Parser, executor, browser/proxy adapters
-- **Integration**: End-to-end data flow between all layers
+**Browser Engine:**
+
+- Layout engine: Box model calculation, block/flexbox/grid layout algorithms, text measurement
+- Paint engine: Display list generation, rasterization
+- Compositor: Layer management, tiling, GPU texture uploads, VSync synchronization
+- JavaScript execution: V8 bytecode compilation, JIT optimization, event loop integration
+- Full rendering pipeline: End-to-end integration from HTML to pixels
+
+**Proxy Engine:**
+
+- Load balancer implementations: Active load balancing algorithms (round-robin, least connections, IP hash)
+- WebSocket proxying: Full duplex proxying, frame handling
+- Metrics collection: Request tracking, latency histograms, throughput measurement
+- Distributed tracing: Trace context propagation, span collection
+
+**Query Engine:**
+
+- Browser adapter: Integration with browser engine for DOM/CSSOM queries
+- Proxy adapter: Integration with proxy engine for network/cache queries
+- Advanced SQL features: Subqueries, joins, aggregations, window functions
+- Query result formatting: Multiple output formats (JSON, CSV, table)
+
+**Integration:**
+
+- End-to-end data flow: Query Engine → Proxy Engine → Browser Engine → Pixpane
+- Cross-layer communication: Event propagation, state synchronization
+- Performance optimization: Pipeline parallelization, caching strategies
 
 ### 📋 Planned
 
-- Complete rendering pipeline with GPU acceleration
-- JavaScript execution with V8 isolates
-- Storage systems (localStorage, IndexedDB, cookies)
-- Query engine with full SQL-like syntax
-- CLI interface for query engine
-- Web UI for browser/proxy inspection
-- Comprehensive test suites for all components
+**Core Functionality:**
+
+- Complete HTML tree builder with error recovery and special element handling
+- CSS layout engine: Complete flexbox and grid implementations, positioned elements
+- JavaScript V8: Full DOM API bindings, Web APIs (fetch, setTimeout, Promise)
+- Storage implementations: Actual localStorage, sessionStorage, IndexedDB, cookie persistence
+- GPU acceleration: Hardware-accelerated compositing, canvas rendering
+
+**Developer Tools:**
+
+- CLI interface: Interactive query shell for browser/proxy inspection
+- Web UI: Browser-based inspector for debugging and metrics visualization
+- DevTools protocol: Chrome DevTools Protocol compatibility
+- Performance profiler: CPU/memory/network profiling tools
+
+**Testing & Quality:**
+
+- Comprehensive test suites: Unit tests, integration tests, end-to-end tests
+- Browser compatibility tests: Rendering accuracy vs Chrome/Firefox
+- Performance benchmarks: Page load times, rendering speed, memory usage
+- Fuzzing: Protocol fuzzing, parser fuzzing for security
+
+**Advanced Features:**
+
+- Service workers: Background processing, offline support
+- WebAssembly: WASM execution in V8
+- WebRTC: Peer-to-peer communication
+- WebSocket server: Bidirectional communication support
+- HTTP/3 optimizations: QUIC transport enhancements
 
 ## 🤝 Contributing
 

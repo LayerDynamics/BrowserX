@@ -56,7 +56,7 @@ cargo build --release
 deno run --allow-all gen_bindings.ts
 
 # 3. Test the bindings
-deno run --allow-ffi --unstable-ffi test.ts
+deno run --allow-ffi --unstable-ffi tests/test.ts
 ```
 
 The `gen_bindings.ts` script:
@@ -272,13 +272,13 @@ All FFI functions return success codes:
 
 ```bash
 # Run FFI test (creates actual windows, requires display)
-deno run --allow-ffi --unstable-ffi test.ts
+deno run --allow-ffi --unstable-ffi tests/test.ts
 
 # Run Rust unit tests
 cargo test
 
 # Run all tests
-cargo test && deno run --allow-ffi --unstable-ffi test.ts
+cargo test && deno run --allow-ffi --unstable-ffi tests/test.ts
 ```
 
 ## Dependencies
@@ -323,7 +323,7 @@ When adding new FFI functions:
 2. Rebuild: `cargo build --release`
 3. Regenerate bindings: `deno run --allow-all gen_bindings.ts`
 4. Update TypeScript wrapper in `pixpane.ts` (if applicable)
-5. Add tests in `test.ts`
+5. Add tests in `tests/test.ts`
 
 ## License
 
