@@ -40,14 +40,17 @@ Deno.test({
         const masterSecret = new Uint8Array(48);
         const clientRandom = new Uint8Array(32);
         const serverRandom = new Uint8Array(32);
-        const cipherSuite = "TLS_AES_128_GCM_SHA256";
+        // Use TLS 1.2 cipher suite name (with "WITH")
+        const cipherSuite = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256";
 
         const keys = await deriveSessionKeys(masterSecret, clientRandom, serverRandom, cipherSuite);
 
         assertEquals(keys.clientWriteKey.byteLength, 16); // AES-128 = 16 bytes
         assertEquals(keys.serverWriteKey.byteLength, 16);
-        assertEquals(keys.clientWriteIV.byteLength, 12); // GCM IV = 12 bytes
-        assertEquals(keys.serverWriteIV.byteLength, 12);
+        // TLS 1.2 AES-GCM uses 4-byte implicit IV (RFC 5288)
+        // The full 12-byte nonce is: implicit_IV (4) + explicit_nonce (8)
+        assertEquals(keys.clientWriteIV.byteLength, 4);
+        assertEquals(keys.serverWriteIV.byteLength, 4);
     },
 });
 
@@ -72,14 +75,16 @@ Deno.test({
         const masterSecret = new Uint8Array(48);
         const clientRandom = new Uint8Array(32);
         const serverRandom = new Uint8Array(32);
-        const cipherSuite = "TLS_CHACHA20_POLY1305_SHA256";
+        // Use TLS 1.2 cipher suite name (with "WITH")
+        const cipherSuite = "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256";
 
         const keys = await deriveSessionKeys(masterSecret, clientRandom, serverRandom, cipherSuite);
 
         assertEquals(keys.clientWriteKey.byteLength, 32); // ChaCha20 = 32 bytes
         assertEquals(keys.serverWriteKey.byteLength, 32);
-        assertEquals(keys.clientWriteIV.byteLength, 12);
-        assertEquals(keys.serverWriteIV.byteLength, 12);
+        // TLS 1.2 ChaCha20-Poly1305 uses 4-byte implicit IV (RFC 7905)
+        assertEquals(keys.clientWriteIV.byteLength, 4);
+        assertEquals(keys.serverWriteIV.byteLength, 4);
     },
 });
 

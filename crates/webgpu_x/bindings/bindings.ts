@@ -1,4 +1,5 @@
 // Auto-generated with deno_bindgen
+// @ts-nocheck - generated FFI bindings have known type issues
 function encode(v: string | Uint8Array): Uint8Array {
   if (typeof v !== "string") return v
   return new TextEncoder().encode(v)
@@ -33,7 +34,7 @@ if (Deno.build.os === "windows") {
   }
 }
 
-const libPaths = {
+const libPaths: Record<string, string> = {
     darwin: uri + "libwebgpu_x.dylib",
     windows: uri + "webgpu_x.dll",
     linux: uri + "libwebgpu_x.so",
@@ -42,8 +43,10 @@ const libPaths = {
     aix: uri + "libwebgpu_x.so",
     solaris: uri + "libwebgpu_x.so",
     illumos: uri + "libwebgpu_x.so",
-  } as Record<typeof Deno.build.os, string>;
-const { symbols } = Deno.dlopen(libPaths[Deno.build.os]!,
+    android: uri + "libwebgpu_x.so",
+};
+const { symbols } = Deno.dlopen(
+  libPaths[Deno.build.os] ?? libPaths.linux,
   {
     buffer_calculate_aligned_size: {
       parameters: ["u64", "u64"],
@@ -165,6 +168,82 @@ const { symbols } = Deno.dlopen(libPaths[Deno.build.os]!,
     get_optimal_workgroup_size: {
       parameters: ["u32", "u32", "u32"],
       result: "u32",
+      nonblocking: false,
+    },
+    gpu_cleanup_all: { parameters: [], result: "void", nonblocking: false },
+    gpu_create_bind_group_layout: {
+      parameters: ["u64", "buffer", "usize", "buffer", "usize"],
+      result: "u64",
+      nonblocking: false,
+    },
+    gpu_create_empty_bind_group_layout: {
+      parameters: ["u64", "buffer", "usize"],
+      result: "u64",
+      nonblocking: false,
+    },
+    gpu_create_empty_pipeline_layout: {
+      parameters: ["u64", "buffer", "usize"],
+      result: "u64",
+      nonblocking: false,
+    },
+    gpu_create_pipeline_layout: {
+      parameters: ["u64", "buffer", "usize", "buffer", "usize"],
+      result: "u64",
+      nonblocking: false,
+    },
+    gpu_create_texture: {
+      parameters: [
+        "u64",
+        "buffer",
+        "usize",
+        "u32",
+        "u32",
+        "u32",
+        "u32",
+        "u32",
+        "u32",
+        "u32",
+        "u32",
+        "buffer",
+        "usize",
+      ],
+      result: "u64",
+      nonblocking: false,
+    },
+    gpu_destroy_adapter: {
+      parameters: ["u64"],
+      result: "void",
+      nonblocking: false,
+    },
+    gpu_destroy_bind_group_layout: {
+      parameters: ["u64"],
+      result: "void",
+      nonblocking: false,
+    },
+    gpu_destroy_device: {
+      parameters: ["u64"],
+      result: "void",
+      nonblocking: false,
+    },
+    gpu_destroy_pipeline_layout: {
+      parameters: ["u64"],
+      result: "void",
+      nonblocking: false,
+    },
+    gpu_destroy_texture: {
+      parameters: ["u64"],
+      result: "void",
+      nonblocking: false,
+    },
+    gpu_init: { parameters: [], result: "u8", nonblocking: false },
+    gpu_request_adapter: {
+      parameters: ["u32"],
+      result: "u64",
+      nonblocking: false,
+    },
+    gpu_request_device: {
+      parameters: ["u64"],
+      result: "u64",
       nonblocking: false,
     },
     kernel_generate_from_template: {
@@ -835,12 +914,12 @@ export function framework_matrix_model(a0: string, a1: string, a2: string) {
   const a2_buf = encode(a2)
 
   const rawResult = symbols.framework_matrix_model(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -885,18 +964,151 @@ export function framework_matrix_view(a0: string, a1: string, a2: string) {
   const a2_buf = encode(a2)
 
   const rawResult = symbols.framework_matrix_view(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
 }
 export function get_optimal_workgroup_size(a0: number, a1: number, a2: number) {
   const rawResult = symbols.get_optimal_workgroup_size(a0, a1, a2)
+  const result = rawResult
+  return result
+}
+export function gpu_cleanup_all() {
+  const rawResult = symbols.gpu_cleanup_all()
+  const result = rawResult
+  return result
+}
+export function gpu_create_bind_group_layout(
+  a0: bigint,
+  a1: string,
+  a2: string,
+) {
+  const a1_buf = encode(a1)
+  const a2_buf = encode(a2)
+
+  const rawResult = symbols.gpu_create_bind_group_layout(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_empty_bind_group_layout(a0: bigint, a1: string) {
+  const a1_buf = encode(a1)
+
+  const rawResult = symbols.gpu_create_empty_bind_group_layout(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_empty_pipeline_layout(a0: bigint, a1: string) {
+  const a1_buf = encode(a1)
+
+  const rawResult = symbols.gpu_create_empty_pipeline_layout(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_pipeline_layout(a0: bigint, a1: string, a2: string) {
+  const a1_buf = encode(a1)
+  const a2_buf = encode(a2)
+
+  const rawResult = symbols.gpu_create_pipeline_layout(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_texture(
+  a0: bigint,
+  a1: string,
+  a2: number,
+  a3: number,
+  a4: number,
+  a5: number,
+  a6: number,
+  a7: number,
+  a8: number,
+  a9: number,
+  a10: string,
+) {
+  const a1_buf = encode(a1)
+  const a10_buf = encode(a10)
+
+  const rawResult = symbols.gpu_create_texture(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2,
+    a3,
+    a4,
+    a5,
+    a6,
+    a7,
+    a8,
+    a9,
+    a10_buf,
+    a10_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_adapter(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_adapter(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_bind_group_layout(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_bind_group_layout(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_device(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_device(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_pipeline_layout(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_pipeline_layout(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_texture(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_texture(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_init() {
+  const rawResult = symbols.gpu_init()
+  const result = rawResult
+  return result
+}
+export function gpu_request_adapter(a0: number) {
+  const rawResult = symbols.gpu_request_adapter(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_request_device(a0: bigint) {
+  const rawResult = symbols.gpu_request_device(a0)
   const result = rawResult
   return result
 }
@@ -1050,8 +1262,8 @@ export function shader_cache_has_changed(a0: bigint, a1: string) {
 
   const rawResult = symbols.shader_cache_has_changed(
     a0,
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
+    a1_buf,
+    a1_buf.byteLength,
   )
   const result = rawResult
   return result
@@ -1059,7 +1271,7 @@ export function shader_cache_has_changed(a0: bigint, a1: string) {
 export function shader_cache_load(a0: bigint, a1: string) {
   const a1_buf = encode(a1)
 
-  const rawResult = symbols.shader_cache_load(a0, a1_buf as BufferSource, BigInt(a1_buf.byteLength))
+  const rawResult = symbols.shader_cache_load(a0, a1_buf, a1_buf.byteLength)
   const result = readPointer(rawResult)
   return decode(result)
 }
@@ -1074,11 +1286,11 @@ export function shader_cache_load_from_string(
 
   const rawResult = symbols.shader_cache_load_from_string(
     a0,
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
+    a1_buf,
+    a1_buf.byteLength,
     a2,
-    a3_buf as BufferSource,
-    BigInt(a3_buf.byteLength),
+    a3_buf,
+    a3_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1091,7 +1303,7 @@ export function shader_cache_stats(a0: bigint) {
 export function shader_detect_stage(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.shader_detect_stage(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.shader_detect_stage(a0_buf, a0_buf.byteLength)
   const result = rawResult
   return result
 }
@@ -1123,35 +1335,35 @@ export function staging_belt_write(a0: bigint, a1: bigint) {
 export function tensor_create(a0: bigint, a1: string, a2: number, a3: number) {
   const a1_buf = encode(a1)
 
-  const rawResult = symbols.tensor_create(a0, a1_buf as BufferSource, BigInt(a1_buf.byteLength), a2, a3)
+  const rawResult = symbols.tensor_create(a0, a1_buf, a1_buf.byteLength, a2, a3)
   const result = readPointer(rawResult)
   return decode(result)
 }
 export function tensor_get_shape(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.tensor_get_shape(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.tensor_get_shape(a0_buf, a0_buf.byteLength)
   const result = readPointer(rawResult)
   return decode(result)
 }
 export function tensor_get_strides(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.tensor_get_strides(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.tensor_get_strides(a0_buf, a0_buf.byteLength)
   const result = readPointer(rawResult)
   return decode(result)
 }
 export function tensor_is_contiguous(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.tensor_is_contiguous(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.tensor_is_contiguous(a0_buf, a0_buf.byteLength)
   const result = rawResult
   return result
 }
 export function tensor_rank(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.tensor_rank(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.tensor_rank(a0_buf, a0_buf.byteLength)
   const result = rawResult
   return result
 }
@@ -1160,10 +1372,10 @@ export function tensor_reshape(a0: string, a1: string) {
   const a1_buf = encode(a1)
 
   const rawResult = symbols.tensor_reshape(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1171,28 +1383,28 @@ export function tensor_reshape(a0: string, a1: string) {
 export function tensor_size_bytes(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.tensor_size_bytes(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.tensor_size_bytes(a0_buf, a0_buf.byteLength)
   const result = rawResult
   return result
 }
 export function tensor_total_elements(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.tensor_total_elements(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.tensor_total_elements(a0_buf, a0_buf.byteLength)
   const result = rawResult
   return result
 }
 export function tensor_transpose_2d(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.tensor_transpose_2d(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.tensor_transpose_2d(a0_buf, a0_buf.byteLength)
   const result = readPointer(rawResult)
   return decode(result)
 }
 export function tensor_view(a0: string, a1: bigint) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.tensor_view(a0_buf as BufferSource, BigInt(a0_buf.byteLength), a1)
+  const rawResult = symbols.tensor_view(a0_buf, a0_buf.byteLength, a1)
   const result = readPointer(rawResult)
   return decode(result)
 }
@@ -1268,10 +1480,10 @@ export function wgsl_binding_buffer(
   const rawResult = symbols.wgsl_binding_buffer(
     a0,
     a1,
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
-    a3_buf as BufferSource,
-    BigInt(a3_buf.byteLength),
+    a2_buf,
+    a2_buf.byteLength,
+    a3_buf,
+    a3_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1282,8 +1494,8 @@ export function wgsl_binding_sampler(a0: number, a1: number, a2: string) {
   const rawResult = symbols.wgsl_binding_sampler(
     a0,
     a1,
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
+    a2_buf,
+    a2_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1300,10 +1512,10 @@ export function wgsl_binding_texture(
   const rawResult = symbols.wgsl_binding_texture(
     a0,
     a1,
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
-    a3_buf as BufferSource,
-    BigInt(a3_buf.byteLength),
+    a2_buf,
+    a2_buf.byteLength,
+    a3_buf,
+    a3_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1320,10 +1532,10 @@ export function wgsl_binding_uniform(
   const rawResult = symbols.wgsl_binding_uniform(
     a0,
     a1,
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
-    a3_buf as BufferSource,
-    BigInt(a3_buf.byteLength),
+    a2_buf,
+    a2_buf.byteLength,
+    a3_buf,
+    a3_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1333,10 +1545,10 @@ export function wgsl_builtin(a0: string, a1: string) {
   const a1_buf = encode(a1)
 
   const rawResult = symbols.wgsl_builtin(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1354,15 +1566,15 @@ export function wgsl_compute_entry(
   const a5_buf = encode(a5)
 
   const rawResult = symbols.wgsl_compute_entry(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
     a1,
     a2,
     a3,
-    a4_buf as BufferSource,
-    BigInt(a4_buf.byteLength),
-    a5_buf as BufferSource,
-    BigInt(a5_buf.byteLength),
+    a4_buf,
+    a4_buf.byteLength,
+    a5_buf,
+    a5_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1370,7 +1582,7 @@ export function wgsl_compute_entry(
 export function wgsl_extract_functions(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.wgsl_extract_functions(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.wgsl_extract_functions(a0_buf, a0_buf.byteLength)
   const result = readPointer(rawResult)
   return decode(result)
 }
@@ -1386,14 +1598,14 @@ export function wgsl_fragment_entry(
   const a3_buf = encode(a3)
 
   const rawResult = symbols.wgsl_fragment_entry(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
-    a3_buf as BufferSource,
-    BigInt(a3_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
+    a3_buf,
+    a3_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1405,14 +1617,14 @@ export function wgsl_function(a0: string, a1: string, a2: string, a3: string) {
   const a3_buf = encode(a3)
 
   const rawResult = symbols.wgsl_function(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
-    a3_buf as BufferSource,
-    BigInt(a3_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
+    a3_buf,
+    a3_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1420,7 +1632,7 @@ export function wgsl_function(a0: string, a1: string, a2: string, a3: string) {
 export function wgsl_line_count(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.wgsl_line_count(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.wgsl_line_count(a0_buf, a0_buf.byteLength)
   const result = rawResult
   return result
 }
@@ -1429,11 +1641,11 @@ export function wgsl_location(a0: string, a1: number, a2: string) {
   const a2_buf = encode(a2)
 
   const rawResult = symbols.wgsl_location(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
     a1,
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
+    a2_buf,
+    a2_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1441,7 +1653,7 @@ export function wgsl_location(a0: string, a1: number, a2: string) {
 export function wgsl_minify(a0: string) {
   const a0_buf = encode(a0)
 
-  const rawResult = symbols.wgsl_minify(a0_buf as BufferSource, BigInt(a0_buf.byteLength))
+  const rawResult = symbols.wgsl_minify(a0_buf, a0_buf.byteLength)
   const result = readPointer(rawResult)
   return decode(result)
 }
@@ -1450,10 +1662,10 @@ export function wgsl_struct(a0: string, a1: string) {
   const a1_buf = encode(a1)
 
   const rawResult = symbols.wgsl_struct(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1463,10 +1675,10 @@ export function wgsl_struct_field(a0: string, a1: string) {
   const a1_buf = encode(a1)
 
   const rawResult = symbols.wgsl_struct_field(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)
@@ -1483,14 +1695,14 @@ export function wgsl_vertex_entry(
   const a3_buf = encode(a3)
 
   const rawResult = symbols.wgsl_vertex_entry(
-    a0_buf as BufferSource,
-    BigInt(a0_buf.byteLength),
-    a1_buf as BufferSource,
-    BigInt(a1_buf.byteLength),
-    a2_buf as BufferSource,
-    BigInt(a2_buf.byteLength),
-    a3_buf as BufferSource,
-    BigInt(a3_buf.byteLength),
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
+    a3_buf,
+    a3_buf.byteLength,
   )
   const result = readPointer(rawResult)
   return decode(result)

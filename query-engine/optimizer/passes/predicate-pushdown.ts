@@ -51,8 +51,8 @@ export class PredicatePushdownPass {
       case "IF":
         return {
           ...stmt,
-          thenBranch: this.pushdownStatement(stmt.thenBranch),
-          elseBranch: stmt.elseBranch ? this.pushdownStatement(stmt.elseBranch) : undefined,
+          then: this.pushdownStatement(stmt.then),
+          else: stmt.else ? this.pushdownStatement(stmt.else) : undefined,
         };
 
       default:

@@ -156,6 +156,11 @@ export class GatewayServer {
   private running = false;
   private startTime = 0;
 
+  // Ready promise for coordinating startup
+  private readyResolve?: () => void;
+  private readyReject?: (error: Error) => void;
+  private readyPromise: Promise<void>;
+
   // Statistics
   private stats = {
     totalRequests: 0,
@@ -177,6 +182,12 @@ export class GatewayServer {
 
     // Create proxy instances for routes
     this.initializeProxies();
+
+    // Initialize ready promise for startup coordination
+    this.readyPromise = new Promise<void>((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
   }
 
   /**
@@ -243,12 +254,24 @@ export class GatewayServer {
       this.running = true;
       this.startTime = Date.now();
 
+      // Signal that server is ready to accept connections
+      this.readyResolve?.();
+
       // Accept connections
       await this.acceptConnections();
     } catch (error) {
+      // Signal failure to start
+      this.readyReject?.(error instanceof Error ? error : new Error(String(error)));
       console.error("Failed to start server:", error);
       throw error;
     }
+  }
+
+  /**
+   * Wait for server to be ready to accept connections
+   */
+  waitForReady(): Promise<void> {
+    return this.readyPromise;
   }
 
   /**
@@ -292,6 +315,10 @@ export class GatewayServer {
     };
     this.activeConnections.set(connectionId, activeConn);
 
+    // Declare outside try block so it's accessible in finally
+    let keepAliveIntervalId: number | undefined;
+    let requestTimeoutId: number | undefined;
+
     try {
       // Create HTTP server
       const httpServer = new HTTP11Server(socket);
@@ -301,15 +328,28 @@ export class GatewayServer {
 
       while (shouldKeepAlive && this.running) {
         try {
+          // Clear any existing keep-alive interval before reading next request
+          if (keepAliveIntervalId !== undefined) {
+            clearInterval(keepAliveIntervalId);
+            keepAliveIntervalId = undefined;
+          }
+
+          // Clear any existing request timeout
+          if (requestTimeoutId !== undefined) {
+            clearTimeout(requestTimeoutId);
+            requestTimeoutId = undefined;
+          }
+
           // Set request timeout
           const timeout = this.config.requestTimeout || 30000;
-          const timeoutId = setTimeout(() => {
+          requestTimeoutId = setTimeout(() => {
             socket.close();
-          }, timeout);
+          }, timeout) as unknown as number;
 
           // Read request
           const request = await httpServer.readRequest();
-          clearTimeout(timeoutId);
+          clearTimeout(requestTimeoutId);
+          requestTimeoutId = undefined;
 
           activeConn.requestCount++;
           this.stats.bytesReceived += request.body?.length || 0;
@@ -339,14 +379,17 @@ export class GatewayServer {
             const keepAliveTimeout = this.config.keepAliveTimeout;
 
             // Check if connection has been idle too long
-            const checkIdle = setInterval(() => {
+            keepAliveIntervalId = setInterval(() => {
               const idleTime = Date.now() - idleStart;
               if (idleTime > keepAliveTimeout) {
                 shouldKeepAlive = false;
-                clearInterval(checkIdle);
+                if (keepAliveIntervalId !== undefined) {
+                  clearInterval(keepAliveIntervalId);
+                  keepAliveIntervalId = undefined;
+                }
                 socket.close();
               }
-            }, 1000);
+            }, 1000) as unknown as number;
           }
         } catch (error) {
           // Request processing error - close connection
@@ -355,6 +398,14 @@ export class GatewayServer {
         }
       }
     } finally {
+      // Cleanup request timeout to prevent memory leak
+      if (requestTimeoutId !== undefined) {
+        clearTimeout(requestTimeoutId);
+      }
+      // Cleanup keep-alive interval to prevent memory leak
+      if (keepAliveIntervalId !== undefined) {
+        clearInterval(keepAliveIntervalId);
+      }
       // Cleanup connection
       this.activeConnections.delete(connectionId);
       socket.close();

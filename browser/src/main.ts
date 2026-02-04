@@ -37,6 +37,9 @@ export class Browser {
     private quotaManager: QuotaManager;
     private currentURL: string | null = null;
     private config: Required<BrowserConfig>;
+    private history: string[] = [];
+    private historyIndex: number = -1;
+    private isHistoryNavigation: boolean = false;
 
     constructor(config: BrowserConfig = {}) {
         this.config = {
@@ -53,12 +56,13 @@ export class Browser {
         this.storageManager = new StorageManager(this.quotaManager);
         this.cookieManager = new CookieManager();
         this.requestPipeline = new RequestPipeline();
+        // Share the RequestPipeline with RenderingPipeline for connection reuse
         this.renderingPipeline = new RenderingPipeline({
             width: this.config.width,
             height: this.config.height,
             devicePixelRatio: this.config.devicePixelRatio,
             enableJavaScript: this.config.enableJavaScript,
-        });
+        }, this.requestPipeline);
 
         console.log(`Browser initialized:
   - Viewport: ${this.config.width}x${this.config.height}
@@ -81,6 +85,17 @@ export class Browser {
 
             const totalTime = Date.now() - startTime;
             this.currentURL = url;
+
+            // Track history (only for non-history navigations)
+            if (!this.isHistoryNavigation) {
+                // Remove forward history when navigating to a new page
+                if (this.historyIndex < this.history.length - 1) {
+                    this.history = this.history.slice(0, this.historyIndex + 1);
+                }
+                this.history.push(url);
+                this.historyIndex = this.history.length - 1;
+            }
+            this.isHistoryNavigation = false;
 
             // Log results
             console.log(`\nPage loaded successfully!`);
@@ -116,17 +131,58 @@ export class Browser {
     /**
      * Go back in history
      */
-    back(): void {
-        // TODO: Implement history navigation
-        console.log("Back navigation not yet implemented");
+    async back(): Promise<boolean> {
+        if (this.historyIndex <= 0) {
+            console.log("Cannot go back: at beginning of history");
+            return false;
+        }
+        this.historyIndex--;
+        const url = this.history[this.historyIndex];
+        this.isHistoryNavigation = true;
+        await this.navigate(url);
+        console.log(`Navigated back to: ${url}`);
+        return true;
     }
 
     /**
      * Go forward in history
      */
-    forward(): void {
-        // TODO: Implement history navigation
-        console.log("Forward navigation not yet implemented");
+    async forward(): Promise<boolean> {
+        if (this.historyIndex >= this.history.length - 1) {
+            console.log("Cannot go forward: at end of history");
+            return false;
+        }
+        this.historyIndex++;
+        const url = this.history[this.historyIndex];
+        this.isHistoryNavigation = true;
+        await this.navigate(url);
+        console.log(`Navigated forward to: ${url}`);
+        return true;
+    }
+
+    /**
+     * Check if back navigation is possible
+     */
+    canGoBack(): boolean {
+        return this.historyIndex > 0;
+    }
+
+    /**
+     * Check if forward navigation is possible
+     */
+    canGoForward(): boolean {
+        return this.historyIndex < this.history.length - 1;
+    }
+
+    /**
+     * Get current history state
+     */
+    getHistoryState(): { length: number; index: number; entries: string[] } {
+        return {
+            length: this.history.length,
+            index: this.historyIndex,
+            entries: [...this.history],
+        };
     }
 
     /**
@@ -153,6 +209,14 @@ export class Browser {
         this.config.height = height;
         this.renderingPipeline.setViewportSize(width, height);
         console.log(`Viewport resized to: ${width}x${height}`);
+    }
+
+    /**
+     * Get browser configuration
+     * @returns Current browser configuration
+     */
+    getConfig(): Required<BrowserConfig> {
+        return this.config;
     }
 
     /**

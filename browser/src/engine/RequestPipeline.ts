@@ -70,6 +70,21 @@ export class RequestPipelineError extends Error {
 }
 
 /**
+ * Request Pipeline configuration
+ */
+export interface RequestPipelineConfig {
+    origin?: string;
+    dnsConfig?: {
+        /** DNS-over-HTTPS endpoint (default: Cloudflare) */
+        dohEndpoint?: string;
+        /** Fallback DNS servers for UDP queries */
+        nameservers?: string[];
+        /** Use DoH as primary method (default: true) */
+        preferDoH?: boolean;
+    };
+}
+
+/**
  * Request Pipeline
  * High-level orchestrator for HTTP requests
  */
@@ -81,8 +96,20 @@ export class RequestPipeline {
     private cacheStorage: CacheStorage;
     private requestIdCounter: number = 1;
 
-    constructor(origin: string = "https://localhost") {
-        this.dnsResolver = new DNSResolver();
+    constructor(config: RequestPipelineConfig = {}) {
+        const origin = config.origin || "https://localhost";
+        const dnsConfig = config.dnsConfig || {};
+
+        // Configure DNS resolver with DoH as primary method
+        // DNS-over-HTTPS provides encrypted DNS queries over HTTPS
+        // This avoids the need for --unstable-net flag required by UDP
+        this.dnsResolver = new DNSResolver({
+            // Use Cloudflare DoH by default (fast, privacy-focused)
+            dohEndpoint: dnsConfig.dohEndpoint || "https://cloudflare-dns.com/dns-query",
+            // Fallback nameservers for UDP (requires --unstable-net flag)
+            nameservers: dnsConfig.nameservers || ["8.8.8.8", "8.8.4.4"],
+        });
+
         this.dnsCache = new DNSCache();
         this.connectionPool = new ConnectionPool();
         this.connectionManager = new ConnectionManager(this.connectionPool);
@@ -94,6 +121,30 @@ export class RequestPipeline {
      */
     async request(url: string | URL, options: RequestOptions = {}): Promise<RequestResult> {
         const startTime = Date.now();
+        const timeout = options.timeout ?? 30000; // Default 30 second timeout
+
+        // Wrap the request in a timeout
+        const requestPromise = this.doRequest(url, options, startTime);
+
+        if (timeout > 0) {
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => {
+                    reject(new RequestPipelineError(
+                        `Request timed out after ${timeout}ms`,
+                        "timeout",
+                    ));
+                }, timeout);
+            });
+            return Promise.race([requestPromise, timeoutPromise]);
+        }
+
+        return requestPromise;
+    }
+
+    /**
+     * Internal request implementation
+     */
+    private async doRequest(url: string | URL, options: RequestOptions, startTime: number): Promise<RequestResult> {
         const timing: Partial<RequestTiming> = {};
 
         try {
@@ -144,11 +195,13 @@ export class RequestPipeline {
             const targetIP = addresses[0]; // Use first resolved IP
 
             // 2. Connection Pool (acquire connection)
+            // Pass hostname for TLS SNI - must be hostname, not IP address
             const connStart = Date.now();
             const connection = await this.connectionPool.acquire(
                 targetIP,
                 port as Port,
                 isSecure,
+                parsedUrl.hostname, // Pass hostname for TLS SNI
             );
             timing.tcpConnection = Date.now() - connStart;
 
@@ -167,20 +220,117 @@ export class RequestPipeline {
 
             // 5. Receive HTTP response
             const respStart = Date.now();
-            const responseBuffer = new Uint8Array(65536); // 64KB buffer
-            const bytesRead = await connection.socket.read(responseBuffer);
-            timing.firstByte = Date.now() - respStart;
+            const chunks: Uint8Array[] = [];
+            let totalBytes = 0;
+            let headersComplete = false;
+            let isChunked = false;
+            let contentLength = -1;
+            let bodyStartIndex = 0;
 
-            if (bytesRead === null || bytesRead === 0) {
+            // Read until response is complete
+            while (true) {
+                const chunk = new Uint8Array(16384); // 16KB chunks
+                const bytesRead = await connection.socket.read(chunk);
+
+                if (totalBytes === 0) {
+                    timing.firstByte = Date.now() - respStart;
+                }
+
+                if (bytesRead === null || bytesRead === 0) {
+                    break; // Connection closed
+                }
+
+                chunks.push(chunk.slice(0, bytesRead));
+                totalBytes += bytesRead;
+
+                // Check if headers are complete
+                if (!headersComplete) {
+                    const partialResponse = this.concatChunks(chunks, totalBytes);
+                    const text = new TextDecoder().decode(partialResponse);
+                    const headerEndIndex = text.indexOf("\r\n\r\n");
+
+                    if (headerEndIndex !== -1) {
+                        headersComplete = true;
+                        bodyStartIndex = headerEndIndex + 4;
+
+                        // Check for chunked encoding or content-length
+                        const lowerText = text.toLowerCase();
+                        if (lowerText.includes("transfer-encoding: chunked")) {
+                            isChunked = true;
+                        }
+
+                        // Check for multiple Content-Length headers (potential HTTP desync attack)
+                        const clMatches = lowerText.match(/content-length:\s*\d+/g);
+                        if (clMatches && clMatches.length > 1) {
+                            throw new Error("Multiple Content-Length headers detected - potential HTTP desync attack");
+                        }
+
+                        const clMatch = lowerText.match(/content-length:\s*(\d+)/);
+                        if (clMatch) {
+                            const parsedLength = parseInt(clMatch[1], 10);
+                            // Validate Content-Length is a valid non-negative integer
+                            if (Number.isNaN(parsedLength) || parsedLength < 0) {
+                                throw new Error(`Invalid Content-Length value: ${clMatch[1]}`);
+                            }
+                            // Validate Content-Length doesn't exceed max response size (10MB)
+                            const maxResponseSize = 10 * 1024 * 1024;
+                            if (parsedLength > maxResponseSize) {
+                                throw new Error(`Content-Length ${parsedLength} exceeds maximum allowed size of ${maxResponseSize} bytes`);
+                            }
+                            contentLength = parsedLength;
+                        }
+                    }
+                }
+
+                // Check if response is complete
+                if (headersComplete) {
+                    const partialResponse = this.concatChunks(chunks, totalBytes);
+
+                    if (isChunked) {
+                        // Check for chunked terminator: 0\r\n followed by optional trailers and final \r\n
+                        // RFC 7230 Section 4.1: chunked-body = *chunk last-chunk trailer-part CRLF
+                        // last-chunk = "0" *( ";" chunk-ext ) CRLF
+                        // trailer-part = *( header-field CRLF )
+                        const text = new TextDecoder().decode(partialResponse.slice(bodyStartIndex));
+                        // Find the zero-length chunk (can be "0\r\n" or "0;ext\r\n")
+                        const zeroChunkMatch = text.match(/\r\n0(?:;[^\r\n]*)?\r\n/);
+                        if (zeroChunkMatch) {
+                            // Zero-length chunk found - check if the message ends with \r\n\r\n
+                            // (either no trailers: "0\r\n\r\n" or trailers followed by "\r\n\r\n")
+                            if (text.endsWith("\r\n\r\n")) {
+                                break; // Chunked response complete
+                            }
+                        }
+                    } else if (contentLength >= 0) {
+                        const bodyBytes = totalBytes - bodyStartIndex;
+                        if (bodyBytes >= contentLength) {
+                            break; // Content-Length reached
+                        }
+                    } else {
+                        // No content-length or chunked - read a bit more then stop
+                        // This handles responses with no body
+                        if (totalBytes > bodyStartIndex) {
+                            break;
+                        }
+                    }
+                }
+
+                // Safety limit - should match Content-Length validation (10MB)
+                if (totalBytes > 10 * 1024 * 1024) { // 10MB max
+                    break;
+                }
+            }
+
+            if (totalBytes === 0) {
                 throw new Error("No response received from server");
             }
 
-            const responseData = responseBuffer.slice(0, bytesRead);
+            const responseData = this.concatChunks(chunks, totalBytes);
 
             // Parse response
-            const response = this.parseResponse(responseData, request.id);
+            const response = this.parseResponse(responseData as ByteBuffer, request.id);
             response.fromCache = false;
-            timing.download = Date.now() - respStart - timing.firstByte;
+            timing.download = Date.now() - respStart - (timing.firstByte || 0);
 
             // Release connection back to pool
             await this.connectionPool.release(connection);
@@ -202,9 +352,26 @@ export class RequestPipeline {
             ) {
                 const maxRedirects = options.maxRedirects ?? 5;
                 if (maxRedirects > 0) {
-                    const redirectUrl = response.headers.get("location")!;
+                    const locationHeader = response.headers.get("location")!;
+                    // Resolve relative URLs against the original request URL
+                    // This handles both absolute URLs (https://...) and relative URLs (/path, ./path, ../path)
+                    const redirectUrl = new URL(locationHeader, request.url).toString();
+
+                    // Create redirect options, removing host header so it will be set correctly for new URL
+                    // The host header must match the target hostname, not the original hostname
+                    const redirectHeaders = options.headers ? { ...options.headers } : undefined;
+                    if (redirectHeaders) {
+                        // Remove host header (case-insensitive) so buildRequest can set it correctly
+                        for (const key of Object.keys(redirectHeaders)) {
+                            if (key.toLowerCase() === "host") {
+                                delete redirectHeaders[key];
+                            }
+                        }
+                    }
+
                     const redirectOptions: RequestOptions = {
                         ...options,
+                        headers: redirectHeaders,
                         maxRedirects: maxRedirects - 1,
                     };
                     return await this.request(redirectUrl, redirectOptions);
@@ -335,6 +502,18 @@ export class RequestPipeline {
             console.warn("Failed to store in cache:", error);
         }
     }
+    /**
+     * Concatenate byte array chunks into a single buffer
+     */
+    private concatChunks(chunks: Uint8Array[], totalBytes: number): Uint8Array {
+        const result = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.byteLength;
+        }
+        return result;
+    }
 
     /**
      * Check if response is cacheable
@@ -434,41 +613,17 @@ export class RequestPipeline {
      * Parse HTTP response from bytes
      */
     private parseResponse(data: ByteBuffer, requestId: RequestID): HTTPResponse {
-        const parser = new HTTPResponseParser();
-        const text = new TextDecoder().decode(data);
-
-        // Parse status line
-        const lines = text.split("\r\n");
-        const statusLine = lines[0];
-        const [version, statusCode, ...statusTextParts] = statusLine.split(" ");
-
-        // Parse headers
-        const headers: HTTPHeaders = new Map();
-        let i = 1;
-        for (; i < lines.length; i++) {
-            const line = lines[i];
-            if (line === "") {
-                break;
-            }
-            const colonIndex = line.indexOf(":");
-            if (colonIndex !== -1) {
-                const key = line.substring(0, colonIndex).trim().toLowerCase();
-                const value = line.substring(colonIndex + 1).trim();
-                headers.set(key, value);
-            }
-        }
-
-        // Parse body
-        const bodyStart = text.indexOf("\r\n\r\n") + 4;
-        const body = data.slice(bodyStart);
+        // Use the proper HTTPResponseParser which handles NaN validation,
+        // chunked encoding, and correct binary body extraction
+        const parsed = HTTPResponseParser.parseResponse(data);
 
         return {
             id: requestId,
-            statusCode: parseInt(statusCode, 10),
-            statusText: statusTextParts.join(" "),
-            version: version.replace("HTTP/", "") as import("../types/http.ts").HTTPVersion,
-            headers,
-            body,
+            statusCode: parsed.statusCode,
+            statusText: parsed.statusText,
+            version: parsed.version.replace("HTTP/", "") as import("../types/http.ts").HTTPVersion,
+            headers: parsed.headers,
+            body: parsed.body,
             receivedAt: Date.now(),
             fromCache: false,
             timings: {

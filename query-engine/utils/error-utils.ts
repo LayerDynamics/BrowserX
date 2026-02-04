@@ -4,14 +4,25 @@
  */
 
 /**
+ * Extended error interface with code and context
+ */
+export interface ExtendedError extends Error {
+  code?: string;
+  context?: Record<string, unknown>;
+  cause?: Error;
+  status?: number;
+  statusCode?: number;
+}
+
+/**
  * Create error with additional context
  */
 export function createError(
   message: string,
   code?: string,
   context?: Record<string, unknown>,
-): Error & { code?: string; context?: Record<string, unknown> } {
-  const error: any = new Error(message);
+): ExtendedError {
+  const error = new Error(message) as ExtendedError;
   if (code) error.code = code;
   if (context) error.context = context;
   return error;
@@ -20,9 +31,9 @@ export function createError(
 /**
  * Wrap error with additional message
  */
-export function wrapError(original: Error, message: string): Error {
-  const wrapped = new Error(`${message}: ${original.message}`);
-  (wrapped as any).cause = original;
+export function wrapError(original: Error, message: string): ExtendedError {
+  const wrapped = new Error(`${message}: ${original.message}`) as ExtendedError;
+  wrapped.cause = original;
   wrapped.stack = original.stack;
   return wrapped;
 }
@@ -30,15 +41,16 @@ export function wrapError(original: Error, message: string): Error {
 /**
  * Format error with context for display
  */
-export function formatError(error: Error): string {
+export function formatError(error: Error | ExtendedError): string {
+  const extError = error as ExtendedError;
   const parts: string[] = [error.message];
 
-  if ((error as any).code) {
-    parts.push(`Code: ${(error as any).code}`);
+  if (extError.code) {
+    parts.push(`Code: ${extError.code}`);
   }
 
-  if ((error as any).context) {
-    parts.push(`Context: ${JSON.stringify((error as any).context, null, 2)}`);
+  if (extError.context) {
+    parts.push(`Context: ${JSON.stringify(extError.context, null, 2)}`);
   }
 
   if (error.stack) {
@@ -59,7 +71,7 @@ export function getErrorMessage(error: unknown): string {
     return error;
   }
   if (error != null && typeof error === "object" && "message" in error) {
-    return String((error as any).message);
+    return String((error as { message: unknown }).message);
   }
   return String(error);
 }
@@ -72,7 +84,7 @@ export function shouldRetry(error: unknown, attempt: number, maxAttempts: number
 
   // Check for retryable error codes/types
   if (error instanceof Error) {
-    const code = (error as any).code;
+    const extError = error as ExtendedError;
 
     // Network errors are retryable
     const retryableCodes = [
@@ -83,12 +95,12 @@ export function shouldRetry(error: unknown, attempt: number, maxAttempts: number
       "EAI_AGAIN",
     ];
 
-    if (code && retryableCodes.includes(code)) {
+    if (extError.code && retryableCodes.includes(extError.code)) {
       return true;
     }
 
     // HTTP status codes that are retryable
-    const status = (error as any).status || (error as any).statusCode;
+    const status = extError.status || extError.statusCode;
     if (status) {
       // 429 Too Many Requests, 503 Service Unavailable, 504 Gateway Timeout
       if ([429, 503, 504].includes(status)) {

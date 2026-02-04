@@ -39,7 +39,74 @@ export type Statement =
   | InsertStatement
   | UpdateStatement
   | DeleteStatement
-  | WithStatement;
+  | WithStatement
+  | BlockStatement
+  | ClickStatement
+  | WaitStatement
+  | ScreenshotStatement
+  | PdfStatement;
+
+/**
+ * Block statement containing multiple statements
+ */
+export interface BlockStatement extends ASTNode {
+  type: "BLOCK";
+  statements: Statement[];
+}
+
+/**
+ * CLICK statement for browser automation
+ */
+export interface ClickStatement extends ASTNode {
+  type: "CLICK";
+  selector: Expression;
+  options?: ClickOptions;
+}
+
+export interface ClickOptions {
+  waitForNavigation?: boolean;
+  timeout?: number;
+}
+
+/**
+ * WAIT statement for browser automation
+ */
+export interface WaitStatement extends ASTNode {
+  type: "WAIT";
+  waitType: "time" | "selector" | "function";
+  value: Expression;
+  timeout?: number;
+}
+
+/**
+ * SCREENSHOT statement for browser automation
+ */
+export interface ScreenshotStatement extends ASTNode {
+  type: "SCREENSHOT";
+  options?: ScreenshotOptions;
+}
+
+export interface ScreenshotOptions {
+  selector?: Expression;
+  fullPage?: boolean;
+  format?: "png" | "jpeg";
+  quality?: number;
+  path?: string;
+}
+
+/**
+ * PDF statement for browser automation
+ */
+export interface PdfStatement extends ASTNode {
+  type: "PDF";
+  options?: PdfOptions;
+}
+
+export interface PdfOptions {
+  format?: "A4" | "Letter" | "Legal" | "A3";
+  landscape?: boolean;
+  path?: string;
+}
 
 /**
  * SELECT statement
@@ -61,7 +128,7 @@ export interface Field {
 }
 
 export interface Source {
-  type: "URL" | "SUBQUERY" | "VARIABLE";
+  type: "URL" | "SUBQUERY" | "VARIABLE" | "SELECTOR";
   value: string | Statement;
 }
 
@@ -71,7 +138,7 @@ export interface OrderBy {
 }
 
 export interface LimitClause {
-  limit: number;
+  count: number;
   offset?: number;
 }
 
@@ -93,7 +160,9 @@ export interface NavigateOptions {
 }
 
 export interface ProxyConfig {
+  enabled?: boolean;
   cache?: boolean | "only";
+  ttl?: number;
   headers?: Record<string, string>;
   intercept?: InterceptConfig;
   rotate?: boolean;
@@ -156,8 +225,8 @@ export interface ForStatement extends ASTNode {
 export interface IfStatement extends ASTNode {
   type: "IF";
   condition: Expression;
-  thenBranch: Statement;
-  elseBranch?: Statement;
+  then: Statement;
+  else?: Statement;
 }
 
 /**

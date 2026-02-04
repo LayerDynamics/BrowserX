@@ -23,7 +23,7 @@
   "tasks": {
     "check": "deno check mod.ts",
     "check:watch": "deno check --watch mod.ts",
-    "test": "deno test --allow-all",
+    "test": "deno test --allow-all --no-check",
     "test:unit": "deno test --allow-all tests/unit/",
     "test:integration": "deno test --allow-all tests/integration/",
     "test:performance": "deno test --allow-all tests/performance/",

@@ -1,0 +1,33 @@
+{
+  "name": "@browserx/mcp-server",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.ts"
+  },
+  "imports": {
+    "@modelcontextprotocol/sdk/server/mcp.js": "npm:@modelcontextprotocol/sdk@1.12.0/server/mcp.js",
+    "@modelcontextprotocol/sdk/server/stdio.js": "npm:@modelcontextprotocol/sdk@1.12.0/server/stdio.js",
+    "@modelcontextprotocol/sdk/types.js": "npm:@modelcontextprotocol/sdk@1.12.0/types.js",
+    "@modelcontextprotocol/sdk/inMemory.js": "npm:@modelcontextprotocol/sdk@1.12.0/inMemory.js",
+    "zod": "npm:zod@3.25.76",
+    "@browserx/query-engine": "../query-engine/mod.ts",
+    "@browserx/browser": "../browser/src/mod.ts",
+    "@browserx/runtime": "../runtime/src/mod.ts",
+    "@std/encoding": "jsr:@std/encoding@1.0.0"
+  },
+  "tasks": {
+    "start": "deno run --allow-all mod.ts",
+    "start:http": "deno run --allow-all mod.ts --http --port=9847",
+    "dev": "deno run --allow-all --watch mod.ts",
+    "test": "deno test --allow-all",
+    "check": "deno check mod.ts",
+    "compile": "deno compile --allow-all --output=browserx-mcp mod.ts",
+    "compile:mac": "deno compile --allow-all --target x86_64-apple-darwin --output=dist/browserx-mcp-mac mod.ts",
+    "compile:linux": "deno compile --allow-all --target x86_64-unknown-linux-gnu --output=dist/browserx-mcp-linux mod.ts",
+    "compile:win": "deno compile --allow-all --target x86_64-pc-windows-msvc --output=dist/browserx-mcp-win.exe mod.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true
+  }
+}

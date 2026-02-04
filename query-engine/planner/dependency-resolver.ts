@@ -148,8 +148,8 @@ export class DependencyResolver {
           break;
         case "IF":
           visitExpression(s.condition);
-          visitStatement(s.thenBranch);
-          if (s.elseBranch) visitStatement(s.elseBranch);
+          visitStatement(s.then);
+          if (s.else) visitStatement(s.else);
           break;
         case "WITH":
           for (const cte of s.ctes) {

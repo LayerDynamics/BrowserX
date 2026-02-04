@@ -141,10 +141,26 @@ Deno.test({
         const stack = new NetworkStack();
         const socket = stack.createSocket("IPv4", "udp");
 
+        // UDP requires --unstable-net flag, test may not work in all environments
+        if (typeof Deno.listenDatagram !== "function") {
+            // Skip test if UDP is not available
+            await assertRejects(
+                async () => {
+                    await stack.connect(socket, "8.8.8.8", 53);
+                },
+                Error,
+                "UDP sockets require --unstable-net flag",
+            );
+            return;
+        }
+
         await stack.connect(socket, "8.8.8.8", 53);
 
         assertEquals(socket.remoteHost, "8.8.8.8");
         assertEquals(socket.remotePort, 53);
+
+        // Cleanup UDP socket
+        stack.close(socket);
     },
 });
 

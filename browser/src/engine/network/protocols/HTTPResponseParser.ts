@@ -67,16 +67,24 @@ export class HTTPResponseParser {
      * @returns Parsed HTTP response
      */
     static parseResponse(data: ByteBuffer): HTTPResponse {
-        const text = new TextDecoder().decode(data);
-
-        // Find end of headers (double CRLF)
-        const headerEndIndex = text.indexOf("\r\n\r\n");
-        if (headerEndIndex === -1) {
+        // Find end of headers by scanning bytes directly (0x0D 0x0A 0x0D 0x0A)
+        // This avoids character-offset vs byte-offset mismatches
+        let headerEndByteIndex = -1;
+        for (let i = 0; i < data.byteLength - 3; i++) {
+            if (data[i] === 0x0D && data[i + 1] === 0x0A && data[i + 2] === 0x0D && data[i + 3] === 0x0A) {
+                headerEndByteIndex = i;
+                break;
+            }
+        }
+        if (headerEndByteIndex === -1) {
             throw new Error("Invalid HTTP response: no header end marker");
         }
 
+        // Decode only the header portion as text
+        const text = new TextDecoder().decode(data.slice(0, headerEndByteIndex));
+
         // Split into lines
-        const lines = text.substring(0, headerEndIndex).split("\r\n");
+        const lines = text.split("\r\n");
 
         if (lines.length === 0) {
             throw new Error("Invalid HTTP response: empty");
@@ -103,8 +111,8 @@ export class HTTPResponseParser {
         const headerBytes = new TextEncoder().encode(headerLines);
         const headers = HTTPHeaderParser.parseHeaders(headerBytes);
 
-        // Extract body (handle chunked encoding if present)
-        const bodyStartIndex = headerEndIndex + 4; // Skip \r\n\r\n
+        // Extract body using byte offset (handle chunked encoding if present)
+        const bodyStartIndex = headerEndByteIndex + 4; // Skip \r\n\r\n
         const rawBody = data.slice(bodyStartIndex);
 
         const transferEncoding = HTTPHeaderParser.getHeader(headers, "transfer-encoding");
@@ -130,29 +138,67 @@ export class HTTPResponseParser {
      * ...
      * 0 CRLF
      * CRLF
+     *
+     * Works entirely with byte offsets to avoid character/byte offset mismatches
+     * that occur when content contains multi-byte UTF-8 characters.
      */
     static decodeChunkedBody(data: ByteBuffer): ByteBuffer {
         const chunks: Uint8Array[] = [];
         let offset = 0;
-        const text = new TextDecoder().decode(data);
 
         while (offset < data.byteLength) {
-            // Find chunk size line
-            const crlfIndex = text.indexOf("\r\n", offset);
+            // Find CRLF by scanning bytes directly
+            let crlfIndex = -1;
+            for (let i = offset; i < data.byteLength - 1; i++) {
+                if (data[i] === 0x0D && data[i + 1] === 0x0A) { // \r\n
+                    crlfIndex = i;
+                    break;
+                }
+            }
+
             if (crlfIndex === -1) {
+                // No more complete chunks
                 break;
             }
 
-            // Parse chunk size (hex)
-            const chunkSizeLine = text.substring(offset, crlfIndex);
+            // Parse chunk size line (ASCII hex, so safe to decode as text)
+            const chunkSizeBytes = data.slice(offset, crlfIndex);
+            const chunkSizeLine = new TextDecoder().decode(chunkSizeBytes);
             const chunkSize = parseInt(chunkSizeLine.split(";")[0].trim(), 16);
 
             if (isNaN(chunkSize)) {
                 throw new Error(`Invalid chunk size: ${chunkSizeLine}`);
             }
 
-            // Last chunk
+            // Last chunk (size 0)
             if (chunkSize === 0) {
+                // RFC 7230 Section 4.1: Consume optional trailer headers after zero-length chunk
+                // Format: 0\r\n[trailer-header\r\n]*\r\n
+                offset = crlfIndex + 2; // Move past "0\r\n"
+
+                // Consume trailer headers until we hit an empty line (just CRLF)
+                while (offset < data.byteLength - 1) {
+                    // Find next CRLF
+                    let trailerCrlfIndex = -1;
+                    for (let i = offset; i < data.byteLength - 1; i++) {
+                        if (data[i] === 0x0D && data[i + 1] === 0x0A) {
+                            trailerCrlfIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (trailerCrlfIndex === -1) {
+                        break; // No more complete lines
+                    }
+
+                    // If this is an empty line (CRLF at current offset), we're done
+                    if (trailerCrlfIndex === offset) {
+                        break; // Found terminating CRLF
+                    }
+
+                    // Otherwise it's a trailer header - skip it
+                    offset = trailerCrlfIndex + 2;
+                }
                 break;
             }
 

@@ -231,7 +231,12 @@ export class DependencyGraphBuilder {
    * Calculate estimated parallel execution time
    */
   estimateParallelExecutionTime(graph: DependencyGraph): number {
+    // Pre-check for cycles using topologicalSort (throws if cycles exist)
+    // This ensures consistent behavior with other graph operations
+    this.topologicalSort(graph);
+
     const stepCosts = new Map<string, number>();
+    const visiting = new Set<string>();  // Track nodes being visited to detect cycles
 
     // Calculate earliest start time for each step
     const calculateStartTime = (nodeId: string): number => {
@@ -239,16 +244,28 @@ export class DependencyGraphBuilder {
         return stepCosts.get(nodeId)!;
       }
 
+      // Cycle detection: if we're already visiting this node, we have a cycle
+      if (visiting.has(nodeId)) {
+        // Return 0 to break the cycle (treat as no dependency)
+        return 0;
+      }
+
       const node = graph.nodes.get(nodeId);
       if (!node) {
         return 0;
       }
+
+      // Mark as visiting before recursing
+      visiting.add(nodeId);
 
       // Start time is max end time of all dependencies
       const depEndTimes = node.dependencies.map((depId) => {
         const depNode = graph.nodes.get(depId);
         return calculateStartTime(depId) + (depNode?.step.estimatedCost || 0);
       });
+
+      // Done visiting this node
+      visiting.delete(nodeId);
 
       const startTime = depEndTimes.length > 0 ? Math.max(...depEndTimes) : 0;
       stepCosts.set(nodeId, startTime);

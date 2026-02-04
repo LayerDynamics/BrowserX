@@ -37,8 +37,11 @@ export class StateManager {
     // Initialize cache manager with config
     this.cacheManager = new QueryCacheManager(config.cache);
 
-    // Initialize session manager
-    this.sessionManager = new SessionStateManager(config.sessionTimeout);
+    // Initialize session manager with timeout and cleanup interval
+    this.sessionManager = new SessionStateManager(
+      config.sessionTimeout,
+      config.sessionCleanupInterval
+    );
 
     // Initialize per-query state maps
     this.executionContexts = new Map();

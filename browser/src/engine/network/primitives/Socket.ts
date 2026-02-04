@@ -62,6 +62,7 @@ export class SocketImpl implements Socket {
     private _remoteAddress: string = "";
     private _remotePort: Port = 0;
     private _stats: SocketStats;
+    private _options: SocketOptions = {};
 
     constructor(
         private addressFamily: AddressFamily,
@@ -99,9 +100,14 @@ export class SocketImpl implements Socket {
     /**
      * Connect to remote host
      */
-    async connect(host: string, port: Port, _options?: SocketOptions): Promise<void> {
+    async connect(host: string, port: Port, options?: SocketOptions): Promise<void> {
         if (this._state !== SocketStateEnum.CLOSED) {
             throw new Error(`Cannot connect from state ${this._state}`);
+        }
+
+        // Store options if provided
+        if (options) {
+            this._options = { ...this._options, ...options };
         }
 
         this._state = SocketStateEnum.OPENING;
@@ -120,12 +126,18 @@ export class SocketImpl implements Socket {
             this._remotePort = port;
 
             // Get local address (assigned by OS)
-            if (this.osSocket.conn) {
+            // For TCP, check conn; for UDP, check datagramConn
+            if (this.osSocket.conn || this.osSocket.datagramConn) {
                 const localAddr = this.networkStack.getLocalAddress(this.osSocket);
                 if (localAddr.transport === "tcp" || localAddr.transport === "udp") {
-                    this._localAddress = localAddr.hostname;
-                    this._localPort = localAddr.port;
+                    this._localAddress = (localAddr as Deno.NetAddr).hostname;
+                    this._localPort = (localAddr as Deno.NetAddr).port;
                 }
+            }
+
+            // Apply stored socket options after connection is established
+            if (Object.keys(this._options).length > 0) {
+                this.setOptions(this._options);
             }
         } catch (error) {
             this._state = SocketStateEnum.ERROR;
@@ -208,11 +220,59 @@ export class SocketImpl implements Socket {
     }
 
     /**
-     * Set socket options (stub for now)
+     * Set socket options
+     *
+     * Applies options to the underlying Deno connection where supported.
+     * Options are also stored for potential future use.
+     *
+     * Supported by Deno:
+     * - TCP_NODELAY: Disables Nagle's algorithm
+     * - TCP_KEEPALIVE: Enables TCP keep-alive probes
+     *
+     * Stored but not directly applied (Deno limitations):
+     * - TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT: Keep-alive parameters
+     * - SO_REUSEADDR, SO_REUSEPORT: Address/port reuse
+     * - SO_RCVBUF, SO_SNDBUF: Buffer sizes
+     * - SO_RCVTIMEO, SO_SNDTIMEO: Timeouts
+     * - SO_LINGER: Linger on close
      */
-    setOptions(_options: SocketOptions): void {
-        // TODO: Implement socket options via Deno APIs
-        // Deno doesn't expose all socket options, so this is a stub
+    setOptions(options: SocketOptions): void {
+        // Store all options
+        this._options = { ...this._options, ...options };
+
+        // Apply options to connection if connected
+        if (this.osSocket?.conn) {
+            // Cast to TcpConn which has setNoDelay and setKeepAlive
+            const conn = this.osSocket.conn as unknown as {
+                setNoDelay?: (noDelay: boolean) => void;
+                setKeepAlive?: (keepAlive: boolean) => void;
+            };
+
+            // TCP_NODELAY - Disable Nagle's algorithm
+            if (options.TCP_NODELAY !== undefined && conn.setNoDelay) {
+                try {
+                    conn.setNoDelay(options.TCP_NODELAY);
+                } catch {
+                    // setNoDelay may not be available on all connections
+                }
+            }
+
+            // TCP_KEEPALIVE - Enable TCP keep-alive
+            if (options.TCP_KEEPALIVE !== undefined && conn.setKeepAlive) {
+                try {
+                    conn.setKeepAlive(options.TCP_KEEPALIVE);
+                } catch {
+                    // setKeepAlive may not be available on all connections
+                }
+            }
+        }
+    }
+
+    /**
+     * Get current socket options
+     */
+    getOptions(): SocketOptions {
+        return { ...this._options };
     }
 
     /**

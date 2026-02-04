@@ -13,12 +13,74 @@ import type { LayoutConstraints, PaintContext } from "../../../types/rendering.t
 
 /**
  * Simple LayoutBox for text (doesn't use full box model)
+ * Text nodes don't have padding, border, or margin - just position and size
  */
 class TextLayoutBox {
     x: Pixels = 0 as Pixels;
     y: Pixels = 0 as Pixels;
     width: Pixels = 0 as Pixels;
     height: Pixels = 0 as Pixels;
+
+    // Text nodes don't have padding, border, or margin
+    paddingTop: Pixels = 0 as Pixels;
+    paddingRight: Pixels = 0 as Pixels;
+    paddingBottom: Pixels = 0 as Pixels;
+    paddingLeft: Pixels = 0 as Pixels;
+    borderTopWidth: Pixels = 0 as Pixels;
+    borderRightWidth: Pixels = 0 as Pixels;
+    borderBottomWidth: Pixels = 0 as Pixels;
+    borderLeftWidth: Pixels = 0 as Pixels;
+    marginTop: Pixels = 0 as Pixels;
+    marginRight: Pixels = 0 as Pixels;
+    marginBottom: Pixels = 0 as Pixels;
+    marginLeft: Pixels = 0 as Pixels;
+
+    /**
+     * Get content box dimensions
+     */
+    getContentBox(): { x: Pixels; y: Pixels; width: Pixels; height: Pixels } {
+        return {
+            x: this.x,
+            y: this.y,
+            width: this.width,
+            height: this.height,
+        };
+    }
+
+    /**
+     * Get padding box dimensions (same as content for text)
+     */
+    getPaddingBox(): { x: Pixels; y: Pixels; width: Pixels; height: Pixels } {
+        return this.getContentBox();
+    }
+
+    /**
+     * Get border box dimensions (same as content for text)
+     */
+    getBorderBox(): { x: Pixels; y: Pixels; width: Pixels; height: Pixels } {
+        return this.getContentBox();
+    }
+
+    /**
+     * Get margin box dimensions (same as content for text)
+     */
+    getMarginBox(): { x: Pixels; y: Pixels; width: Pixels; height: Pixels } {
+        return this.getContentBox();
+    }
+
+    /**
+     * Get total width (text has no margin/border/padding, just content width)
+     */
+    getTotalWidth(): Pixels {
+        return this.width;
+    }
+
+    /**
+     * Get total height (text has no margin/border/padding, just content height)
+     */
+    getTotalHeight(): Pixels {
+        return this.height;
+    }
 }
 
 /**

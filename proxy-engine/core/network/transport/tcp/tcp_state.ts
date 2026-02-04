@@ -118,6 +118,9 @@ export class TCPStateMachine {
   private smoothedRTT = 0;
   private rttVariance = 0;
 
+  // TIME_WAIT timer
+  private timeWaitTimer?: number;
+
   // Congestion control
   private cwnd = 1; // Congestion window (in MSS units)
   private ssthresh = 65535; // Slow start threshold
@@ -294,6 +297,10 @@ export class TCPStateMachine {
       case "CLOSE":
         this.state = TCPState.FIN_WAIT_1;
         return this.createFINSegment();
+
+      case "ABORT":
+        this.state = TCPState.CLOSED;
+        return this.createRSTSegment();
 
       default:
         return null;
@@ -495,6 +502,28 @@ export class TCPStateMachine {
   }
 
   /**
+   * Create RST segment (for abort)
+   */
+  private createRSTSegment(): TCPSegment {
+    return {
+      sourcePort: 0,
+      destPort: 0,
+      sequenceNumber: this.sequenceNumber,
+      acknowledgmentNumber: this.acknowledgmentNumber,
+      flags: {
+        SYN: false,
+        ACK: false,
+        FIN: false,
+        RST: true,
+        PSH: false,
+        URG: false,
+      },
+      windowSize: 0,
+      data: new Uint8Array(0),
+    };
+  }
+
+  /**
    * Create data segment
    */
   private createDataSegment(data: Uint8Array): TCPSegment {
@@ -532,11 +561,36 @@ export class TCPStateMachine {
    * Start TIME_WAIT timer (2 * MSL)
    */
   private startTimeWaitTimer(): void {
+    // Clear any existing timer
+    this.clearTimeWaitTimer();
+
     // 2 * MSL = 2 * 2 minutes = 4 minutes
     const MSL = 2 * 60 * 1000;
-    setTimeout(() => {
+    this.timeWaitTimer = setTimeout(() => {
+      this.timeWaitTimer = undefined;
       this.processEvent({ type: "TIMEOUT" });
     }, 2 * MSL);
+  }
+
+  /**
+   * Clear TIME_WAIT timer
+   */
+  private clearTimeWaitTimer(): void {
+    if (this.timeWaitTimer !== undefined) {
+      clearTimeout(this.timeWaitTimer);
+      this.timeWaitTimer = undefined;
+    }
+  }
+
+  /**
+   * Cleanup all timers (call before discarding state machine)
+   */
+  cleanup(): void {
+    this.clearTimeWaitTimer();
+    if (this.retransmitTimer !== undefined) {
+      clearTimeout(this.retransmitTimer);
+      this.retransmitTimer = undefined;
+    }
   }
 
   /**
@@ -558,10 +612,16 @@ export class TCPStateMachine {
     }
 
     // Update RTO (Retransmission Timeout)
+    // Store the raw calculated value for stats
     this.retransmitTimeout = this.smoothedRTT + 4 * this.rttVariance;
+  }
 
-    // Clamp RTO to reasonable bounds
-    this.retransmitTimeout = Math.max(1000, Math.min(60000, this.retransmitTimeout));
+  /**
+   * Get effective RTO with bounds clamping
+   */
+  getEffectiveRTO(): number {
+    // Clamp RTO to reasonable bounds per RFC 6298
+    return Math.max(1000, Math.min(60000, this.retransmitTimeout));
   }
 
   /**
@@ -591,8 +651,8 @@ export class TCPStateMachine {
     this.ssthresh = Math.max(this.cwnd / 2, 2);
     this.cwnd = 1;
 
-    // Exponential backoff
-    this.retransmitTimeout *= 2;
+    // Exponential backoff - double the effective (clamped) RTO
+    this.retransmitTimeout = this.getEffectiveRTO() * 2;
   }
 
   /**
@@ -607,7 +667,7 @@ export class TCPStateMachine {
       receiveWindow: this.receiveWindow,
       cwnd: this.cwnd,
       ssthresh: this.ssthresh,
-      rto: this.retransmitTimeout,
+      rto: this.getEffectiveRTO(),
       smoothedRTT: this.smoothedRTT,
       rttVariance: this.rttVariance,
     };

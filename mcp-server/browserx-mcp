@@ -1,0 +1,158 @@
+#!/bin/bash
+# BrowserX MCP Server Control Script
+# Usage: browserx-mcp [start|stop|restart|status|logs]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MCP_SERVER_PATH="$SCRIPT_DIR/mod.ts"
+PID_FILE="/tmp/browserx-mcp.pid"
+LOG_FILE="/tmp/browserx-mcp.log"
+PORT="${BROWSERX_MCP_PORT:-9847}"
+
+start_server() {
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "BrowserX MCP server is already running (PID: $PID)"
+            return 0
+        else
+            rm -f "$PID_FILE"
+        fi
+    fi
+
+    echo "Starting BrowserX MCP server on port $PORT..."
+    nohup deno run --allow-all "$MCP_SERVER_PATH" --http --port="$PORT" > "$LOG_FILE" 2>&1 &
+    PID=$!
+    echo $PID > "$PID_FILE"
+
+    # Wait a moment and verify it started
+    sleep 2
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "BrowserX MCP server started (PID: $PID)"
+        echo "Endpoint: http://localhost:$PORT/mcp"
+        echo "Logs: $LOG_FILE"
+    else
+        echo "Failed to start server. Check logs: $LOG_FILE"
+        rm -f "$PID_FILE"
+        return 1
+    fi
+}
+
+stop_server() {
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Stopping BrowserX MCP server (PID: $PID)..."
+            kill "$PID"
+            sleep 1
+            # Force kill if still running
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null || true
+            fi
+            rm -f "$PID_FILE"
+            echo "Server stopped"
+        else
+            echo "Server not running (stale PID file removed)"
+            rm -f "$PID_FILE"
+        fi
+    else
+        # Try to find and kill any running instance
+        PIDS=$(pgrep -f "browserx.*mcp-server/mod.ts" 2>/dev/null || true)
+        if [ -n "$PIDS" ]; then
+            echo "Stopping BrowserX MCP server processes..."
+            echo "$PIDS" | xargs kill 2>/dev/null || true
+            sleep 1
+            echo "$PIDS" | xargs kill -9 2>/dev/null || true
+            echo "Server stopped"
+        else
+            echo "BrowserX MCP server is not running"
+        fi
+    fi
+}
+
+server_status() {
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "BrowserX MCP server is running (PID: $PID)"
+            echo "Endpoint: http://localhost:$PORT/mcp"
+            echo "Logs: $LOG_FILE"
+            return 0
+        else
+            echo "BrowserX MCP server is not running (stale PID file)"
+            rm -f "$PID_FILE"
+            return 1
+        fi
+    else
+        # Check if running without PID file
+        PIDS=$(pgrep -f "browserx.*mcp-server/mod.ts" 2>/dev/null || true)
+        if [ -n "$PIDS" ]; then
+            echo "BrowserX MCP server is running (PID: $PIDS) - no PID file"
+            return 0
+        else
+            echo "BrowserX MCP server is not running"
+            return 1
+        fi
+    fi
+}
+
+show_logs() {
+    if [ -f "$LOG_FILE" ]; then
+        echo "=== BrowserX MCP Server Logs ==="
+        tail -50 "$LOG_FILE"
+    else
+        echo "No log file found at $LOG_FILE"
+    fi
+}
+
+follow_logs() {
+    if [ -f "$LOG_FILE" ]; then
+        echo "=== Following BrowserX MCP Server Logs (Ctrl+C to exit) ==="
+        tail -f "$LOG_FILE"
+    else
+        echo "No log file found at $LOG_FILE"
+    fi
+}
+
+case "${1:-}" in
+    start)
+        start_server
+        ;;
+    stop)
+        stop_server
+        ;;
+    restart)
+        stop_server
+        sleep 1
+        start_server
+        ;;
+    status)
+        server_status
+        ;;
+    logs)
+        show_logs
+        ;;
+    logs-follow)
+        follow_logs
+        ;;
+    *)
+        echo "BrowserX MCP Server Control"
+        echo ""
+        echo "Usage: $0 {start|stop|restart|status|logs|logs-follow}"
+        echo ""
+        echo "Commands:"
+        echo "  start       Start the HTTP server on port $PORT"
+        echo "  stop        Stop the running server"
+        echo "  restart     Restart the server"
+        echo "  status      Check if server is running"
+        echo "  logs        Show recent logs"
+        echo "  logs-follow Follow logs in real-time"
+        echo ""
+        echo "Environment:"
+        echo "  BROWSERX_MCP_PORT  Set custom port (default: 9847)"
+        echo ""
+        echo "Note: For Claude Code integration (stdio), the server is"
+        echo "      managed automatically. This script is for HTTP mode."
+        ;;
+esac

@@ -16,6 +16,22 @@ import {
 import { GPUBufferUsageFlags, GPUBufferState } from "../../../types/webgpu.ts";
 import { alignSize, COPY_BUFFER_ALIGNMENT } from "./Size.ts";
 
+/**
+ * Safely extract height from GPUExtent3D
+ * GPUExtent3D can be an array [width, height, depth] or an object {width, height?, depthOrArrayLayers?}
+ */
+function getExtent3DHeight(extent: GPUExtent3D): number {
+    if (Array.isArray(extent)) {
+        // Array form: [width, height, depth]
+        return extent[1] ?? 1;
+    }
+    // Object form: {width, height?, depthOrArrayLayers?}
+    if (typeof extent === "object" && extent !== null && "height" in extent) {
+        return (extent as { height?: number }).height ?? 1;
+    }
+    return 1;
+}
+
 // ============================================================================
 // Copy Configuration
 // ============================================================================
@@ -623,7 +639,7 @@ export function copyTextureToBuffer(
 
         return {
             success: true,
-            bytesCopied: (descriptor.bytesPerRow * (descriptor.copySize as any).height) as ByteCount,
+            bytesCopied: (descriptor.bytesPerRow * getExtent3DHeight(descriptor.copySize)) as ByteCount,
             durationMs,
         };
     } catch (error) {
@@ -672,7 +688,7 @@ export function copyBufferToTexture(
 
         return {
             success: true,
-            bytesCopied: (descriptor.bytesPerRow * (descriptor.copySize as any).height) as ByteCount,
+            bytesCopied: (descriptor.bytesPerRow * getExtent3DHeight(descriptor.copySize)) as ByteCount,
             durationMs,
         };
     } catch (error) {

@@ -26,13 +26,24 @@ export class ValidationError extends Error {
 }
 
 /**
+ * Validator configuration
+ */
+export interface ValidatorConfig {
+  allowUndefinedVariables?: boolean;
+}
+
+/**
  * Semantic validator
  */
 export class Validator {
   private symbolTable: SymbolTable;
+  private config: ValidatorConfig;
 
-  constructor(symbolTable: SymbolTable) {
+  constructor(symbolTable: SymbolTable, config: ValidatorConfig = {}) {
     this.symbolTable = symbolTable;
+    this.config = {
+      allowUndefinedVariables: config.allowUndefinedVariables ?? false,
+    };
   }
 
   /**
@@ -100,7 +111,7 @@ export class Validator {
 
     // Validate LIMIT
     if (stmt.limit) {
-      if (stmt.limit.limit <= 0) {
+      if (stmt.limit.count <= 0) {
         throw new ValidationError("LIMIT must be positive");
       }
       if (stmt.limit.offset !== undefined && stmt.limit.offset < 0) {
@@ -119,11 +130,33 @@ export class Validator {
     } else if (source.type === "SUBQUERY") {
       this.validate(source.value as Statement);
     } else if (source.type === "VARIABLE") {
-      const varName = source.value as string;
-      const symbol = this.symbolTable.resolve(varName);
-      if (!symbol) {
-        throw new ValidationError(`Undefined variable: ${varName}`);
+      // Skip variable validation if allowUndefinedVariables is true
+      if (!this.config.allowUndefinedVariables) {
+        const varName = source.value as string;
+        const symbol = this.symbolTable.resolve(varName);
+        if (!symbol) {
+          throw new ValidationError(`Undefined variable: ${varName}`);
+        }
       }
+    } else if (source.type === "SELECTOR") {
+      // CSS selectors are valid sources - just validate basic syntax
+      const selector = source.value as string;
+      this.validateSelector(selector);
+    }
+  }
+
+  /**
+   * Validate CSS selector syntax
+   */
+  private validateSelector(selector: string): void {
+    // Basic selector validation - must not be empty
+    if (!selector || selector.trim().length === 0) {
+      throw new ValidationError("Empty CSS selector");
+    }
+    // Check for XSS patterns in selector
+    const xssPatterns = /<script|javascript:|on\w+=/gi;
+    if (xssPatterns.test(selector)) {
+      throw new ValidationError("Invalid selector: contains dangerous XSS content");
     }
   }
 
@@ -258,9 +291,9 @@ export class Validator {
     this.validateExpression(stmt.condition);
 
     // Validate branches
-    this.validate(stmt.thenBranch);
-    if (stmt.elseBranch) {
-      this.validate(stmt.elseBranch);
+    this.validate(stmt.then);
+    if (stmt.else) {
+      this.validate(stmt.else);
     }
   }
 

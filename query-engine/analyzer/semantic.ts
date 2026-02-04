@@ -75,7 +75,9 @@ export class SemanticAnalyzer {
 
     this.symbolTable = new SymbolTable();
     this.typeChecker = new TypeChecker(this.symbolTable);
-    this.validator = new Validator(this.symbolTable);
+    this.validator = new Validator(this.symbolTable, {
+      allowUndefinedVariables: this.config.allowUndefinedVariables,
+    });
     this.typeInfo = new Map();
     this.nestingDepth = 0;
   }
@@ -288,15 +290,15 @@ export class SemanticAnalyzer {
     // Process then branch
     this.symbolTable.enterScope(ScopeType.IF_BRANCH);
     this.nestingDepth++;
-    this.buildSymbolTable(stmt.thenBranch);
+    this.buildSymbolTable(stmt.then);
     this.nestingDepth--;
     this.symbolTable.exitScope();
 
     // Process else branch if present
-    if (stmt.elseBranch) {
+    if (stmt.else) {
       this.symbolTable.enterScope(ScopeType.IF_BRANCH);
       this.nestingDepth++;
-      this.buildSymbolTable(stmt.elseBranch);
+      this.buildSymbolTable(stmt.else);
       this.nestingDepth--;
       this.symbolTable.exitScope();
     }
@@ -380,14 +382,20 @@ export class SemanticAnalyzer {
 
   /**
    * Process source and add to symbol table
+   * Note: VARIABLE sources are treated as data source names (like table names in SQL)
+   * and are always allowed since they're resolved at runtime. This is different from
+   * variable references in expressions which are subject to allowUndefinedVariables.
    */
   private processSource(source: Source): void {
     if (source.type === "VARIABLE") {
+      // Variable sources are data source names (tables, selectors, etc.)
+      // They are resolved at runtime and don't require pre-declaration
+      // Optionally register as a data source symbol for type inference
       const varName = source.value as string;
-      const symbol = this.symbolTable.resolve(varName);
-
-      if (!symbol && !this.config.allowUndefinedVariables) {
-        throw new SemanticError(`Undefined variable: ${varName}`);
+      const existingSymbol = this.symbolTable.resolve(varName);
+      if (!existingSymbol) {
+        // Register as a data source that will be available at runtime
+        this.symbolTable.define(varName, SymbolType.VARIABLE, { dataType: DataType.ARRAY as unknown as string });
       }
     } else if (source.type === "SUBQUERY") {
       this.symbolTable.enterScope(ScopeType.SUBQUERY);
@@ -533,10 +541,10 @@ export class SemanticAnalyzer {
    */
   private collectTypeInfoForIf(stmt: IfStatement): void {
     this.collectTypeInfoForExpression(stmt.condition);
-    this.collectTypeInfoForStatement(stmt.thenBranch);
+    this.collectTypeInfoForStatement(stmt.then);
 
-    if (stmt.elseBranch) {
-      this.collectTypeInfoForStatement(stmt.elseBranch);
+    if (stmt.else) {
+      this.collectTypeInfoForStatement(stmt.else);
     }
   }
 

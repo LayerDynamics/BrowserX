@@ -194,12 +194,18 @@ export async function waitForExit(
   const startTime = Date.now();
 
   const statusPromise = process.child.status;
+  let timeoutId: number | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error("Process exit timeout")), timeoutMs);
+    timeoutId = setTimeout(() => reject(new Error("Process exit timeout")), timeoutMs) as unknown as number;
   });
 
   try {
     const status = await Promise.race([statusPromise, timeoutPromise]);
+
+    // Clear timeout if status resolved first
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
 
     return {
       pid: process.pid,
@@ -209,6 +215,11 @@ export async function waitForExit(
       exitedAt: new Date(),
     };
   } catch (error) {
+    // Clear timeout on error path as well
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+
     // Timeout - kill process
     killProcess(process, "SIGKILL");
 

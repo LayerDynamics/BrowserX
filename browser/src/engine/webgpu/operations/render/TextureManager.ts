@@ -21,6 +21,7 @@ import type {
 } from "../../../../types/webgpu.ts";
 import { WebGPUDevice } from "../../adapter/Device.ts";
 import { GPUTextureError, WebGPUError } from "../../errors.ts";
+import { calculateMipLevels, getMipSize } from "../../utils/TextureHelpers.ts";
 
 // ============================================================================
 // Types
@@ -241,7 +242,10 @@ export class WebGPUTextureManager {
                 mipLevelCount: descriptor.mipLevelCount || 1,
                 sampleCount: descriptor.sampleCount || 1,
                 dimension: descriptor.dimension || "2d",
-                viewFormats: descriptor.viewFormats || [],
+                // Only include viewFormats if provided and non-empty (Deno WebGPU FFI issue with empty arrays)
+                ...(descriptor.viewFormats && descriptor.viewFormats.length > 0
+                    ? { viewFormats: descriptor.viewFormats }
+                    : {}),
                 label: descriptor.label || id,
             };
 
@@ -526,6 +530,8 @@ export class WebGPUTextureManager {
 
     /**
      * Generate mipmaps for texture
+     *
+     * Uses webgpu_x Rust FFI for mip size calculations.
      */
     generateMipmaps(textureId: GPUTextureID): void {
         const texture = this.getTexture(textureId);
@@ -547,9 +553,15 @@ export class WebGPUTextureManager {
         });
 
         // Generate each mip level by rendering the previous level
+        // Uses webgpu_x getMipSize for accurate mip dimension calculations
         for (let mipLevel = 1; mipLevel < mipLevelCount; mipLevel++) {
-            const mipWidth = Math.max(1, descriptor.width >> mipLevel);
-            const mipHeight = Math.max(1, descriptor.height >> mipLevel);
+            const mipSize = getMipSize(descriptor.width, descriptor.height, mipLevel);
+            if (!mipSize) {
+                // Mip level exceeds valid range, stop generation
+                break;
+            }
+            const mipWidth = mipSize.width;
+            const mipHeight = mipSize.height;
 
             // Create views for source and destination
             const srcView = texture.createView({
@@ -657,6 +669,37 @@ export class WebGPUTextureManager {
     // ========================================================================
     // Utility Functions
     // ========================================================================
+
+    /**
+     * Calculate optimal mip level count for dimensions
+     *
+     * Uses webgpu_x Rust FFI for accurate mip level calculation.
+     *
+     * @param width - Texture width
+     * @param height - Texture height
+     * @returns Number of mip levels
+     */
+    static calculateOptimalMipLevels(width: number, height: number): number {
+        return calculateMipLevels(width, height);
+    }
+
+    /**
+     * Get mip size for a specific level
+     *
+     * Uses webgpu_x Rust FFI for accurate mip size calculation.
+     *
+     * @param width - Base texture width
+     * @param height - Base texture height
+     * @param mipLevel - Mip level (0 = base)
+     * @returns Mip dimensions or null if level exceeds valid range
+     */
+    static getMipDimensions(
+        width: number,
+        height: number,
+        mipLevel: number
+    ): { width: number; height: number } | null {
+        return getMipSize(width, height, mipLevel);
+    }
 
     /**
      * Calculate memory usage for texture

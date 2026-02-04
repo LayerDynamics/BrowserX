@@ -5,6 +5,9 @@
  */
 
 import { type ProcessID } from "./pid.ts";
+
+// Re-export ProcessID for external use
+export type { ProcessID };
 import type { Priority } from "./priority.ts";
 
 /**

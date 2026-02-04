@@ -58,6 +58,11 @@ class MockSocket implements Socket {
         return this._remotePort;
     }
 
+    async connect(host: string, port: Port): Promise<void> {
+        this._remoteAddress = host;
+        this._remotePort = port;
+    }
+
     async read(buffer: ByteBuffer): Promise<number | null> {
         if (this.readBuffer.length === 0) {
             return null;

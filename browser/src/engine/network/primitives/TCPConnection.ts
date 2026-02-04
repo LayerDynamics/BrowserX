@@ -61,54 +61,61 @@ export class TCPConnection {
 
     /**
      * Establish TCP connection (client-side)
+     *
+     * This method orchestrates the TCP 3-way handshake:
+     * 1. SYN: Client initiates connection
+     * 2. SYN-ACK: Server acknowledges and responds
+     * 3. ACK: Client confirms connection established
+     *
+     * The actual TCP handshake is performed by the OS via socket.connect().
+     * TCPConnection tracks the state transitions and maintains metrics.
      */
     async connect(host: string, port: Port): Promise<void> {
         if (this.state !== TCPState.CLOSED) {
             throw new Error(`Cannot connect from state ${this.state}`);
         }
 
-        // 1. Send SYN
+        // Initialize sequence numbers for this connection
         const initialSeqNum = generateISN();
         this.nextSeqNum = initialSeqNum;
-        const synSegment = createTCPSegment({
-            flags: { SYN: true },
-            sequenceNumber: initialSeqNum,
-            acknowledgmentNumber: 0,
-            windowSize: this.config.windowSize,
-            options: {
-                MSS: this.config.maxSegmentSize,
-                SACK_PERMITTED: true,
-                WINDOW_SCALE: 7,
-            },
-        });
 
-        await this.sendSegment(synSegment);
+        // Phase 1: SYN - Initiate connection
+        // We're about to send our SYN (connection request)
         this.state = TCPState.SYN_SENT;
+        this.metrics.state = TCPState.SYN_SENT;
 
-        // 2. Wait for SYN-ACK (with timeout)
-        const synAck = await this.receiveSegment(this.config.connectTimeout);
+        try {
+            // The socket.connect() call performs the actual TCP 3-way handshake
+            // at the OS level. This includes:
+            // - Sending SYN with our initial sequence number
+            // - Receiving SYN-ACK from server
+            // - Sending final ACK to complete handshake
+            await this.socket.connect(host, port);
 
-        if (!synAck.flags.SYN || !synAck.flags.ACK) {
-            throw new Error("Invalid SYN-ACK response");
+            // Phase 2 & 3 complete: SYN-ACK received and ACK sent
+            // OS has completed the handshake successfully
+            this.state = TCPState.ESTABLISHED;
+            this.metrics.state = TCPState.ESTABLISHED;
+
+            // Update sequence numbers to reflect handshake completion
+            // In TCP, SYN consumes one sequence number
+            this.nextSeqNum = initialSeqNum + 1;
+            // We don't know the server's ISN, but we track from here
+            this.nextAckNum = 1;
+
+            // Connection established - record uptime start
+            this.metrics.uptime = Date.now();
+
+            // Record the segments exchanged during handshake (for metrics)
+            this.metrics.segmentsSent += 2; // SYN + ACK
+            this.metrics.segmentsReceived += 1; // SYN-ACK
+
+        } catch (error) {
+            // Connection failed - could be timeout, refused, unreachable, etc.
+            this.state = TCPState.CLOSED;
+            this.metrics.state = TCPState.CLOSED;
+            throw new Error(`TCP connection failed: ${(error as Error).message}`);
         }
-
-        if (synAck.acknowledgmentNumber !== initialSeqNum + 1) {
-            throw new Error("Invalid ACK number in SYN-ACK");
-        }
-
-        // 3. Send ACK
-        const ackSegment = createTCPSegment({
-            flags: { ACK: true },
-            sequenceNumber: initialSeqNum + 1,
-            acknowledgmentNumber: synAck.sequenceNumber + 1,
-            windowSize: this.config.windowSize,
-        });
-
-        await this.sendSegment(ackSegment);
-        this.state = TCPState.ESTABLISHED;
-
-        // Connection established
-        this.metrics.uptime = Date.now();
     }
 
     /**
@@ -389,7 +396,143 @@ export interface TCPMetrics {
  * Uses cryptographically secure random to prevent sequence number attacks
  */
 function generateISN(): number {
-    return Math.floor(Math.random() * 0xFFFFFFFF);
+    const buffer = new Uint32Array(1);
+    crypto.getRandomValues(buffer);
+    return buffer[0];
+}
+
+/**
+ * Parse IPv4 address string to bytes
+ * @param ip - IPv4 address string (e.g., "192.168.1.1")
+ * @returns 4-byte array
+ */
+export function parseIPv4(ip: string): Uint8Array {
+    const parts = ip.split(".").map((p) => parseInt(p, 10));
+    if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) {
+        throw new Error(`Invalid IPv4 address: ${ip}`);
+    }
+    return new Uint8Array(parts);
+}
+
+/**
+ * Calculate TCP checksum (RFC 793)
+ *
+ * The TCP checksum is computed over:
+ * 1. A 12-byte pseudo-header containing:
+ *    - Source IP address (4 bytes)
+ *    - Destination IP address (4 bytes)
+ *    - Reserved (1 byte, always 0)
+ *    - Protocol (1 byte, 6 for TCP)
+ *    - TCP length (2 bytes)
+ * 2. TCP header (with checksum field set to 0)
+ * 3. TCP data (padded to even length if necessary)
+ *
+ * The checksum is the 16-bit one's complement of the one's complement sum.
+ *
+ * @param tcpBuffer - TCP segment buffer (header + data)
+ * @param sourceIP - Source IP address (4 bytes or string)
+ * @param destIP - Destination IP address (4 bytes or string)
+ * @returns 16-bit checksum value
+ */
+export function calculateTCPChecksum(
+    tcpBuffer: Uint8Array,
+    sourceIP: Uint8Array | string,
+    destIP: Uint8Array | string,
+): number {
+    // Parse IP addresses if strings
+    const srcIP = typeof sourceIP === "string" ? parseIPv4(sourceIP) : sourceIP;
+    const dstIP = typeof destIP === "string" ? parseIPv4(destIP) : destIP;
+
+    // Build pseudo-header (12 bytes)
+    const pseudoHeader = new Uint8Array(12);
+    pseudoHeader.set(srcIP, 0); // Source IP (4 bytes)
+    pseudoHeader.set(dstIP, 4); // Destination IP (4 bytes)
+    pseudoHeader[8] = 0; // Reserved
+    pseudoHeader[9] = 6; // Protocol (TCP = 6)
+    const tcpLength = tcpBuffer.length;
+    pseudoHeader[10] = (tcpLength >> 8) & 0xff; // TCP length (high byte)
+    pseudoHeader[11] = tcpLength & 0xff; // TCP length (low byte)
+
+    // Calculate one's complement sum
+    let sum = 0;
+
+    // Sum pseudo-header (16-bit words)
+    for (let i = 0; i < 12; i += 2) {
+        sum += (pseudoHeader[i] << 8) | pseudoHeader[i + 1];
+    }
+
+    // Sum TCP segment (16-bit words)
+    for (let i = 0; i < tcpBuffer.length - 1; i += 2) {
+        // Skip checksum field (bytes 16-17 in TCP header)
+        if (i === 16) {
+            continue;
+        }
+        sum += (tcpBuffer[i] << 8) | tcpBuffer[i + 1];
+    }
+
+    // Handle odd byte at end
+    if (tcpBuffer.length % 2 !== 0) {
+        sum += tcpBuffer[tcpBuffer.length - 1] << 8;
+    }
+
+    // Fold 32-bit sum to 16 bits
+    while (sum > 0xffff) {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+
+    // Return one's complement
+    return (~sum) & 0xffff;
+}
+
+/**
+ * Verify TCP checksum
+ * @param tcpBuffer - TCP segment buffer including checksum
+ * @param sourceIP - Source IP address
+ * @param destIP - Destination IP address
+ * @returns true if checksum is valid
+ */
+export function verifyTCPChecksum(
+    tcpBuffer: Uint8Array,
+    sourceIP: Uint8Array | string,
+    destIP: Uint8Array | string,
+): boolean {
+    // When including the checksum in the calculation,
+    // the result should be 0xFFFF (all ones) for a valid checksum
+    const srcIP = typeof sourceIP === "string" ? parseIPv4(sourceIP) : sourceIP;
+    const dstIP = typeof destIP === "string" ? parseIPv4(destIP) : destIP;
+
+    // Build pseudo-header
+    const pseudoHeader = new Uint8Array(12);
+    pseudoHeader.set(srcIP, 0);
+    pseudoHeader.set(dstIP, 4);
+    pseudoHeader[8] = 0;
+    pseudoHeader[9] = 6;
+    const tcpLength = tcpBuffer.length;
+    pseudoHeader[10] = (tcpLength >> 8) & 0xff;
+    pseudoHeader[11] = tcpLength & 0xff;
+
+    let sum = 0;
+
+    // Sum pseudo-header
+    for (let i = 0; i < 12; i += 2) {
+        sum += (pseudoHeader[i] << 8) | pseudoHeader[i + 1];
+    }
+
+    // Sum entire TCP segment including checksum
+    for (let i = 0; i < tcpBuffer.length - 1; i += 2) {
+        sum += (tcpBuffer[i] << 8) | tcpBuffer[i + 1];
+    }
+
+    if (tcpBuffer.length % 2 !== 0) {
+        sum += tcpBuffer[tcpBuffer.length - 1] << 8;
+    }
+
+    while (sum > 0xffff) {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+
+    // Valid checksum results in 0xFFFF
+    return sum === 0xffff;
 }
 
 /**
@@ -455,12 +598,88 @@ export function serializeTCPSegment(segment: TCPSegment): ByteBuffer {
     view.setUint16(offset, segment.urgentPointer);
     offset += 2;
 
-    // TODO: Serialize TCP options if present
+    // Serialize TCP options if present
+    if (segment.options && Object.keys(segment.options).length > 0) {
+        let optOffset = 20; // Start after base header
+        const options = segment.options;
+
+        // MSS option (kind=2, length=4)
+        if (options.MSS !== undefined) {
+            buffer[optOffset++] = 2; // Kind
+            buffer[optOffset++] = 4; // Length
+            view.setUint16(optOffset, options.MSS);
+            optOffset += 2;
+        }
+
+        // Window Scale option (kind=3, length=3)
+        if (options.WINDOW_SCALE !== undefined) {
+            buffer[optOffset++] = 3; // Kind
+            buffer[optOffset++] = 3; // Length
+            buffer[optOffset++] = options.WINDOW_SCALE;
+        }
+
+        // SACK Permitted option (kind=4, length=2)
+        if (options.SACK_PERMITTED) {
+            buffer[optOffset++] = 4; // Kind
+            buffer[optOffset++] = 2; // Length
+        }
+
+        // SACK blocks option (kind=5, length=2+8*n)
+        if (options.SACK && options.SACK.length > 0) {
+            const sackLength = 2 + options.SACK.length * 8;
+            buffer[optOffset++] = 5; // Kind
+            buffer[optOffset++] = sackLength; // Length
+            for (const block of options.SACK) {
+                view.setUint32(optOffset, block.left);
+                optOffset += 4;
+                view.setUint32(optOffset, block.right);
+                optOffset += 4;
+            }
+        }
+
+        // Timestamp option (kind=8, length=10)
+        if (options.TIMESTAMP !== undefined) {
+            buffer[optOffset++] = 8; // Kind
+            buffer[optOffset++] = 10; // Length
+            view.setUint32(optOffset, options.TIMESTAMP.value);
+            optOffset += 4;
+            view.setUint32(optOffset, options.TIMESTAMP.echoReply);
+            optOffset += 4;
+        }
+
+        // Pad to 4-byte boundary with NOP (kind=1)
+        while (optOffset % 4 !== 0 && optOffset < headerSize) {
+            buffer[optOffset++] = 1; // NOP
+        }
+    }
 
     // Copy data payload
     buffer.set(segment.data, headerSize);
 
-    // TODO: Calculate and set checksum
+    // Note: Checksum must be calculated separately using calculateTCPChecksum()
+    // as it requires IP addresses for the pseudo-header
+
+    return buffer;
+}
+
+/**
+ * Serialize TCP segment with checksum calculation
+ * @param segment - TCP segment to serialize
+ * @param sourceIP - Source IP address
+ * @param destIP - Destination IP address
+ * @returns Serialized segment with valid checksum
+ */
+export function serializeTCPSegmentWithChecksum(
+    segment: TCPSegment,
+    sourceIP: Uint8Array | string,
+    destIP: Uint8Array | string,
+): ByteBuffer {
+    const buffer = serializeTCPSegment(segment);
+    const checksum = calculateTCPChecksum(buffer, sourceIP, destIP);
+
+    // Set checksum at bytes 16-17
+    const view = new DataView(buffer.buffer);
+    view.setUint16(16, checksum);
 
     return buffer;
 }
@@ -509,10 +728,78 @@ export function parseTCPSegment(buffer: ByteBuffer): TCPSegment {
     const urgentPointer = view.getUint16(offset);
     offset += 2;
 
-    // TODO: Parse TCP options if present
+    // Parse TCP options if present
+    const headerSize = dataOffset * 4;
+    const options: TCPOptions = {};
+
+    if (headerSize > 20) {
+        let optOffset = 20;
+        while (optOffset < headerSize) {
+            const kind = buffer[optOffset];
+
+            // End of options (kind=0)
+            if (kind === 0) {
+                break;
+            }
+
+            // NOP padding (kind=1)
+            if (kind === 1) {
+                optOffset++;
+                continue;
+            }
+
+            // All other options have length byte
+            const length = buffer[optOffset + 1];
+            if (length < 2 || optOffset + length > headerSize) {
+                break; // Invalid option length
+            }
+
+            switch (kind) {
+                case 2: // MSS (kind=2, length=4)
+                    if (length === 4) {
+                        options.MSS = view.getUint16(optOffset + 2);
+                    }
+                    break;
+
+                case 3: // Window Scale (kind=3, length=3)
+                    if (length === 3) {
+                        options.WINDOW_SCALE = buffer[optOffset + 2];
+                    }
+                    break;
+
+                case 4: // SACK Permitted (kind=4, length=2)
+                    if (length === 2) {
+                        options.SACK_PERMITTED = true;
+                    }
+                    break;
+
+                case 5: // SACK blocks (kind=5, length=variable)
+                    if (length >= 10) {
+                        const numBlocks = (length - 2) / 8;
+                        options.SACK = [];
+                        for (let i = 0; i < numBlocks; i++) {
+                            const left = view.getUint32(optOffset + 2 + i * 8);
+                            const right = view.getUint32(optOffset + 6 + i * 8);
+                            options.SACK.push({ left, right });
+                        }
+                    }
+                    break;
+
+                case 8: // Timestamp (kind=8, length=10)
+                    if (length === 10) {
+                        options.TIMESTAMP = {
+                            value: view.getUint32(optOffset + 2),
+                            echoReply: view.getUint32(optOffset + 6),
+                        };
+                    }
+                    break;
+            }
+
+            optOffset += length;
+        }
+    }
 
     // Extract data payload
-    const headerSize = dataOffset * 4;
     const data = buffer.slice(headerSize);
 
     return {
@@ -525,7 +812,7 @@ export function parseTCPSegment(buffer: ByteBuffer): TCPSegment {
         windowSize,
         checksum,
         urgentPointer,
-        options: {},
+        options,
         data,
         timestamp: Date.now(),
     };

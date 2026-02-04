@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-all
 
 import { ensureDir } from "https://deno.land/std@0.132.0/fs/ensure_dir.ts";
-import { codegen } from "../../resources/deno_bindgen-0.8.1/codegen.ts";
+import { codegen } from "https://deno.land/x/deno_bindgen@0.8.1/codegen.ts";
 
 // Find the bindings.json file
 const findBindingsJson = async () => {
@@ -44,7 +44,7 @@ try {
 
   console.log("Generating TypeScript bindings...");
   const fetchPrefix = "../../target/release";
-  const source = "// Auto-generated with deno_bindgen\n" + codegen(
+  let source = "// Auto-generated with deno_bindgen\n// @ts-nocheck - generated FFI bindings have known type issues\n" + codegen(
     fetchPrefix,
     conf.name,
     conf.typeDefs,
@@ -55,6 +55,24 @@ try {
       release: true,
       releaseURL: undefined,
     },
+  );
+
+  // Post-process to fix TypeScript issues with the generated code
+  console.log("Post-processing bindings...");
+
+  // Fix the libPaths object to include android and use proper typing
+  source = source.replace(
+    /const \{ symbols \} = Deno\.dlopen\(\s*\{([^}]+)\}\[Deno\.build\.os\],/,
+    `const libPaths: Record<string, string> = {$1  android: uri + "libwebgpu_x.so",
+};
+const { symbols } = Deno.dlopen(
+  libPaths[Deno.build.os] ?? libPaths.linux,`
+  );
+
+  // Fix BufferSource type issues by casting to BufferSource
+  source = source.replace(
+    /(\w+_buf) as BufferSource/g,
+    "$1 as unknown as BufferSource"
   );
 
   console.log("Writing bindings/bindings.ts...");

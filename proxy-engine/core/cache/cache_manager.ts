@@ -29,6 +29,7 @@ class HTTPCacheManager {
     revalidations: number;
     evictions: number;
   };
+  private cleanupTimerId?: number;
 
   constructor(config: CacheConfig) {
     this.memoryCache = new Map();
@@ -287,7 +288,7 @@ class HTTPCacheManager {
    * Background cleanup of expired entries
    */
   private startCleanupTimer(): void {
-    setInterval(() => {
+    this.cleanupTimerId = setInterval(() => {
       let removed = 0;
       const now = Date.now();
 
@@ -303,7 +304,21 @@ class HTTPCacheManager {
       if (removed > 0) {
         console.log(`[CACHE CLEANUP] Removed ${removed} expired entries`);
       }
-    }, 60000); // Run every minute
+    }, 60000) as unknown as number; // Run every minute
+  }
+
+  /**
+   * Destroy the cache manager and cleanup resources
+   */
+  destroy(): void {
+    // Clear the cleanup timer to prevent memory leak
+    if (this.cleanupTimerId !== undefined) {
+      clearInterval(this.cleanupTimerId);
+      this.cleanupTimerId = undefined;
+    }
+
+    // Clear all cache entries
+    this.clear();
   }
 
   /**
@@ -399,53 +414,58 @@ class HTTPCacheManager {
   }
 }
 
-// Example usage
-const cacheManager = new HTTPCacheManager({
-  maxMemoryMB: 100,
-  defaultTTL: 300, // 5 minutes default
-  enableDiskCache: false,
-});
-
-console.log("=== HTTP Cache Manager Demo ===\n");
-
-// Simulate caching a response
-const cacheKey1 = cacheManager.generateCacheKey("GET", "http://api.example.com/users/123", {});
-
-const response1 = {
-  status: 200,
-  headers: {
-    "content-type": "application/json",
-    "cache-control": "max-age=600, public", // Cache for 10 minutes
-    "etag": '"abc123"',
-  },
-  body: new TextEncoder().encode(JSON.stringify({ id: 123, name: "Alice" })),
-};
-
-// Store response
-if (cacheManager.isCacheable({ method: "GET" }, response1)) {
-  await cacheManager.store(cacheKey1, response1);
-}
-
-// Simulate cache hit
-console.log("\n--- First request (cache miss, stored) ---");
-let cached = await cacheManager.get(cacheKey1);
-
-console.log("\n--- Second request (cache hit) ---");
-cached = await cacheManager.get(cacheKey1);
-
-if (cached) {
-  console.log("Serving from cache:", new TextDecoder().decode(cached.response.body));
-}
-
-cacheManager.displayStats();
-
-console.log("\n=== Key Benefits ===");
-console.log("✓ Reduces origin server load by 70-90%");
-console.log("✓ Improves response time from 100ms+ to <5ms");
-console.log("✓ Saves bandwidth and reduces costs");
-console.log("✓ Better user experience with faster responses");
-console.log("✓ Supports HTTP cache semantics (Cache-Control, ETag, etc.)");
-
 // Export aliases for test compatibility
 export { HTTPCacheManager as CacheManager };
 export type { CacheConfig, CacheEntry };
+
+// Example usage - only run when executed directly (prevents memory leak on import)
+if ((import.meta as { main?: boolean }).main) {
+  const cacheManager = new HTTPCacheManager({
+    maxMemoryMB: 100,
+    defaultTTL: 300, // 5 minutes default
+    enableDiskCache: false,
+  });
+
+  console.log("=== HTTP Cache Manager Demo ===\n");
+
+  // Simulate caching a response
+  const cacheKey1 = cacheManager.generateCacheKey("GET", "http://api.example.com/users/123", {});
+
+  const response1 = {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "max-age=600, public", // Cache for 10 minutes
+      "etag": '"abc123"',
+    },
+    body: new TextEncoder().encode(JSON.stringify({ id: 123, name: "Alice" })),
+  };
+
+  // Store response
+  if (cacheManager.isCacheable({ method: "GET" }, response1)) {
+    await cacheManager.store(cacheKey1, response1);
+  }
+
+  // Simulate cache hit
+  console.log("\n--- First request (cache miss, stored) ---");
+  let cached = await cacheManager.get(cacheKey1);
+
+  console.log("\n--- Second request (cache hit) ---");
+  cached = await cacheManager.get(cacheKey1);
+
+  if (cached) {
+    console.log("Serving from cache:", new TextDecoder().decode(cached.response.body));
+  }
+
+  cacheManager.displayStats();
+
+  console.log("\n=== Key Benefits ===");
+  console.log("✓ Reduces origin server load by 70-90%");
+  console.log("✓ Improves response time from 100ms+ to <5ms");
+  console.log("✓ Saves bandwidth and reduces costs");
+  console.log("✓ Better user experience with faster responses");
+  console.log("✓ Supports HTTP cache semantics (Cache-Control, ETag, etc.)");
+
+  // Clean up demo instance to prevent memory leak
+  cacheManager.destroy();
+}

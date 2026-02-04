@@ -24,13 +24,30 @@ export interface ConnectionStatistics {
     reuseRate: number;
 }
 
+/**
+ * Connection manager configuration
+ */
+export interface ConnectionManagerConfig {
+    /** Interval between health checks in milliseconds (default: 60000 = 1 minute) */
+    healthCheckIntervalMs?: number;
+    /** Maximum idle time before connection is considered stale in milliseconds (default: 300000 = 5 minutes) */
+    maxIdleTimeMs?: number;
+}
+
+/** Default connection manager configuration */
+const DEFAULT_CONFIG: Required<ConnectionManagerConfig> = {
+    healthCheckIntervalMs: 60000, // 1 minute
+    maxIdleTimeMs: 300000, // 5 minutes
+};
+
 export class ConnectionManager {
     private pool: ConnectionPool;
     private healthCheckInterval: number | null = null;
-    private healthCheckIntervalMs: number = 60000; // 60 seconds
+    private config: Required<ConnectionManagerConfig>;
 
-    constructor(pool: ConnectionPool) {
+    constructor(pool: ConnectionPool, config: ConnectionManagerConfig = {}) {
         this.pool = pool;
+        this.config = { ...DEFAULT_CONFIG, ...config };
         this.startHealthChecking();
     }
 
@@ -73,9 +90,9 @@ export class ConnectionManager {
                 return false;
             }
 
-            // Check if connection has been idle too long (more than 5 minutes)
+            // Check if connection has been idle too long
             const idleTime = Date.now() - connection.lastUsedAt;
-            if (idleTime > 300000 && connection.state === "IDLE") {
+            if (idleTime > this.config.maxIdleTimeMs && connection.state === "IDLE") {
                 return false;
             }
 
@@ -154,7 +171,7 @@ export class ConnectionManager {
             this.performHealthChecks().catch((error) => {
                 console.error("Error during health checks:", error);
             });
-        }, this.healthCheckIntervalMs);
+        }, this.config.healthCheckIntervalMs);
     }
 
     /**

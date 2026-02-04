@@ -229,6 +229,12 @@ class HostConnectionPool {
    * Check if connection is valid
    */
   private isConnectionValid(conn: PooledConnection): boolean {
+    // Check connection state - only IDLE and IN_USE are valid for reuse
+    // CLOSED, CLOSING, and ERROR states indicate invalid connections
+    if (conn.state !== ConnectionState.IDLE && conn.state !== ConnectionState.IN_USE) {
+      return false;
+    }
+
     const now = Date.now();
 
     // Check age
@@ -240,6 +246,18 @@ class HostConnectionPool {
     // Check idle time
     const idleTime = now - conn.lastUsedAt;
     if (idleTime > this.config.idleTimeout) {
+      return false;
+    }
+
+    // Check if socket is still writable (not closed)
+    try {
+      // Accessing readable/writable properties will not throw
+      // but trying to get closed status can help detect closed sockets
+      if (conn.conn.readable === null || conn.conn.writable === null) {
+        return false;
+      }
+    } catch {
+      // Socket access failed, connection is invalid
       return false;
     }
 

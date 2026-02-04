@@ -91,8 +91,10 @@ export class QueryCacheManager {
     this.entries = new Map();
     this.stats.maxSize = this.config.maxSize;
 
-    // Start cleanup timer
-    this.startCleanup();
+    // Start cleanup timer only if interval is positive
+    if (this.config.cleanupInterval > 0) {
+      this.startCleanup();
+    }
   }
 
   /**

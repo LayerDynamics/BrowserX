@@ -898,3 +898,132 @@ pub fn framework_matrix_model(
     let matrix = create_model_matrix(translation, rotation, scale);
     serde_json::to_string(&matrix).unwrap_or_default()
 }
+
+// ============================================================================
+// GPU DEVICE MANAGEMENT
+// ============================================================================
+// Direct wgpu-based GPU operations that bypass Deno's WebGPU FFI
+// to avoid issues with empty array serialization
+
+/// Initialize the GPU subsystem
+/// Returns: 1 on success, 0 on failure
+#[deno_bindgen]
+pub fn gpu_init() -> u8 {
+    crate::gpu::device::gpu_init()
+}
+
+/// Request a GPU adapter
+/// power_preference: 0=LowPower, 1=HighPerformance
+/// Returns: adapter handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_request_adapter(power_preference: u32) -> u64 {
+    crate::gpu::device::gpu_request_adapter(power_preference)
+}
+
+/// Request a GPU device from an adapter
+/// Returns: device handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_request_device(adapter_handle: u64) -> u64 {
+    crate::gpu::device::gpu_request_device(adapter_handle)
+}
+
+/// Create a bind group layout
+/// entries_json: JSON array of BindGroupLayoutEntry descriptors
+/// Returns: bind group layout handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_bind_group_layout(device_handle: u64, label: &str, entries_json: &str) -> u64 {
+    crate::gpu::device::gpu_create_bind_group_layout(device_handle, label, entries_json)
+}
+
+/// Create an empty bind group layout (no entries)
+/// This bypasses the empty array serialization issue in Deno's FFI
+/// Returns: bind group layout handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_empty_bind_group_layout(device_handle: u64, label: &str) -> u64 {
+    crate::gpu::device::gpu_create_empty_bind_group_layout(device_handle, label)
+}
+
+/// Create a pipeline layout
+/// bind_group_layout_handles_json: JSON array of bind group layout handles
+/// Returns: pipeline layout handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_pipeline_layout(device_handle: u64, label: &str, bind_group_layout_handles_json: &str) -> u64 {
+    crate::gpu::device::gpu_create_pipeline_layout(device_handle, label, bind_group_layout_handles_json)
+}
+
+/// Create an empty pipeline layout (no bind group layouts)
+/// This bypasses the empty array serialization issue in Deno's FFI
+/// Returns: pipeline layout handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_empty_pipeline_layout(device_handle: u64, label: &str) -> u64 {
+    crate::gpu::device::gpu_create_empty_pipeline_layout(device_handle, label)
+}
+
+/// Create a texture
+/// format, dimension, usage are numeric codes matching WebGPU spec
+/// view_formats_json: JSON array of view format codes, can be empty "[]"
+/// Returns: texture handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_texture(
+    device_handle: u64,
+    label: &str,
+    width: u32,
+    height: u32,
+    depth_or_array_layers: u32,
+    mip_level_count: u32,
+    sample_count: u32,
+    dimension: u32,
+    format: u32,
+    usage: u32,
+    view_formats_json: &str,
+) -> u64 {
+    crate::gpu::device::gpu_create_texture(
+        device_handle,
+        label,
+        width,
+        height,
+        depth_or_array_layers,
+        mip_level_count,
+        sample_count,
+        dimension,
+        format,
+        usage,
+        view_formats_json,
+    )
+}
+
+/// Destroy a bind group layout and release its resources
+#[deno_bindgen]
+pub fn gpu_destroy_bind_group_layout(handle: u64) {
+    crate::gpu::device::gpu_destroy_bind_group_layout(handle);
+}
+
+/// Destroy a pipeline layout and release its resources
+#[deno_bindgen]
+pub fn gpu_destroy_pipeline_layout(handle: u64) {
+    crate::gpu::device::gpu_destroy_pipeline_layout(handle);
+}
+
+/// Destroy a texture and release its resources
+#[deno_bindgen]
+pub fn gpu_destroy_texture(handle: u64) {
+    crate::gpu::device::gpu_destroy_texture(handle);
+}
+
+/// Destroy a device and release its resources
+#[deno_bindgen]
+pub fn gpu_destroy_device(handle: u64) {
+    crate::gpu::device::gpu_destroy_device(handle);
+}
+
+/// Destroy an adapter and release its resources
+#[deno_bindgen]
+pub fn gpu_destroy_adapter(handle: u64) {
+    crate::gpu::device::gpu_destroy_adapter(handle);
+}
+
+/// Clean up all GPU resources
+#[deno_bindgen]
+pub fn gpu_cleanup_all() {
+    crate::gpu::device::gpu_cleanup_all();
+}

@@ -13,6 +13,10 @@ import {
     type ComputePipelineDescriptor,
 } from "../../../../src/engine/webgpu/pipelines/mod.ts";
 import { WebGPUDevice } from "../../../../src/engine/webgpu/adapter/Device.ts";
+import {
+    createBindGroupLayout,
+    createPipelineLayout,
+} from "../../../../src/engine/webgpu/utils/mod.ts";
 
 // Check if WebGPU is available
 const webgpuAvailable = typeof navigator !== "undefined" && "gpu" in navigator;
@@ -59,14 +63,12 @@ if (webgpuAvailable) {
         device.destroy();
     }
 
-    // Helper to create a basic pipeline layout
-    function createPipelineLayout(gpuDevice: GPUDevice): GPUPipelineLayout {
-        const bindGroupLayout = gpuDevice.createBindGroupLayout({
-            entries: [],
-        });
-        return gpuDevice.createPipelineLayout({
-            bindGroupLayouts: [bindGroupLayout],
-        });
+    // WORKAROUND: Deno's WebGPU FFI cannot serialize empty arrays [] to WebIDL sequences.
+    // Instead of creating empty bind group layouts (which would require entries: []),
+    // we use "auto" layout which lets WebGPU infer the layout from shader reflection.
+    // This is actually the recommended approach for most use cases anyway.
+    function getAutoLayout(): "auto" {
+        return "auto";
     }
 
     // ========================================================================
@@ -86,14 +88,7 @@ if (webgpuAvailable) {
             code: FRAGMENT_SHADER,
         });
 
-        // Create empty bind group layout for auto layout
-        const bindGroupLayout = gpuDevice.createBindGroupLayout({
-            entries: [],
-        });
-        const pipelineLayout = gpuDevice.createPipelineLayout({
-            bindGroupLayouts: [bindGroupLayout],
-        });
-
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
         const descriptor: RenderPipelineDescriptor = {
             vertex: {
                 module: vertexModule,
@@ -104,7 +99,7 @@ if (webgpuAvailable) {
                 entryPoint: "main",
                 targets: [{ format: "bgra8unorm" }],
             },
-            layout: pipelineLayout,
+            layout: getAutoLayout(),
         };
 
         const pipeline = await manager.getPipeline(descriptor);
@@ -126,13 +121,7 @@ if (webgpuAvailable) {
             code: FRAGMENT_SHADER,
         });
 
-        const bindGroupLayout = gpuDevice.createBindGroupLayout({
-            entries: [],
-        });
-        const pipelineLayout = gpuDevice.createPipelineLayout({
-            bindGroupLayouts: [bindGroupLayout],
-        });
-
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
         const descriptor: RenderPipelineDescriptor = {
             vertex: {
                 module: vertexModule,
@@ -143,7 +132,7 @@ if (webgpuAvailable) {
                 entryPoint: "main",
                 targets: [{ format: "bgra8unorm" }],
             },
-            layout: pipelineLayout,
+            layout: getAutoLayout(),
         };
 
         const pipeline1 = await manager.getPipeline(descriptor);
@@ -173,7 +162,7 @@ if (webgpuAvailable) {
             code: FRAGMENT_SHADER,
         });
 
-        const pipelineLayout = createPipelineLayout(gpuDevice);
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
 
         const descriptor: RenderPipelineDescriptor = {
             vertex: {
@@ -185,7 +174,7 @@ if (webgpuAvailable) {
                 entryPoint: "main",
                 targets: [{ format: "bgra8unorm" }],
             },
-            layout: pipelineLayout,
+            layout: getAutoLayout(),
         };
 
         await manager.getPipeline(descriptor);
@@ -217,7 +206,7 @@ if (webgpuAvailable) {
                 code: FRAGMENT_SHADER,
             });
 
-            const pipelineLayout = createPipelineLayout(gpuDevice);
+            // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
 
             const descriptor: RenderPipelineDescriptor = {
                 label: `pipeline-${i}`,
@@ -230,7 +219,7 @@ if (webgpuAvailable) {
                     entryPoint: "main",
                     targets: [{ format: "bgra8unorm" }],
                 },
-                layout: pipelineLayout,
+                layout: getAutoLayout(),
             };
 
             await manager.getPipeline(descriptor);
@@ -255,7 +244,7 @@ if (webgpuAvailable) {
             code: FRAGMENT_SHADER,
         });
 
-        const pipelineLayout = createPipelineLayout(gpuDevice);
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
 
         const descriptor: RenderPipelineDescriptor = {
             vertex: {
@@ -267,7 +256,7 @@ if (webgpuAvailable) {
                 entryPoint: "main",
                 targets: [{ format: "bgra8unorm" }],
             },
-            layout: pipelineLayout,
+            layout: getAutoLayout(),
         };
 
         await manager.getPipeline(descriptor);
@@ -378,14 +367,14 @@ if (webgpuAvailable) {
             code: COMPUTE_SHADER,
         });
 
-        const pipelineLayout = createPipelineLayout(gpuDevice);
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
 
         const descriptor: ComputePipelineDescriptor = {
             compute: {
                 module,
                 entryPoint: "main",
             },
-            layout: pipelineLayout,
+            layout: getAutoLayout(),
         };
 
         const pipeline = await manager.getPipeline(descriptor);
@@ -404,14 +393,14 @@ if (webgpuAvailable) {
             code: COMPUTE_SHADER,
         });
 
-        const pipelineLayout = createPipelineLayout(gpuDevice);
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
 
         const descriptor: ComputePipelineDescriptor = {
             compute: {
                 module,
                 entryPoint: "main",
             },
-            layout: pipelineLayout,
+            layout: getAutoLayout(),
         };
 
         const pipeline1 = await manager.getPipeline(descriptor);
@@ -438,14 +427,14 @@ if (webgpuAvailable) {
             code: COMPUTE_SHADER,
         });
 
-        const pipelineLayout = createPipelineLayout(gpuDevice);
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
 
         const descriptor: ComputePipelineDescriptor = {
             compute: {
                 module,
                 entryPoint: "main",
             },
-            layout: pipelineLayout,
+            layout: getAutoLayout(),
         };
 
         await manager.getPipeline(descriptor);
@@ -473,7 +462,7 @@ if (webgpuAvailable) {
                 code: COMPUTE_SHADER,
             });
 
-            const pipelineLayout = createPipelineLayout(gpuDevice);
+            // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
 
             const descriptor: ComputePipelineDescriptor = {
                 label: `compute-pipeline-${i}`,
@@ -481,7 +470,7 @@ if (webgpuAvailable) {
                     module,
                     entryPoint: "main",
                 },
-                layout: pipelineLayout,
+                layout: getAutoLayout(),
             };
 
             await manager.getPipeline(descriptor);
@@ -503,14 +492,14 @@ if (webgpuAvailable) {
             code: COMPUTE_SHADER,
         });
 
-        const pipelineLayout = createPipelineLayout(gpuDevice);
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
 
         const descriptor: ComputePipelineDescriptor = {
             compute: {
                 module,
                 entryPoint: "main",
             },
-            layout: pipelineLayout,
+            layout: getAutoLayout(),
         };
 
         await manager.getPipeline(descriptor);
@@ -605,8 +594,7 @@ if (webgpuAvailable) {
             code: FRAGMENT_SHADER,
         });
 
-        const renderLayout = createPipelineLayout(gpuDevice);
-
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
         const renderDescriptor: RenderPipelineDescriptor = {
             vertex: {
                 module: vertexModule,
@@ -617,7 +605,7 @@ if (webgpuAvailable) {
                 entryPoint: "main",
                 targets: [{ format: "bgra8unorm" }],
             },
-            layout: renderLayout,
+            layout: getAutoLayout(),
         };
 
         // Create compute pipeline
@@ -625,14 +613,13 @@ if (webgpuAvailable) {
             code: COMPUTE_SHADER,
         });
 
-        const computeLayout = createPipelineLayout(gpuDevice);
-
+        // WORKAROUND: Use "auto" layout to avoid Deno FFI issue with empty arrays
         const computeDescriptor: ComputePipelineDescriptor = {
             compute: {
                 module: computeModule,
                 entryPoint: "main",
             },
-            layout: computeLayout,
+            layout: getAutoLayout(),
         };
 
         await manager.getRenderPipelineManager().getPipeline(renderDescriptor);

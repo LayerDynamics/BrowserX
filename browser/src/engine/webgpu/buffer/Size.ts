@@ -3,9 +3,16 @@
  *
  * Provides alignment calculations and buffer size computations following
  * WebGPU alignment requirements.
+ *
+ * Uses webgpu_x Rust FFI for optimized alignment and texture buffer calculations.
  */
 
 import type { GPUSize, ByteCount } from "../../../types/webgpu.ts";
+import {
+    calculateAlignedSize as webgpuCalculateAlignedSize,
+    getPaddedRowSize,
+    calculateTextureBufferSize as webgpuCalculateTextureBufferSize,
+} from "../utils/BufferHelpers.ts";
 
 // ============================================================================
 // Alignment Constants
@@ -139,6 +146,8 @@ export const WGSL_TYPE_ALIGNMENTS = {
 /**
  * Align size to specified alignment boundary
  *
+ * Uses webgpu_x Rust FFI for optimized alignment calculation.
+ *
  * @param size - Size to align
  * @param alignment - Alignment requirement (must be power of 2)
  * @returns Aligned size
@@ -152,8 +161,8 @@ export function alignSize(size: GPUSize, alignment: number): GPUSize {
         throw new Error(`Alignment must be power of 2, got ${alignment}`);
     }
 
-    const mask = alignment - 1;
-    return ((size + mask) & ~mask) as GPUSize;
+    // Use webgpu_x Rust FFI for alignment calculation
+    return Number(webgpuCalculateAlignedSize(BigInt(size), BigInt(alignment))) as GPUSize;
 }
 
 /**
@@ -331,7 +340,8 @@ export function calculateArrayStride(
 /**
  * Calculate bytes per row for texture data
  *
- * Texture data must be aligned to 256-byte boundaries per row
+ * Uses webgpu_x Rust FFI for optimized row alignment calculation.
+ * Texture data must be aligned to 256-byte boundaries per row.
  *
  * @param width - Texture width in pixels
  * @param bytesPerPixel - Bytes per pixel (4 for RGBA8)
@@ -342,11 +352,15 @@ export function calculateBytesPerRow(
     bytesPerPixel: number,
 ): number {
     const unalignedBytesPerRow = width * bytesPerPixel;
-    return alignSize(unalignedBytesPerRow as GPUSize, TEXTURE_DATA_ALIGNMENT);
+    // Use webgpu_x Rust FFI for padded row size calculation
+    return Number(getPaddedRowSize(BigInt(unalignedBytesPerRow)));
 }
 
 /**
  * Calculate total buffer size for texture data
+ *
+ * Uses webgpu_x Rust FFI for optimized texture buffer size calculation
+ * including proper row alignment.
  *
  * @param width - Texture width in pixels
  * @param height - Texture height in pixels
@@ -358,8 +372,8 @@ export function calculateTextureBufferSize(
     height: number,
     bytesPerPixel: number,
 ): GPUSize {
-    const bytesPerRow = calculateBytesPerRow(width, bytesPerPixel);
-    return (bytesPerRow * height) as GPUSize;
+    // Use webgpu_x Rust FFI for texture buffer size calculation
+    return Number(webgpuCalculateTextureBufferSize(width, height, bytesPerPixel)) as GPUSize;
 }
 
 // ============================================================================

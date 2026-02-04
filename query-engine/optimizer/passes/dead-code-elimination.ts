@@ -62,11 +62,11 @@ export class DeadCodeEliminationPass {
 
         if (value) {
           // Condition is always true, take then branch
-          return this.eliminateStatement(stmt.thenBranch);
+          return this.eliminateStatement(stmt.then);
         } else {
           // Condition is always false, take else branch
-          if (stmt.elseBranch) {
-            return this.eliminateStatement(stmt.elseBranch);
+          if (stmt.else) {
+            return this.eliminateStatement(stmt.else);
           } else {
             // No else branch and condition is false = dead code
             return null;
@@ -76,28 +76,28 @@ export class DeadCodeEliminationPass {
     }
 
     // Condition is not constant, keep both branches but eliminate within them
-    const thenBranch = this.eliminateStatement(stmt.thenBranch);
-    const elseBranch = stmt.elseBranch ? this.eliminateStatement(stmt.elseBranch) : undefined;
+    const thenResult = this.eliminateStatement(stmt.then);
+    const elseResult = stmt.else ? this.eliminateStatement(stmt.else) : undefined;
 
     // If then branch is eliminated but else exists, invert the condition
-    if (!thenBranch && elseBranch) {
+    if (!thenResult && elseResult) {
       return {
         ...stmt,
         condition: this.invertCondition(condition),
-        thenBranch: elseBranch,
-        elseBranch: undefined,
+        then: elseResult,
+        else: undefined,
       };
     }
 
     // If both branches are eliminated, the whole IF is dead
-    if (!thenBranch && !elseBranch) {
+    if (!thenResult && !elseResult) {
       return null;
     }
 
     return {
       ...stmt,
-      thenBranch: thenBranch || this.createNoOp(),
-      elseBranch: elseBranch || undefined,
+      then: thenResult || this.createNoOp(),
+      else: elseResult || undefined,
     };
   }
 

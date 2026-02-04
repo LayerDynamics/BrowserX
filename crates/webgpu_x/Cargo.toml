@@ -24,6 +24,7 @@ libc = "0.2"
 
 # Webgpu
 wgpu = "22"
+pollster = "0.3"
 
 
 [build-dependencies]

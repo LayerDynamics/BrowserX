@@ -107,9 +107,9 @@ export class SecurityValidator {
         break;
 
       case "IF":
-        this.validateStatement(stmt.thenBranch);
-        if (stmt.elseBranch) {
-          this.validateStatement(stmt.elseBranch);
+        this.validateStatement(stmt.then);
+        if (stmt.else) {
+          this.validateStatement(stmt.else);
         }
         break;
 

@@ -3,12 +3,25 @@
  *
  * Manages reusable staging buffers for efficient CPU→GPU data uploads.
  * Following the BufferPool pattern from network layer, adapted for GPU buffers.
+ *
+ * Provides two implementations:
+ * - StagingBufferPool: TypeScript-based pool (backward compatible)
+ * - WebGPUStagingBelt: Rust FFI-backed arena allocator (webgpu_x)
  */
 
 import { WebGPUBuffer, createStagingBuffer } from "./Create.ts";
 import type { WebGPUDevice } from "../adapter/Device.ts";
 import type { GPUSize, Timestamp } from "../../../types/webgpu.ts";
 import type { BufferPoolStats } from "../../../types/webgpu.ts";
+import {
+    createStagingBelt,
+    stagingBeltWrite,
+    stagingBeltFinish,
+    stagingBeltStats,
+    destroyStagingBelt,
+    type StagingWrite,
+    type StagingBeltStats,
+} from "../utils/BufferHelpers.ts";
 
 // ============================================================================
 // Pool Configuration
@@ -440,4 +453,190 @@ export class StagingBufferPool {
         this.clear();
         this.pools.clear();
     }
+}
+
+// ============================================================================
+// WebGPU Staging Belt (webgpu_x FFI)
+// ============================================================================
+
+/**
+ * Staging belt write result
+ */
+export interface StagingBeltWriteResult {
+    /** Buffer handle from webgpu_x */
+    bufferHandle: bigint;
+    /** Offset within the buffer */
+    offset: number;
+    /** Size of the allocation */
+    size: number;
+}
+
+/**
+ * WebGPUStagingBelt - Rust FFI-backed arena allocator
+ *
+ * Uses webgpu_x staging belt for efficient large buffer uploads.
+ * The staging belt uses an arena allocator that allocates chunks of
+ * memory and sub-allocates within them.
+ *
+ * This is more efficient than StagingBufferPool for:
+ * - Large uploads (textures, mesh data)
+ * - Streaming data
+ * - Frame-based allocation patterns
+ *
+ * Usage:
+ * 1. allocate(size) - Allocate space in the staging belt
+ * 2. Write data to the returned buffer region
+ * 3. finishFrame() - Submit all writes and recycle buffers
+ */
+export class WebGPUStagingBelt {
+    /** Belt handle from webgpu_x */
+    private beltHandle: bigint;
+
+    /** Chunk size for allocations */
+    private readonly chunkSize: number;
+
+    /** Whether the belt has been destroyed */
+    private destroyed = false;
+
+    /** Statistics */
+    private totalWrites = 0;
+    private totalBytes = 0;
+    private framesFinished = 0;
+
+    /**
+     * Create a new staging belt
+     *
+     * @param chunkSize - Size of each chunk in bytes (default: 256KB)
+     */
+    constructor(chunkSize: number = 256 * 1024) {
+        this.chunkSize = chunkSize;
+        this.beltHandle = createStagingBelt(chunkSize);
+    }
+
+    /**
+     * Allocate space in the staging belt
+     *
+     * @param size - Size in bytes to allocate
+     * @returns Write descriptor with buffer handle and offset, or null if failed
+     */
+    allocate(size: GPUSize): StagingBeltWriteResult | null {
+        if (this.destroyed) {
+            throw new Error("Staging belt has been destroyed");
+        }
+
+        const result = stagingBeltWrite(this.beltHandle, BigInt(size));
+        if (!result) {
+            return null;
+        }
+
+        this.totalWrites++;
+        this.totalBytes += size;
+
+        return {
+            bufferHandle: BigInt(result.buffer_handle),
+            offset: result.offset,
+            size: result.size,
+        };
+    }
+
+    /**
+     * Finish the current frame and recover completed buffers
+     *
+     * Call this at the end of each frame to allow buffer reuse.
+     */
+    finishFrame(): void {
+        if (this.destroyed) {
+            throw new Error("Staging belt has been destroyed");
+        }
+
+        stagingBeltFinish(this.beltHandle);
+        this.framesFinished++;
+    }
+
+    /**
+     * Get statistics for the staging belt
+     */
+    getStats(): {
+        activeChunks: number;
+        freeChunks: number;
+        chunkSize: number;
+        totalAllocated: number;
+        totalWrites: number;
+        totalBytes: number;
+        framesFinished: number;
+    } | null {
+        if (this.destroyed) {
+            return null;
+        }
+
+        const ffiStats = stagingBeltStats(this.beltHandle);
+        if (!ffiStats) {
+            return null;
+        }
+
+        return {
+            activeChunks: ffiStats.active_chunks,
+            freeChunks: ffiStats.free_chunks,
+            chunkSize: ffiStats.chunk_size,
+            totalAllocated: ffiStats.total_allocated,
+            totalWrites: this.totalWrites,
+            totalBytes: this.totalBytes,
+            framesFinished: this.framesFinished,
+        };
+    }
+
+    /**
+     * Check if belt is destroyed
+     */
+    isDestroyed(): boolean {
+        return this.destroyed;
+    }
+
+    /**
+     * Destroy the staging belt and release resources
+     */
+    destroy(): void {
+        if (!this.destroyed) {
+            destroyStagingBelt(this.beltHandle);
+            this.destroyed = true;
+        }
+    }
+}
+
+// ============================================================================
+// Factory Functions
+// ============================================================================
+
+/**
+ * Staging implementation type
+ */
+export type StagingImplementation = "pool" | "belt";
+
+/**
+ * Create a staging buffer manager
+ *
+ * @param device - WebGPU device
+ * @param implementation - Implementation type ("pool" or "belt")
+ * @param options - Implementation-specific options
+ * @returns Staging buffer pool or staging belt
+ */
+export function createStagingManager(
+    device: WebGPUDevice,
+    implementation: "pool",
+    options?: { preallocate?: boolean }
+): StagingBufferPool;
+export function createStagingManager(
+    device: WebGPUDevice,
+    implementation: "belt",
+    options?: { chunkSize?: number }
+): WebGPUStagingBelt;
+export function createStagingManager(
+    device: WebGPUDevice,
+    implementation: StagingImplementation = "pool",
+    options?: { preallocate?: boolean; chunkSize?: number }
+): StagingBufferPool | WebGPUStagingBelt {
+    if (implementation === "belt") {
+        return new WebGPUStagingBelt(options?.chunkSize);
+    }
+    return new StagingBufferPool(device);
 }

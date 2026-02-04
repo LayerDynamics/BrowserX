@@ -42,6 +42,7 @@ function createMockSocket(): any {
         localPort: 12345,
         remoteAddress: "127.0.0.1",
         remotePort: 80,
+        connect: async (_host: string, _port: number) => {},
         read: async (_buffer: Uint8Array) => null,
         write: async (_data: Uint8Array) => _data.byteLength,
         close: async () => {},

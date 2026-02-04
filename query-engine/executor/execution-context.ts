@@ -65,3 +65,56 @@ export class ExecutionContext {
     return cloned;
   }
 }
+
+/**
+ * ExecutionContextManager - manages multiple execution contexts
+ * This is for compatibility with tests that import from this file
+ */
+export class ExecutionContextManager {
+  private contexts: Map<string, ExecutionContext>;
+  private currentContextId: string | null;
+
+  constructor() {
+    this.contexts = new Map();
+    this.currentContextId = null;
+  }
+
+  /**
+   * Create a new execution context
+   */
+  createContext(id: string): ExecutionContext {
+    const context = new ExecutionContext();
+    this.contexts.set(id, context);
+    this.currentContextId = id;
+    return context;
+  }
+
+  /**
+   * Get context by ID
+   */
+  getContext(id: string): ExecutionContext | undefined {
+    return this.contexts.get(id);
+  }
+
+  /**
+   * Get current context
+   */
+  getCurrentContext(): ExecutionContext | undefined {
+    return this.currentContextId ? this.contexts.get(this.currentContextId) : undefined;
+  }
+
+  /**
+   * Remove context
+   */
+  removeContext(id: string): boolean {
+    return this.contexts.delete(id);
+  }
+
+  /**
+   * Clear all contexts
+   */
+  clearAll(): void {
+    this.contexts.clear();
+    this.currentContextId = null;
+  }
+}

@@ -73,6 +73,70 @@ export function destroyStagingBelt(beltHandle: bigint): void {
 }
 
 // ============================================================================
+// Buffer Pool Management
+// ============================================================================
+
+/**
+ * Acquire a buffer from the pool
+ *
+ * @param size - Buffer size in bytes
+ * @param usage - GPUBufferUsage flags
+ * @returns Buffer handle (0 if pool exhausted)
+ */
+export function bufferPoolAcquire(size: bigint, usage: number): bigint {
+    const webgpuX = getWebGPUX();
+    return webgpuX.acquireBuffer(size, usage);
+}
+
+/**
+ * Release a buffer back to the pool
+ *
+ * @param handle - Buffer handle
+ */
+export function bufferPoolRelease(handle: bigint): void {
+    const webgpuX = getWebGPUX();
+    webgpuX.releaseBuffer(handle);
+}
+
+/**
+ * Add a buffer to the pool
+ *
+ * @param handle - Buffer handle
+ * @param size - Buffer size in bytes
+ * @param usage - GPUBufferUsage flags
+ */
+export function bufferPoolAdd(handle: bigint, size: bigint, usage: number): void {
+    const webgpuX = getWebGPUX();
+    webgpuX.addBuffer(handle, size, usage);
+}
+
+/**
+ * Remove a buffer from the pool
+ *
+ * @param handle - Buffer handle
+ */
+export function bufferPoolRemove(handle: bigint): void {
+    const webgpuX = getWebGPUX();
+    webgpuX.removeBuffer(handle);
+}
+
+/**
+ * Clear all buffers from the pool
+ */
+export function clearBufferPool(): void {
+    const webgpuX = getWebGPUX();
+    webgpuX.clearBufferPool();
+}
+
+/**
+ * Evict old unused buffers from the pool
+ */
+export function evictOldBuffers(): void {
+    const webgpuX = getWebGPUX();
+    webgpuX.evictBuffers();
+}
+
+// ============================================================================
 // Buffer Alignment
 // ============================================================================
 

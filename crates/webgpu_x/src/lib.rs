@@ -33,6 +33,15 @@ pub use gpu::limits::{
     validate_texture_dimensions, validate_workgroup_size, DeviceLimits, ValidationResult,
 };
 
+pub use gpu::device::{
+    gpu_init, gpu_request_adapter, gpu_request_device,
+    gpu_create_bind_group_layout, gpu_create_empty_bind_group_layout,
+    gpu_create_pipeline_layout, gpu_create_empty_pipeline_layout,
+    gpu_create_texture,
+    gpu_destroy_bind_group_layout, gpu_destroy_pipeline_layout, gpu_destroy_texture,
+    gpu_destroy_device, gpu_destroy_adapter, gpu_cleanup_all,
+};
+
 pub use memory::buffer_pool::{
     buffer_pool_acquire, buffer_pool_add, buffer_pool_clear, buffer_pool_configure,
     buffer_pool_evict, buffer_pool_release, buffer_pool_remove, buffer_pool_stats,

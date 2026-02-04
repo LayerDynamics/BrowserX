@@ -45,8 +45,8 @@ export class ProjectionPushdownPass {
       case "IF":
         return {
           ...stmt,
-          thenBranch: this.pushdownStatement(stmt.thenBranch),
-          elseBranch: stmt.elseBranch ? this.pushdownStatement(stmt.elseBranch) : undefined,
+          then: this.pushdownStatement(stmt.then),
+          else: stmt.else ? this.pushdownStatement(stmt.else) : undefined,
         };
 
       default:
@@ -172,7 +172,7 @@ export class ProjectionPushdownPass {
     }
 
     // Filter fields to only those required
-    const prunedFields = subquery.fields.filter((field) => {
+    const prunedFields: Field[] = subquery.fields.filter((field: Field) => {
       const fieldName = field.alias || field.name;
       return requiredFields.has(fieldName);
     });

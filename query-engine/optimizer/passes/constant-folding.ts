@@ -73,8 +73,8 @@ export class ConstantFoldingPass {
         return {
           ...stmt,
           condition: this.foldExpression(stmt.condition),
-          thenBranch: this.foldStatement(stmt.thenBranch),
-          elseBranch: stmt.elseBranch ? this.foldStatement(stmt.elseBranch) : undefined,
+          then: this.foldStatement(stmt.then),
+          else: stmt.else ? this.foldStatement(stmt.else) : undefined,
         };
 
       case "INSERT":

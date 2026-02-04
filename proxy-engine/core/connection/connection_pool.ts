@@ -22,6 +22,7 @@ export class ConnectionPool {
   private pools: Map<string, PooledConnectionInfo[]> = new Map();
   private config: ConnectionPoolConfig;
   private nextId = 1;
+  private cleanupIntervalId?: number;
 
   constructor(config: ConnectionPoolConfig) {
     this.config = config;
@@ -119,10 +120,34 @@ export class ConnectionPool {
 
   private startCleanupInterval(): void {
     // Run cleanup every 10 seconds
-    setInterval(() => {
+    this.cleanupIntervalId = setInterval(() => {
       console.log("\n[CLEANUP] Running connection pool cleanup...");
       this.cleanup();
-    }, 10000);
+    }, 10000) as unknown as number;
+  }
+
+  /**
+   * Destroy the connection pool and cleanup all resources
+   */
+  destroy(): void {
+    // Clear the cleanup interval to prevent memory leak
+    if (this.cleanupIntervalId !== undefined) {
+      clearInterval(this.cleanupIntervalId);
+      this.cleanupIntervalId = undefined;
+    }
+
+    // Close all connections in all pools
+    for (const [poolKey, pool] of this.pools.entries()) {
+      for (const conn of pool) {
+        try {
+          conn.conn.close();
+          console.log(`[POOL DESTROY] Closed connection ${conn.id} for ${poolKey}`);
+        } catch {
+          // Already closed
+        }
+      }
+    }
+    this.pools.clear();
   }
 
   private cleanup(): void {
@@ -254,45 +279,50 @@ export class ConnectionPool {
   }
 }
 
-// Example usage
-const config: ConnectionPoolConfig = {
-  minConnections: 2,
-  maxConnections: 10,
-  idleTimeout: 30000, // 30 seconds
-  maxLifetime: 300000, // 5 minutes
-};
+// Example usage - only runs when executed directly (prevents memory leak on import)
+if (import.meta.main) {
+  const config: ConnectionPoolConfig = {
+    minConnections: 2,
+    maxConnections: 10,
+    idleTimeout: 30000, // 30 seconds
+    maxLifetime: 300000, // 5 minutes
+  };
 
-const pool = new ConnectionPool(config);
+  const pool = new ConnectionPool(config);
 
-console.log("=== Connection Pool Demo ===\n");
-console.log("Simulating multiple requests with connection pooling:\n");
+  console.log("=== Connection Pool Demo ===\n");
+  console.log("Simulating multiple requests with connection pooling:\n");
 
-// Simulate multiple requests
-async function simulateRequests() {
-  for (let i = 0; i < 5; i++) {
-    console.log(`\n--- Request ${i + 1} ---`);
+  // Simulate multiple requests
+  async function simulateRequests() {
+    for (let i = 0; i < 5; i++) {
+      console.log(`\n--- Request ${i + 1} ---`);
 
-    const conn = await pool.acquire("example.com", 80);
+      const conn = await pool.acquire("example.com", 80);
 
-    if (conn) {
-      // Simulate using the connection
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (conn) {
+        // Simulate using the connection
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Release back to pool
-      pool.release(conn);
+        // Release back to pool
+        pool.release(conn);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    pool.displayStats();
   }
 
-  pool.displayStats();
+  await simulateRequests();
+
+  console.log("\n=== Key Benefits ===");
+  console.log("✓ Connections reused instead of creating new ones");
+  console.log("✓ Saves TCP handshake time (~50-100ms)");
+  console.log("✓ Saves TLS handshake time (~100-300ms for HTTPS)");
+  console.log("✓ Reduces load on backend servers");
+  console.log("✓ Better resource utilization");
+
+  // Clean up to prevent memory leak from cleanup interval
+  pool.destroy();
 }
-
-await simulateRequests();
-
-console.log("\n=== Key Benefits ===");
-console.log("✓ Connections reused instead of creating new ones");
-console.log("✓ Saves TCP handshake time (~50-100ms)");
-console.log("✓ Saves TLS handshake time (~100-300ms for HTTPS)");
-console.log("✓ Reduces load on backend servers");
-console.log("✓ Better resource utilization");

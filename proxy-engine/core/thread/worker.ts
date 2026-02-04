@@ -4,6 +4,15 @@
  * Wrapper around Deno Worker for managing background threads
  */
 
+// Declare worker global scope types for use in worker scripts
+declare const self: DedicatedWorkerGlobalScope;
+
+interface DedicatedWorkerGlobalScope {
+  onmessage: ((event: MessageEvent) => void) | null;
+  postMessage(message: unknown, transfer?: Transferable[]): void;
+  close(): void;
+}
+
 import type {
   WorkerID,
   WorkerMessage,
@@ -34,6 +43,7 @@ export class ThreadWorker implements IWorker {
     reject: (error: Error) => void;
     startTime: number;
     timeout?: number;
+    timeoutId?: number;
   }>();
   private messageHandlers = new Map<string, Set<(data: unknown) => void>>();
   private stats: WorkerStats;
@@ -104,23 +114,30 @@ export class ThreadWorker implements IWorker {
       const startTime = Date.now();
 
       // Store pending task
-      this.pendingTasks.set(taskId, {
+      const pendingTask: {
+        resolve: (result: unknown) => void;
+        reject: (error: Error) => void;
+        startTime: number;
+        timeout?: number;
+        timeoutId?: number;
+      } = {
         resolve: resolve as (result: unknown) => void,
         reject,
         startTime,
         timeout,
-      });
+      };
+      this.pendingTasks.set(taskId, pendingTask);
 
       // Set timeout if specified
       if (timeout) {
-        setTimeout(() => {
+        pendingTask.timeoutId = setTimeout(() => {
           const pending = this.pendingTasks.get(taskId);
           if (pending) {
             this.pendingTasks.delete(taskId);
             this.stats.tasksFailed++;
             reject(new Error(`Task ${taskId} timed out after ${timeout}ms`));
           }
-        }, timeout);
+        }, timeout) as unknown as number;
       }
 
       // Send task to worker
@@ -142,9 +159,12 @@ export class ThreadWorker implements IWorker {
    * Terminate the worker
    */
   terminate(): void {
-    // Reject all pending tasks
+    // Reject all pending tasks and clear their timeouts
     for (const [taskId, pending] of this.pendingTasks.entries()) {
-      pending.reject(new Error(`Worker ${this.id} terminated`));
+      if (pending.timeoutId !== undefined) {
+        clearTimeout(pending.timeoutId);
+      }
+      pending.reject(new Error(`Worker ${this.id} terminated while processing task ${taskId}`));
     }
     this.pendingTasks.clear();
 
@@ -270,6 +290,11 @@ export class ThreadWorker implements IWorker {
       return;
     }
 
+    // Clear the timeout to prevent memory leak
+    if (pending.timeoutId !== undefined) {
+      clearTimeout(pending.timeoutId);
+    }
+
     this.pendingTasks.delete(message.taskId);
 
     // Update stats
@@ -305,6 +330,10 @@ export class ThreadWorker implements IWorker {
     if (taskId) {
       const pending = this.pendingTasks.get(taskId);
       if (pending) {
+        // Clear the timeout to prevent memory leak
+        if (pending.timeoutId !== undefined) {
+          clearTimeout(pending.timeoutId);
+        }
         this.pendingTasks.delete(taskId);
         this.stats.tasksFailed++;
         pending.reject(new Error(message.error));
@@ -392,7 +421,7 @@ export function createWorkerHandler<T = unknown, R = unknown>(
           type: "error" as WorkerMessageType.ERROR,
           id: crypto.randomUUID(),
           taskId: taskMessage.taskId,
-          error: error instanceof Error ? error.message : String(error),
+          error: error instanceof Error ? `${error.message} (after ${duration}ms)` : `${String(error)} (after ${duration}ms)`,
           stack: error instanceof Error ? error.stack : undefined,
           timestamp: Date.now(),
         };

@@ -18,6 +18,8 @@ import {
   QueryResult,
   QueryStatus,
 } from "../types/mod.ts";
+import { ProxyController, ProxyConfig } from "../controllers/proxy/proxy-controller.ts";
+import { Runtime } from "../../proxy-engine/core/runtime/mod.ts";
 
 /**
  * Query Engine configuration
@@ -41,8 +43,16 @@ export interface BrowserEngineConfig {
 export interface ProxyEngineConfig {
   // Proxy-specific configuration
   enabled?: boolean;
-  defaultCache?: boolean;
   defaultTimeout?: number;
+  cache?: {
+    enabled?: boolean;
+    defaultTTL?: number;
+    maxSize?: number;
+  };
+  rateLimit?: {
+    requestsPerSecond?: number;
+    requestsPerMinute?: number;
+  };
 }
 
 export interface ResourceManagerConfig {
@@ -185,6 +195,8 @@ export class QueryEngine implements IQueryEngine {
   private queries: Map<QueryID, QueryStatus>;
   private abortControllers: Map<QueryID, AbortController>;
   private metrics: QueryEngineMetrics;
+  private runtime?: Runtime;
+  private proxyController?: ProxyController;
 
   constructor(config: QueryEngineConfig = {}) {
     this.config = config;
@@ -224,9 +236,69 @@ export class QueryEngine implements IQueryEngine {
   async initialize(config: QueryEngineConfig): Promise<void> {
     this.config = { ...this.config, ...config };
 
-    // Initialize components (controllers will be created on-demand during execution)
+    // Reset metrics on (re)initialize
+    this.metrics = {
+      queries: {
+        total: 0,
+        successful: 0,
+        failed: 0,
+        cancelled: 0,
+        timeout: 0,
+      },
+      performance: {
+        averageExecutionTime: 0,
+        p50: 0,
+        p95: 0,
+        p99: 0,
+      },
+      resources: {
+        browsers: 0,
+        pages: 0,
+        connections: 0,
+        memoryUsage: 0,
+      },
+      errors: {
+        byType: {},
+        total: 0,
+      },
+    };
+
+    // Initialize Proxy Engine if enabled
+    if (this.config.proxy?.enabled) {
+      // Create Runtime instance for proxy engine
+      this.runtime = new Runtime({
+        gateways: [], // No gateway servers needed for query engine integration
+        handleSignals: false, // Don't register signal handlers
+        environment: "production",
+        logLevel: "warn",
+      });
+
+      // Create ProxyController with Runtime for cache integration
+      const proxyConfig: Partial<ProxyConfig> = {
+        enabled: true,
+        cache: {
+          enabled: this.config.proxy.cache?.enabled ?? true,
+          defaultTTL: this.config.proxy.cache?.defaultTTL ?? 300000, // 5 minutes
+          maxSize: this.config.proxy.cache?.maxSize ?? 100 * 1024 * 1024, // 100MB
+        },
+      };
+
+      // Only add rateLimit if both values are provided
+      if (
+        this.config.proxy.rateLimit?.requestsPerSecond !== undefined &&
+        this.config.proxy.rateLimit?.requestsPerMinute !== undefined
+      ) {
+        proxyConfig.rateLimit = {
+          requestsPerSecond: this.config.proxy.rateLimit.requestsPerSecond,
+          requestsPerMinute: this.config.proxy.rateLimit.requestsPerMinute,
+        };
+      }
+
+      this.proxyController = new ProxyController(this.runtime, proxyConfig);
+    }
+
+    // Note: Other components created on-demand during execution
     // - Browser Engine integration: BrowserController created by executor
-    // - Proxy Engine integration: ProxyController created by executor
     // - Resource Manager: Managed by execution planner
     // - State Manager: ExecutionContext managed by executor
     // - Metrics Collector: Integrated in execute() method
@@ -328,10 +400,16 @@ export class QueryEngine implements IQueryEngine {
 
       // 6. Execution - Execute the plan
       const executionStart = performance.now();
-      const executor = new QueryExecutor();
+      const executor = new QueryExecutor(undefined, this.proxyController);
       const executionResult = await executor.execute(plan);
-      const data = executionResult.data;
       const executionTime = performance.now() - executionStart;
+
+      // Check for execution errors
+      if (!executionResult.success && executionResult.error) {
+        throw executionResult.error;
+      }
+
+      const data = executionResult.data;
 
       // 7. Formatting - Format results
       const formattingStart = performance.now();
@@ -506,6 +584,20 @@ export class QueryEngine implements IQueryEngine {
     // Clear query status map
     this.queries.clear();
 
+    // Shutdown proxy runtime if initialized
+    if (this.runtime) {
+      try {
+        await this.runtime.shutdown();
+      } catch (error) {
+        // Ignore errors during runtime shutdown
+        console.error("Error shutting down proxy runtime:", error);
+      }
+      this.runtime = undefined;
+    }
+
+    // Clear proxy controller
+    this.proxyController = undefined;
+
     // Mark as not initialized
     this.initialized = false;
   }
@@ -543,6 +635,20 @@ export class QueryEngine implements IQueryEngine {
    */
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  /**
+   * Get the proxy controller (if proxy is enabled)
+   */
+  getProxyController(): ProxyController | undefined {
+    return this.proxyController;
+  }
+
+  /**
+   * Get the proxy runtime (if proxy is enabled)
+   */
+  getRuntime(): Runtime | undefined {
+    return this.runtime;
   }
 
   /**

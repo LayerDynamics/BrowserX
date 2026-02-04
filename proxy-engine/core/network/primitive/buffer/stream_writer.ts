@@ -21,6 +21,7 @@ export interface StreamWriterOptions {
  */
 export class StreamWriter {
   private buffer: Uint8Array;
+  private bufferSize: number;
   private bufferPos = 0;
   private closed = false;
   private autoFlushTimer?: number;
@@ -30,8 +31,8 @@ export class StreamWriter {
     private writer: Writer,
     private options: StreamWriterOptions = {},
   ) {
-    const bufferSize = options.bufferSize || 8192;
-    this.buffer = acquireBuffer(bufferSize);
+    this.bufferSize = options.bufferSize || 8192;
+    this.buffer = acquireBuffer(this.bufferSize);
 
     // Setup auto-flush timer if enabled
     if (options.autoFlush && options.autoFlushInterval) {
@@ -50,7 +51,7 @@ export class StreamWriter {
     let offset = 0;
 
     while (offset < data.length) {
-      const available = this.buffer.length - this.bufferPos;
+      const available = this.bufferSize - this.bufferPos;
       const toWrite = Math.min(available, data.length - offset);
 
       // Copy to buffer
@@ -63,7 +64,7 @@ export class StreamWriter {
       offset += toWrite;
 
       // Flush if buffer is full
-      if (this.bufferPos === this.buffer.length) {
+      if (this.bufferPos >= this.bufferSize) {
         await this.flush();
       }
     }
@@ -90,7 +91,7 @@ export class StreamWriter {
 
     this.buffer[this.bufferPos++] = byte;
 
-    if (this.bufferPos === this.buffer.length) {
+    if (this.bufferPos >= this.bufferSize) {
       await this.flush();
     }
   }
@@ -208,7 +209,7 @@ export class StreamWriter {
    * Get buffer size
    */
   getBufferSize(): number {
-    return this.buffer.length;
+    return this.bufferSize;
   }
 
   /**

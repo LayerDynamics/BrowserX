@@ -78,6 +78,8 @@ export interface Certificate {
     publicKey: ByteBuffer;
     signature: ByteBuffer;
     signatureAlgorithm: string;
+    /** Raw TBS (To-Be-Signed) certificate data for signature verification */
+    tbsCertificate?: ByteBuffer;
 }
 
 /**
@@ -90,6 +92,12 @@ export interface Socket {
     readonly localPort: Port;
     readonly remoteAddress: string;
     readonly remotePort: Port;
+
+    /**
+     * Connect to remote host
+     * Establishes the underlying OS-level connection (TCP 3-way handshake)
+     */
+    connect(host: string, port: Port): Promise<void>;
 
     /**
      * Read from socket

@@ -90,6 +90,12 @@ export class StreamReader {
     ).slice(); // slice to copy
 
     this.bufferPos += toRead;
+
+    // If we've consumed all buffered data, try to detect EOF
+    if (this.bufferPos === this.bufferEnd && !this.eof) {
+      await this.fill();
+    }
+
     return result;
   }
 
@@ -232,9 +238,17 @@ export class StreamReader {
       throw new Error("StreamReader is closed");
     }
 
+    // Check if we're at EOF before attempting to read
+    await this.fill();
+    if (this.eof && this.bufferPos === this.bufferEnd) {
+      return null; // EOF - no more data to read
+    }
+
     const lineBytes = await this.readUntil(0x0a); // \n
 
-    if (lineBytes.length === 0 && this.eof) {
+    // Only return null if we got nothing AND we're at EOF
+    // An empty line (just \n) should return ""
+    if (lineBytes.length === 0 && this.eof && this.bufferPos === this.bufferEnd) {
       return null; // EOF
     }
 

@@ -18,12 +18,17 @@ import type { AuthCredentials, CookieData, SessionData } from "./types.ts";
 export class SessionStateManager {
   private readonly sessions: Map<SessionID, SessionData>;
   private readonly sessionTimeout: DurationMs;
+  private readonly cleanupInterval: DurationMs;
   private cleanupTimer: number | null = null;
 
-  constructor(sessionTimeout: DurationMs = 30 * 60 * 1000) { // 30 minutes default
+  constructor(sessionTimeout: DurationMs = 30 * 60 * 1000, cleanupInterval: DurationMs = 5 * 60 * 1000) { // 30 min timeout, 5 min cleanup
     this.sessions = new Map();
     this.sessionTimeout = sessionTimeout;
-    this.startCleanup();
+    this.cleanupInterval = cleanupInterval;
+    // Only start cleanup if interval is positive
+    if (cleanupInterval > 0) {
+      this.startCleanup();
+    }
   }
 
   /**
@@ -402,10 +407,10 @@ export class SessionStateManager {
    * Start automatic cleanup of expired sessions
    */
   private startCleanup(): void {
-    // Run cleanup every 5 minutes
+    // Run cleanup at the configured interval
     this.cleanupTimer = setInterval(() => {
       this.cleanup();
-    }, 5 * 60 * 1000);
+    }, this.cleanupInterval);
   }
 
   /**

@@ -4,7 +4,7 @@
  * Implements CSS selector specificity calculation and matching.
  */
 
-import { CSSToken, CSSTokenType } from "./CSSTokenizer.ts";
+import { CSSToken, CSSTokenType, CSSTokenizer } from "./CSSTokenizer.ts";
 import type {
     CSSDeclaration,
     CSSRule,
@@ -12,7 +12,7 @@ import type {
     CSSStyleSheet,
     Specificity,
 } from "../../../types/css.ts";
-import type { DOMElement } from "../../../types/dom.ts";
+import type { DOMElement, DOMNode } from "../../../types/dom.ts";
 
 /**
  * CSS Selector implementation
@@ -128,10 +128,449 @@ class Selector implements CSSSelector {
             }
         }
 
-        // TODO: Match pseudo-classes (:hover, :first-child, etc.)
-        // TODO: Match pseudo-elements (::before, ::after, etc.)
+        // Match pseudo-classes
+        for (const pseudo of part.pseudoClasses) {
+            if (!this.matchesPseudoClass(pseudo, element)) {
+                return false;
+            }
+        }
+
+        // Pseudo-elements (::before, ::after) are handled separately in rendering
+        // They don't affect element matching but create additional render boxes
 
         return true;
+    }
+
+    /**
+     * Check if element matches a pseudo-class
+     */
+    private matchesPseudoClass(pseudo: string, element: DOMElement): boolean {
+        // Handle functional pseudo-classes with arguments
+        const funcMatch = pseudo.match(/^(\w+)\((.+)\)$/);
+        if (funcMatch) {
+            return this.matchesFunctionalPseudoClass(funcMatch[1], funcMatch[2], element);
+        }
+
+        // Simple pseudo-classes
+        switch (pseudo.toLowerCase()) {
+            // Structural pseudo-classes
+            case "root":
+                return element.tagName?.toLowerCase() === "html";
+
+            case "empty":
+                return this.isElementEmpty(element);
+
+            case "first-child":
+                return this.isFirstChild(element);
+
+            case "last-child":
+                return this.isLastChild(element);
+
+            case "only-child":
+                return this.isOnlyChild(element);
+
+            case "first-of-type":
+                return this.isFirstOfType(element);
+
+            case "last-of-type":
+                return this.isLastOfType(element);
+
+            case "only-of-type":
+                return this.isOnlyOfType(element);
+
+            // Link pseudo-classes
+            case "link":
+                return element.tagName?.toLowerCase() === "a" &&
+                    element.attributes?.has("href");
+
+            case "visited":
+                // Always false for privacy reasons
+                return false;
+
+            // User action pseudo-classes (require state tracking)
+            case "hover":
+            case "active":
+            case "focus":
+            case "focus-within":
+            case "focus-visible":
+                // These require runtime state - always false during static matching
+                return element.attributes?.get(`data-${pseudo}`) === "true";
+
+            // Input pseudo-classes
+            case "enabled":
+                return !element.attributes?.has("disabled");
+
+            case "disabled":
+                return element.attributes?.has("disabled");
+
+            case "checked":
+                return element.attributes?.has("checked");
+
+            case "indeterminate":
+                return element.attributes?.get("data-indeterminate") === "true";
+
+            case "required":
+                return element.attributes?.has("required");
+
+            case "optional":
+                return !element.attributes?.has("required");
+
+            case "read-only":
+                return element.attributes?.has("readonly") ||
+                    element.attributes?.get("contenteditable") === "false";
+
+            case "read-write":
+                return !element.attributes?.has("readonly") &&
+                    element.attributes?.get("contenteditable") !== "false";
+
+            case "valid":
+            case "invalid":
+            case "in-range":
+            case "out-of-range":
+                // Form validation - would need form state
+                return false;
+
+            case "target":
+                // URL fragment target - would need current URL
+                return element.attributes?.get("id") ===
+                    element.attributes?.get("data-target-fragment");
+
+            default:
+                // Unknown pseudo-class - don't match
+                return false;
+        }
+    }
+
+    /**
+     * Handle functional pseudo-classes like :nth-child(2n+1)
+     */
+    private matchesFunctionalPseudoClass(
+        func: string,
+        arg: string,
+        element: DOMElement,
+    ): boolean {
+        switch (func.toLowerCase()) {
+            case "nth-child":
+                return this.matchesNthChild(arg, element, false);
+
+            case "nth-last-child":
+                return this.matchesNthChild(arg, element, true);
+
+            case "nth-of-type":
+                return this.matchesNthOfType(arg, element, false);
+
+            case "nth-last-of-type":
+                return this.matchesNthOfType(arg, element, true);
+
+            case "not":
+                return !this.matchesNestedSelector(arg, element);
+
+            case "is":
+            case "where":
+            case "matches":
+                return this.matchesNestedSelector(arg, element);
+
+            case "has":
+                return this.matchesHas(arg, element);
+
+            case "lang":
+                return this.matchesLang(arg, element);
+
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Check if element is empty (no children or text content)
+     */
+    private isElementEmpty(element: DOMElement): boolean {
+        if (!element.childNodes) return true;
+        for (const child of element.childNodes) {
+            if (child.nodeType === 1) return false; // Element node
+            if (child.nodeType === 3 && child.nodeValue?.trim()) {
+                return false; // Non-empty text node
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Get siblings of element
+     */
+    private getSiblings(element: DOMElement): DOMElement[] {
+        const parent = element.parentElement;
+        if (!parent?.childNodes) return [];
+        return parent.childNodes.filter((c: DOMNode) => c.nodeType === 1) as DOMElement[];
+    }
+
+    /**
+     * Check if element is first child
+     */
+    private isFirstChild(element: DOMElement): boolean {
+        const siblings = this.getSiblings(element);
+        return siblings[0] === element;
+    }
+
+    /**
+     * Check if element is last child
+     */
+    private isLastChild(element: DOMElement): boolean {
+        const siblings = this.getSiblings(element);
+        return siblings[siblings.length - 1] === element;
+    }
+
+    /**
+     * Check if element is only child
+     */
+    private isOnlyChild(element: DOMElement): boolean {
+        const siblings = this.getSiblings(element);
+        return siblings.length === 1 && siblings[0] === element;
+    }
+
+    /**
+     * Get same-type siblings
+     */
+    private getSameTypeSiblings(element: DOMElement): DOMElement[] {
+        const siblings = this.getSiblings(element);
+        return siblings.filter(
+            (s) => s.tagName?.toLowerCase() === element.tagName?.toLowerCase(),
+        );
+    }
+
+    /**
+     * Check if element is first of its type
+     */
+    private isFirstOfType(element: DOMElement): boolean {
+        const sameType = this.getSameTypeSiblings(element);
+        return sameType[0] === element;
+    }
+
+    /**
+     * Check if element is last of its type
+     */
+    private isLastOfType(element: DOMElement): boolean {
+        const sameType = this.getSameTypeSiblings(element);
+        return sameType[sameType.length - 1] === element;
+    }
+
+    /**
+     * Check if element is only of its type
+     */
+    private isOnlyOfType(element: DOMElement): boolean {
+        const sameType = this.getSameTypeSiblings(element);
+        return sameType.length === 1 && sameType[0] === element;
+    }
+
+    /**
+     * Parse nth-child formula (e.g., "2n+1", "odd", "even", "3")
+     * Returns [a, b] for an+b formula
+     */
+    private parseNthFormula(formula: string): [number, number] {
+        const f = formula.trim().toLowerCase();
+
+        if (f === "odd") return [2, 1];
+        if (f === "even") return [2, 0];
+
+        // Simple number
+        if (/^-?\d+$/.test(f)) {
+            return [0, parseInt(f, 10)];
+        }
+
+        // an+b or an-b format
+        const match = f.match(/^(-?\d*)n([+-]\d+)?$/);
+        if (match) {
+            let a = match[1] === "" || match[1] === "+" ? 1 :
+                    match[1] === "-" ? -1 : parseInt(match[1], 10);
+            const b = match[2] ? parseInt(match[2], 10) : 0;
+            return [a, b];
+        }
+
+        // n+b format
+        const simpleMatch = f.match(/^n([+-]\d+)?$/);
+        if (simpleMatch) {
+            return [1, simpleMatch[1] ? parseInt(simpleMatch[1], 10) : 0];
+        }
+
+        return [0, 0];
+    }
+
+    /**
+     * Check if element matches :nth-child() formula
+     */
+    private matchesNthChild(formula: string, element: DOMElement, fromEnd: boolean): boolean {
+        const siblings = this.getSiblings(element);
+        let index = siblings.indexOf(element);
+        if (index === -1) return false;
+
+        if (fromEnd) {
+            index = siblings.length - 1 - index;
+        }
+        index++; // nth-child is 1-indexed
+
+        const [a, b] = this.parseNthFormula(formula);
+
+        if (a === 0) {
+            return index === b;
+        }
+
+        // Check if index = an + b for some non-negative integer n
+        const diff = index - b;
+        if (a > 0) {
+            return diff >= 0 && diff % a === 0;
+        } else {
+            return diff <= 0 && diff % a === 0;
+        }
+    }
+
+    /**
+     * Check if element matches :nth-of-type() formula
+     */
+    private matchesNthOfType(formula: string, element: DOMElement, fromEnd: boolean): boolean {
+        const sameType = this.getSameTypeSiblings(element);
+        let index = sameType.indexOf(element);
+        if (index === -1) return false;
+
+        if (fromEnd) {
+            index = sameType.length - 1 - index;
+        }
+        index++; // 1-indexed
+
+        const [a, b] = this.parseNthFormula(formula);
+
+        if (a === 0) {
+            return index === b;
+        }
+
+        const diff = index - b;
+        if (a > 0) {
+            return diff >= 0 && diff % a === 0;
+        } else {
+            return diff <= 0 && diff % a === 0;
+        }
+    }
+
+    /**
+     * Check if element matches nested selector (for :not, :is, etc.)
+     */
+    private matchesNestedSelector(selectorStr: string, element: DOMElement): boolean {
+        // Parse selector list (comma-separated)
+        const selectors = selectorStr.split(",").map((s) => s.trim());
+        for (const sel of selectors) {
+            // Create a simple selector matcher for the nested selector
+            const parts = this.parseSimpleSelector(sel);
+            if (parts && this.matchesPart(parts, element)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Parse a simple selector into a SelectorPart
+     */
+    private parseSimpleSelector(selector: string): SelectorPart | null {
+        const part: SelectorPart = {
+            type: undefined,
+            id: undefined,
+            classes: [],
+            attributes: [],
+            pseudoClasses: [],
+            pseudoElements: [],
+        };
+
+        let remaining = selector.trim();
+        if (!remaining) return null;
+
+        // Parse type
+        const typeMatch = remaining.match(/^([a-zA-Z_][a-zA-Z0-9_-]*|\*)/);
+        if (typeMatch) {
+            part.type = typeMatch[1];
+            remaining = remaining.slice(typeMatch[0].length);
+        }
+
+        // Parse ID, classes
+        while (remaining) {
+            if (remaining.startsWith("#")) {
+                const idMatch = remaining.match(/^#([a-zA-Z_][a-zA-Z0-9_-]*)/);
+                if (idMatch) {
+                    part.id = idMatch[1];
+                    remaining = remaining.slice(idMatch[0].length);
+                } else break;
+            } else if (remaining.startsWith(".")) {
+                const classMatch = remaining.match(/^\.([a-zA-Z_][a-zA-Z0-9_-]*)/);
+                if (classMatch) {
+                    part.classes.push(classMatch[1]);
+                    remaining = remaining.slice(classMatch[0].length);
+                } else break;
+            } else if (remaining.startsWith("[")) {
+                const attrMatch = remaining.match(/^\[([^\]]+)\]/);
+                if (attrMatch) {
+                    const attrPart = this.parseAttribute(attrMatch[1]);
+                    if (attrPart) part.attributes.push(attrPart);
+                    remaining = remaining.slice(attrMatch[0].length);
+                } else break;
+            } else {
+                break;
+            }
+        }
+
+        return part;
+    }
+
+    /**
+     * Parse attribute selector like "attr=value"
+     */
+    private parseAttribute(attrStr: string): AttributeSelector | null {
+        const match = attrStr.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)(?:([~|^$*]?=)["']?([^"']*)["']?)?/);
+        if (!match) return null;
+        return {
+            name: match[1],
+            operator: match[2],
+            value: match[3],
+        };
+    }
+
+    /**
+     * Check if element matches :has() selector
+     */
+    private matchesHas(selectorStr: string, element: DOMElement): boolean {
+        // :has() checks if element has descendants matching selector
+        if (!element.childNodes) return false;
+
+        const checkDescendants = (el: DOMElement): boolean => {
+            for (const child of el.childNodes || []) {
+                if (child.nodeType !== 1) continue;
+                const childEl = child as DOMElement;
+                if (this.matchesNestedSelector(selectorStr, childEl)) {
+                    return true;
+                }
+                if (checkDescendants(childEl)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        return checkDescendants(element);
+    }
+
+    /**
+     * Check if element matches :lang() pseudo-class
+     */
+    private matchesLang(lang: string, element: DOMElement): boolean {
+        const targetLang = lang.toLowerCase().replace(/["']/g, "");
+        let el: DOMElement | null = element;
+
+        while (el) {
+            const elLang = el.attributes?.get("lang")?.toLowerCase();
+            if (elLang) {
+                return elLang === targetLang || elLang.startsWith(targetLang + "-");
+            }
+            el = el.parentElement || null;
+        }
+
+        return false;
     }
 
     /**
@@ -211,9 +650,27 @@ class StyleSheet implements CSSStyleSheet {
     rules: CSSRule[] = [];
     disabled: boolean = false;
 
-    insertRule(rule: string, index: number): number {
-        // TODO: Parse rule string and insert
-        throw new Error("insertRule not implemented");
+    insertRule(ruleText: string, index: number = this.rules.length): number {
+        // Validate index
+        if (index < 0 || index > this.rules.length) {
+            throw new DOMException(
+                `Failed to execute 'insertRule': The index provided (${index}) is larger than the maximum index (${this.rules.length}).`,
+                "IndexSizeError"
+            );
+        }
+
+        // Parse the rule using CSSParser
+        const rule = CSSParser.parseRule(ruleText);
+        if (!rule) {
+            throw new DOMException(
+                `Failed to execute 'insertRule': Failed to parse the rule '${ruleText}'.`,
+                "SyntaxError"
+            );
+        }
+
+        // Insert the rule at the specified index
+        this.rules.splice(index, 0, rule);
+        return index;
     }
 
     deleteRule(index: number): void {
@@ -243,6 +700,20 @@ class StyleSheet implements CSSStyleSheet {
 export class CSSParser {
     private tokens: CSSToken[] = [];
     private position: number = 0;
+
+    /**
+     * Parse a single CSS rule from a string
+     * Used by StyleSheet.insertRule()
+     */
+    static parseRule(ruleText: string): CSSRule | null {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(ruleText);
+        const parser = new CSSParser();
+        parser.tokens = tokens;
+        parser.position = 0;
+        parser.consumeWhitespace();
+        return parser.parseRule();
+    }
 
     /**
      * Parse CSS tokens into stylesheet

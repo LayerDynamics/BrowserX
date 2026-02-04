@@ -224,9 +224,9 @@ export class CostEstimator {
     const conditionCost = this.estimateExpression(stmt.condition);
 
     // Average of both branches (assume 50/50 probability)
-    const thenCost = this.estimateStatement(stmt.thenBranch);
-    const elseCost = stmt.elseBranch
-      ? this.estimateStatement(stmt.elseBranch)
+    const thenCost = this.estimateStatement(stmt.then);
+    const elseCost = stmt.else
+      ? this.estimateStatement(stmt.else)
       : this.createCost(0, 0, 0, 0, 0);
 
     return this.createCost(

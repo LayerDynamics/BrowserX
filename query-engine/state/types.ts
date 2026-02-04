@@ -122,4 +122,5 @@ export interface BrowserStateSnapshot {
 export interface StateManagerConfig {
   cache?: Partial<CacheConfig>;
   sessionTimeout?: DurationMs;
+  sessionCleanupInterval?: DurationMs;  // Set to 0 to disable auto-cleanup
 }

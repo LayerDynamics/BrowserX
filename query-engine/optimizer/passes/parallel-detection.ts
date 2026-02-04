@@ -83,8 +83,19 @@ export class ParallelDetectionPass {
         const cte1 = cteInfos[i];
         const cte2 = cteInfos[j];
 
-        const hasDependency = cte1.dependencies.some((dep) => cte2.produces.includes(dep)) ||
+        // Check dependencies between CTEs
+        const hasCteToCteDepedency = cte1.dependencies.some((dep) => cte2.produces.includes(dep)) ||
           cte2.dependencies.some((dep) => cte1.produces.includes(dep));
+
+        // Check dependencies with main query
+        const cte1DependsOnQuery = cte1.dependencies.some((dep) => queryProduces.includes(dep));
+        const cte2DependsOnQuery = cte2.dependencies.some((dep) => queryProduces.includes(dep));
+        const queryDependsOnCte1 = queryDependencies.some((dep) => cte1.produces.includes(dep));
+        const queryDependsOnCte2 = queryDependencies.some((dep) => cte2.produces.includes(dep));
+
+        // CTEs can run in parallel if they don't depend on each other and the main query doesn't depend on them first
+        const hasDependency = hasCteToCteDepedency || cte1DependsOnQuery || cte2DependsOnQuery ||
+          queryDependsOnCte1 || queryDependsOnCte2;
 
         if (!hasDependency) {
           this.parallelGroups.push({
@@ -244,9 +255,9 @@ export class ParallelDetectionPass {
         break;
 
       case "IF":
-        produced.push(...this.extractProducedVariables(stmt.thenBranch));
-        if (stmt.elseBranch) {
-          produced.push(...this.extractProducedVariables(stmt.elseBranch));
+        produced.push(...this.extractProducedVariables(stmt.then));
+        if (stmt.else) {
+          produced.push(...this.extractProducedVariables(stmt.else));
         }
         break;
     }

@@ -1,0 +1,28 @@
+{
+  "name": "@browserx/runtime",
+  "version": "0.1.0",
+  "exports": "./src/mod.ts",
+  "imports": {
+    "@browserx/browser": "../browser/src/mod.ts",
+    "@browserx/browser/": "../browser/",
+    "@browserx/proxy-engine": "../proxy-engine/mod.ts",
+    "@browserx/proxy-engine/": "../proxy-engine/",
+    "@browserx/query-engine": "../query-engine/mod.ts",
+    "@std/assert": "jsr:@std/assert@^1.0.16"
+  },
+  "tasks": {
+    "check": "deno check src/mod.ts",
+    "check:watch": "deno check --watch src/mod.ts",
+    "test": "deno test --allow-all tests/",
+    "test:watch": "deno test --allow-all --watch tests/",
+    "lint": "deno lint",
+    "lint:fix": "deno lint --fix",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true
+  }
+}

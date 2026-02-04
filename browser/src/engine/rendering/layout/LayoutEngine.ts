@@ -9,12 +9,20 @@
  */
 
 import type { RenderObject } from "../rendering/RenderObject.ts";
-import type { RenderBox } from "../rendering/RenderBox.ts";
+import { RenderBox } from "../rendering/RenderBox.ts";
 import type { Pixels } from "../../../types/identifiers.ts";
 import type { LayoutConstraints } from "../../../types/rendering.ts";
 import { NormalFlowLayout } from "./NormalFlowLayout.ts";
 import { FlexboxLayout } from "./FlexboxLayout.ts";
 import { GridLayout } from "./GridLayout.ts";
+
+/**
+ * Type guard to check if a RenderObject is a RenderBox
+ * This provides proper type narrowing instead of unsafe type assertions
+ */
+function isRenderBox(obj: RenderObject): obj is RenderBox {
+    return obj instanceof RenderBox;
+}
 
 /**
  * Viewport dimensions
@@ -146,20 +154,19 @@ export class LayoutEngine {
      * Layout children using normal flow (block)
      */
     private layoutBlockChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        if (!(parent instanceof Object && "layout" in parent)) {
+        if (!isRenderBox(parent)) {
             return;
         }
 
-        const parentBox = parent as unknown as RenderBox;
         const contentHeight = this.normalFlowLayout.layoutBlockChildren(
-            parentBox,
+            parent,
             parent.children,
             constraints,
         );
 
         // Update parent height if auto
-        if (parentBox.layout && parent.style.getPropertyValue("height") === "auto") {
-            parentBox.layout.height = contentHeight;
+        if (parent.layout && parent.style.getPropertyValue("height") === "auto") {
+            parent.layout.height = contentHeight;
         }
     }
 
@@ -167,20 +174,19 @@ export class LayoutEngine {
      * Layout children using normal flow (inline)
      */
     private layoutInlineChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        if (!(parent instanceof Object && "layout" in parent)) {
+        if (!isRenderBox(parent)) {
             return;
         }
 
-        const parentBox = parent as unknown as RenderBox;
         const contentHeight = this.normalFlowLayout.layoutInlineChildren(
-            parentBox,
+            parent,
             parent.children,
             constraints,
         );
 
         // Update parent height if auto
-        if (parentBox.layout && parent.style.getPropertyValue("height") === "auto") {
-            parentBox.layout.height = contentHeight;
+        if (parent.layout && parent.style.getPropertyValue("height") === "auto") {
+            parent.layout.height = contentHeight;
         }
     }
 
@@ -188,24 +194,22 @@ export class LayoutEngine {
      * Layout children using flexbox
      */
     private layoutFlexChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        if (!(parent instanceof Object && "layout" in parent)) {
+        if (!isRenderBox(parent)) {
             return;
         }
 
-        const parentBox = parent as unknown as RenderBox;
-        this.flexboxLayout.layoutContainer(parentBox, parent.children, constraints);
+        this.flexboxLayout.layoutContainer(parent, parent.children, constraints);
     }
 
     /**
      * Layout children using grid
      */
     private layoutGridChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        if (!(parent instanceof Object && "layout" in parent)) {
+        if (!isRenderBox(parent)) {
             return;
         }
 
-        const parentBox = parent as unknown as RenderBox;
-        this.gridLayout.layoutContainer(parentBox, parent.children, constraints);
+        this.gridLayout.layoutContainer(parent, parent.children, constraints);
     }
 
     /**

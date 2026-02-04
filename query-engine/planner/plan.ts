@@ -23,6 +23,7 @@ export enum ExecutionStepType {
   INTERCEPT_REQUEST = "INTERCEPT_REQUEST",
   MODIFY_REQUEST = "MODIFY_REQUEST",
   CACHE_LOOKUP = "CACHE_LOOKUP",
+  CACHE_RETRIEVE = "CACHE_RETRIEVE",
   CACHE_STORE = "CACHE_STORE",
 
   // Compute operations
@@ -63,6 +64,7 @@ export interface BaseExecutionStep {
 export interface NavigateStep extends BaseExecutionStep {
   type: ExecutionStepType.NAVIGATE;
   url: URLString;
+  urlExpression?: Expression; // The URL expression for runtime evaluation
   options?: {
     waitFor?: string; // CSS selector or 'load' or 'domcontentloaded'
     timeout?: DurationMs;
@@ -163,6 +165,14 @@ export interface CacheLookupStep extends BaseExecutionStep {
   type: ExecutionStepType.CACHE_LOOKUP;
   cacheKey: string;
   ttl?: DurationMs;
+}
+
+/**
+ * Cache retrieve step
+ */
+export interface CacheRetrieveStep extends BaseExecutionStep {
+  type: ExecutionStepType.CACHE_RETRIEVE;
+  cacheKey: string;
 }
 
 /**
@@ -291,6 +301,7 @@ export interface LoopStep extends BaseExecutionStep {
   type: ExecutionStepType.LOOP;
   iteratorVariable: string;
   collectionVariable: string;
+  collectionExpression?: Expression; // The expression to evaluate for the collection
   bodySteps: ExecutionStep[];
   parallel?: boolean;
 }
@@ -353,6 +364,7 @@ export type ExecutionStep =
   | InterceptRequestStep
   | ModifyRequestStep
   | CacheLookupStep
+  | CacheRetrieveStep
   | CacheStoreStep
   | FilterStep
   | MapStep

@@ -127,7 +127,7 @@ Deno.test({
 
     assertEquals(ast.type, "SELECT");
     assertExists(ast.limit);
-    assertEquals(ast.limit.limit, 10);
+    assertEquals(ast.limit.count, 10);
     assertEquals(ast.limit.offset, undefined);
   },
 });
@@ -139,7 +139,7 @@ Deno.test({
 
     assertEquals(ast.type, "SELECT");
     assertExists(ast.limit);
-    assertEquals(ast.limit.limit, 10);
+    assertEquals(ast.limit.count, 10);
     assertEquals(ast.limit.offset, 20);
   },
 });
@@ -217,8 +217,7 @@ Deno.test({
 
     assertEquals(ast.type, "NAVIGATE");
     assertExists(ast.options);
-    const optionsExpr = ast.options as unknown as ObjectExpression;
-    assertEquals(optionsExpr.type, "OBJECT");
+    assertEquals(ast.options.timeout, 5000);
   },
 });
 
@@ -339,8 +338,8 @@ Deno.test({
 
     assertEquals(ast.type, "IF");
     assertEquals(ast.condition.type, "BINARY");
-    assertEquals(ast.thenBranch.type, "SHOW");
-    assertEquals(ast.elseBranch, undefined);
+    assertEquals(ast.then.type, "SHOW");
+    assertEquals(ast.else, undefined);
   },
 });
 
@@ -350,9 +349,9 @@ Deno.test({
     const ast = parseQuery("IF x > 10 THEN { SHOW 'large' } ELSE { SHOW 'small' }") as IfStatement;
 
     assertEquals(ast.type, "IF");
-    assertExists(ast.thenBranch);
-    assertExists(ast.elseBranch);
-    assertEquals(ast.elseBranch.type, "SHOW");
+    assertExists(ast.then);
+    assertExists(ast.else);
+    assertEquals(ast.else.type, "SHOW");
   },
 });
 
@@ -362,7 +361,7 @@ Deno.test({
     const ast = parseQuery("IF x > 10 THEN { IF y > 5 THEN { SHOW 'both' } }") as IfStatement;
 
     assertEquals(ast.type, "IF");
-    assertEquals(ast.thenBranch.type, "IF");
+    assertEquals(ast.then.type, "IF");
   },
 });
 
@@ -796,7 +795,7 @@ Deno.test({
     const expr = parseExpression("'hello world'") as Literal;
 
     assertEquals(expr.type, "LITERAL");
-    assertEquals(expr.dataType, "STRING");
+    assertEquals(expr.dataType, "String");
     assertEquals(expr.value, "hello world");
   },
 });
@@ -807,7 +806,7 @@ Deno.test({
     const expr = parseExpression("42") as Literal;
 
     assertEquals(expr.type, "LITERAL");
-    assertEquals(expr.dataType, "NUMBER");
+    assertEquals(expr.dataType, "Number");
     assertEquals(expr.value, 42);
   },
 });
@@ -828,7 +827,7 @@ Deno.test({
     const expr = parseExpression("true") as Literal;
 
     assertEquals(expr.type, "LITERAL");
-    assertEquals(expr.dataType, "BOOLEAN");
+    assertEquals(expr.dataType, "Boolean");
     assertEquals(expr.value, true);
   },
 });
@@ -839,7 +838,7 @@ Deno.test({
     const expr = parseExpression("false") as Literal;
 
     assertEquals(expr.type, "LITERAL");
-    assertEquals(expr.dataType, "BOOLEAN");
+    assertEquals(expr.dataType, "Boolean");
     assertEquals(expr.value, false);
   },
 });
@@ -850,7 +849,7 @@ Deno.test({
     const expr = parseExpression("null") as Literal;
 
     assertEquals(expr.type, "LITERAL");
-    assertEquals(expr.dataType, "NULL");
+    assertEquals(expr.dataType, "Null");
     assertEquals(expr.value, null);
   },
 });
@@ -1002,7 +1001,7 @@ Deno.test({
     assertExists(ast.where);
     assertExists(ast.orderBy);
     assertExists(ast.limit);
-    assertEquals(ast.limit.limit, 10);
+    assertEquals(ast.limit.count, 10);
     assertEquals(ast.limit.offset, 5);
   },
 });

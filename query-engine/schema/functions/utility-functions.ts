@@ -126,7 +126,8 @@ export const WAIT: FunctionImplementation = {
 };
 
 /**
- * SCREENSHOT - Take screenshot (placeholder, requires browser context)
+ * SCREENSHOT - Take screenshot of page or element
+ * Requires active browser context with a navigated page
  */
 export const SCREENSHOT: FunctionImplementation = {
   signature: {

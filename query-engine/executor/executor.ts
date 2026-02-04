@@ -11,6 +11,7 @@ import {
   AssignStep,
   BranchStep,
   CacheLookupStep,
+  CacheRetrieveStep,
   CacheStoreStep,
   ClickStep,
   DOMQueryStep,
@@ -40,6 +41,7 @@ import {
 import { QueryID } from "../types/primitives.ts";
 import { EvaluationContext, ExpressionEvaluator } from "./expression-evaluator.ts";
 import { BrowserController } from "../controllers/browser/browser-controller.ts";
+import { setCurrentBrowserController } from "../controllers/browser/browser-context.ts";
 import { ProxyController } from "../controllers/proxy/proxy-controller.ts";
 import { ExecutionContextManager, StateManager } from "../state/mod.ts";
 import { type DependencyGraph, topologicalSort } from "../utils/mod.ts";
@@ -239,6 +241,10 @@ export class QueryExecutor {
           data = await this.executeCacheLookup(step as CacheLookupStep, context);
           break;
 
+        case ExecutionStepType.CACHE_RETRIEVE:
+          data = await this.executeCacheRetrieve(step as CacheRetrieveStep, context);
+          break;
+
         case ExecutionStepType.CACHE_STORE:
           data = await this.executeCacheStore(step as CacheStoreStep, context);
           break;
@@ -345,10 +351,28 @@ export class QueryExecutor {
       this.browserController = new BrowserController(browserEngine);
     }
 
-    const result = await this.browserController.executeNavigate(step);
+    // Evaluate URL at runtime if it's an expression
+    let resolvedUrl = step.url;
+    if (!resolvedUrl && step.urlExpression) {
+      const evalContext: EvaluationContext = {
+        variables: context.variables,
+        functions: new Map(),
+      };
+      const evaluator = new ExpressionEvaluator(evalContext);
+      resolvedUrl = await evaluator.evaluate(step.urlExpression) as string;
+    }
+
+    // Create a step with the resolved URL for the browser controller
+    const resolvedStep = { ...step, url: resolvedUrl };
 
     // Store the page reference in context for subsequent operations
     context.currentBrowser = this.browserController;
+
+    // Set global browser context for utility functions (SCREENSHOT, PDF, etc.)
+    // This is set BEFORE navigation so context is available even if navigation fails
+    setCurrentBrowserController(this.browserController);
+
+    const result = await this.browserController.executeNavigate(resolvedStep);
 
     return result;
   }
@@ -542,7 +566,21 @@ export class QueryExecutor {
     step: LoopStep,
     context: ExecutionContext,
   ): Promise<unknown> {
-    const collection = context.variables.get(step.collectionVariable);
+    // First try to get collection from variables, then evaluate expression
+    let collection = context.variables.get(step.collectionVariable);
+
+    if (collection === undefined && step.collectionExpression) {
+      // Create evaluation context
+      const evalContext: EvaluationContext = {
+        variables: context.variables,
+        functions: new Map(),
+      };
+
+      const evaluator = new ExpressionEvaluator(evalContext);
+
+      // Evaluate the collection expression
+      collection = await evaluator.evaluate(step.collectionExpression);
+    }
 
     if (!Array.isArray(collection)) {
       throw new Error(`Loop collection must be an array`);
@@ -720,6 +758,23 @@ export class QueryExecutor {
     }
 
     const cached = await this.proxyController.executeCacheLookup(step);
+    return cached;
+  }
+
+  /**
+   * Execute cache retrieve step
+   */
+  private async executeCacheRetrieve(
+    step: CacheRetrieveStep,
+    context: ExecutionContext,
+  ): Promise<unknown> {
+    // Use proxy controller to retrieve from cache
+    if (!this.proxyController) {
+      // Cache is optional, return null if not configured
+      return null;
+    }
+
+    const cached = await this.proxyController.executeCacheRetrieve(step);
     return cached;
   }
 
@@ -1044,7 +1099,7 @@ export class QueryExecutor {
       const matchedRightKeys = new Set<any>();
       for (const leftItem of leftData) {
         evaluator.setContext({ currentRow: leftItem as Record<string, unknown> });
-        const leftKey = evaluator.evaluate(step.leftKey);
+        const leftKey = await evaluator.evaluate(step.leftKey);
         const matches = rightIndex.get(leftKey) || [];
 
         if (matches.length > 0) {
@@ -1166,3 +1221,8 @@ export class QueryExecutor {
     return this.currentContextManager;
   }
 }
+
+/**
+ * Executor - alias for QueryExecutor for test compatibility
+ */
+export const Executor = QueryExecutor;

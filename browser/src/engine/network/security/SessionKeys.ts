@@ -104,13 +104,241 @@ export async function computeMasterSecret(
 }
 
 /**
- * TLS 1.3 key schedule - derives traffic secrets
+ * TLS 1.3 cipher suite information
+ */
+export interface CipherSuiteInfo {
+    hashAlgorithm: "SHA-256" | "SHA-384";
+    hashLength: number;
+    keyLength: number;  // AES key length in bytes
+}
+
+/**
+ * Get cipher suite info from cipher suite code
+ */
+export function getCipherSuiteInfo(cipherSuite: number): CipherSuiteInfo {
+    switch (cipherSuite) {
+        case 0x1301: // TLS_AES_128_GCM_SHA256
+            return { hashAlgorithm: "SHA-256", hashLength: 32, keyLength: 16 };
+        case 0x1302: // TLS_AES_256_GCM_SHA384
+            return { hashAlgorithm: "SHA-384", hashLength: 48, keyLength: 32 };
+        case 0x1303: // TLS_CHACHA20_POLY1305_SHA256
+            return { hashAlgorithm: "SHA-256", hashLength: 32, keyLength: 32 };
+        default:
+            // Default to AES-128-GCM-SHA256
+            return { hashAlgorithm: "SHA-256", hashLength: 32, keyLength: 16 };
+    }
+}
+
+/**
+ * HMAC with configurable hash algorithm
+ */
+async function hmacHash(
+    key: ByteBuffer,
+    data: ByteBuffer,
+    hashAlgorithm: "SHA-256" | "SHA-384",
+): Promise<ByteBuffer> {
+    const cryptoKey = await crypto.subtle.importKey(
+        "raw",
+        key,
+        { name: "HMAC", hash: hashAlgorithm },
+        false,
+        ["sign"],
+    );
+    const signature = await crypto.subtle.sign("HMAC", cryptoKey, data);
+    return new Uint8Array(signature);
+}
+
+/**
+ * HKDF-Extract with configurable hash algorithm
+ */
+async function hkdfExtractWithHash(
+    salt: ByteBuffer,
+    ikm: ByteBuffer,
+    hashAlgorithm: "SHA-256" | "SHA-384",
+): Promise<ByteBuffer> {
+    return await hmacHash(salt, ikm, hashAlgorithm);
+}
+
+/**
+ * Derive-Secret with configurable hash algorithm
+ */
+async function deriveSecretWithHash(
+    secret: ByteBuffer,
+    label: string,
+    context: ByteBuffer,
+    length: number,
+    hashAlgorithm: "SHA-256" | "SHA-384",
+): Promise<ByteBuffer> {
+    return await hkdfExpandLabelWithHash(secret, label, context, length, hashAlgorithm);
+}
+
+/**
+ * HKDF-Expand-Label with configurable hash algorithm
+ */
+async function hkdfExpandLabelWithHash(
+    secret: ByteBuffer,
+    label: string,
+    context: ByteBuffer,
+    length: number,
+    hashAlgorithm: "SHA-256" | "SHA-384",
+): Promise<ByteBuffer> {
+    const prefix = "tls13 ";
+    const fullLabel = new TextEncoder().encode(prefix + label);
+
+    const hkdfLabel = new Uint8Array(2 + 1 + fullLabel.byteLength + 1 + context.byteLength);
+    const view = new DataView(hkdfLabel.buffer);
+
+    let offset = 0;
+    view.setUint16(offset, length);
+    offset += 2;
+    hkdfLabel[offset++] = fullLabel.byteLength;
+    hkdfLabel.set(fullLabel, offset);
+    offset += fullLabel.byteLength;
+    hkdfLabel[offset++] = context.byteLength;
+    hkdfLabel.set(context, offset);
+
+    return await hkdfExpandWithHash(secret, hkdfLabel, length, hashAlgorithm);
+}
+
+/**
+ * HKDF-Expand with configurable hash algorithm
+ */
+async function hkdfExpandWithHash(
+    prk: ByteBuffer,
+    info: ByteBuffer,
+    length: number,
+    hashAlgorithm: "SHA-256" | "SHA-384",
+): Promise<ByteBuffer> {
+    const hashLen = hashAlgorithm === "SHA-384" ? 48 : 32;
+    const n = Math.ceil(length / hashLen);
+    const okm = new Uint8Array(n * hashLen);
+    let t = new Uint8Array(0);
+
+    for (let i = 0; i < n; i++) {
+        const input = concat(t, info, new Uint8Array([i + 1]));
+        t = await hmacHash(prk, input, hashAlgorithm);
+        okm.set(t, i * hashLen);
+    }
+
+    return okm.slice(0, length);
+}
+
+/**
+ * TLS 1.3 key schedule - derives handshake traffic secrets
  *
  * @param sharedSecret - ECDHE shared secret
- * @param handshakeContext - Handshake message hash
- * @returns Traffic secrets for encryption
+ * @param handshakeContext - Hash of ClientHello + ServerHello
+ * @param cipherSuite - Negotiated cipher suite code (optional, defaults to 0x1301)
+ * @returns Handshake traffic secrets and master secret for later derivation
  *
- * Implements TLS 1.3 key schedule using HKDF-SHA256
+ * Implements TLS 1.3 key schedule using HKDF with appropriate hash algorithm
+ */
+export async function deriveHandshakeTrafficSecrets(
+    sharedSecret: ByteBuffer,
+    handshakeContext: ByteBuffer,
+    cipherSuite: number = 0x1301,
+): Promise<{
+    clientHandshakeTrafficSecret: ByteBuffer;
+    serverHandshakeTrafficSecret: ByteBuffer;
+    masterSecret: ByteBuffer;
+}> {
+    const csInfo = getCipherSuiteInfo(cipherSuite);
+    const hashLength = csInfo.hashLength;
+    const hashAlgorithm = csInfo.hashAlgorithm;
+    const zeros = new Uint8Array(hashLength);
+
+    // Hash of empty string with appropriate algorithm
+    const emptyMessageHash = new Uint8Array(await crypto.subtle.digest(hashAlgorithm, new Uint8Array(0)));
+
+    // Early Secret = HKDF-Extract(salt=0, IKM=0)
+    const earlySecret = await hkdfExtractWithHash(zeros, zeros, hashAlgorithm);
+
+    // Handshake Secret = HKDF-Extract(Derive-Secret(Early Secret, "derived", ""), ECDHE)
+    const derivedSecret = await deriveSecretWithHash(earlySecret, "derived", emptyMessageHash, hashLength, hashAlgorithm);
+    const handshakeSecret = await hkdfExtractWithHash(derivedSecret, sharedSecret, hashAlgorithm);
+
+    // Client Handshake Traffic Secret - uses hash(ClientHello + ServerHello)
+    const clientHandshakeTrafficSecret = await deriveSecretWithHash(
+        handshakeSecret,
+        "c hs traffic",
+        handshakeContext,
+        hashLength,
+        hashAlgorithm,
+    );
+
+    // Server Handshake Traffic Secret - uses hash(ClientHello + ServerHello)
+    const serverHandshakeTrafficSecret = await deriveSecretWithHash(
+        handshakeSecret,
+        "s hs traffic",
+        handshakeContext,
+        hashLength,
+        hashAlgorithm,
+    );
+
+    // Master Secret = HKDF-Extract(Derive-Secret(Handshake Secret, "derived", ""), 0)
+    const derivedFromHandshake = await deriveSecretWithHash(
+        handshakeSecret,
+        "derived",
+        emptyMessageHash,
+        hashLength,
+        hashAlgorithm,
+    );
+    const masterSecret = await hkdfExtractWithHash(derivedFromHandshake, zeros, hashAlgorithm);
+
+    return {
+        clientHandshakeTrafficSecret,
+        serverHandshakeTrafficSecret,
+        masterSecret,
+    };
+}
+
+/**
+ * TLS 1.3 - derives application traffic secrets from master secret
+ *
+ * @param masterSecret - Master secret from handshake derivation
+ * @param applicationContext - Hash of full handshake transcript through server Finished
+ * @param cipherSuite - Negotiated cipher suite code (optional, defaults to 0x1301)
+ * @returns Application traffic secrets
+ */
+export async function deriveApplicationTrafficSecrets(
+    masterSecret: ByteBuffer,
+    applicationContext: ByteBuffer,
+    cipherSuite: number = 0x1301,
+): Promise<{
+    clientApplicationTrafficSecret: ByteBuffer;
+    serverApplicationTrafficSecret: ByteBuffer;
+}> {
+    const csInfo = getCipherSuiteInfo(cipherSuite);
+    const hashLength = csInfo.hashLength;
+    const hashAlgorithm = csInfo.hashAlgorithm;
+
+    // Client Application Traffic Secret - uses hash(full handshake through server Finished)
+    const clientApplicationTrafficSecret = await deriveSecretWithHash(
+        masterSecret,
+        "c ap traffic",
+        applicationContext,
+        hashLength,
+        hashAlgorithm,
+    );
+
+    // Server Application Traffic Secret - uses hash(full handshake through server Finished)
+    const serverApplicationTrafficSecret = await deriveSecretWithHash(
+        masterSecret,
+        "s ap traffic",
+        applicationContext,
+        hashLength,
+        hashAlgorithm,
+    );
+
+    return {
+        clientApplicationTrafficSecret,
+        serverApplicationTrafficSecret,
+    };
+}
+
+/**
+ * TLS 1.3 key schedule - derives traffic secrets (legacy wrapper)
+ * @deprecated Use deriveHandshakeTrafficSecrets and deriveApplicationTrafficSecrets instead
  */
 export async function deriveTrafficSecrets(
     sharedSecret: ByteBuffer,
@@ -121,62 +349,14 @@ export async function deriveTrafficSecrets(
     clientApplicationTrafficSecret: ByteBuffer;
     serverApplicationTrafficSecret: ByteBuffer;
 }> {
-    const hashLength = 32; // SHA-256
-    const emptyHash = new Uint8Array(hashLength);
-
-    // Early Secret = HKDF-Extract(0, 0)
-    const earlySecret = await hkdfExtract(new Uint8Array(hashLength), new Uint8Array(1));
-
-    // Handshake Secret = HKDF-Extract(Derive-Secret(Early Secret, "derived", ""), ECDHE)
-    const derivedSecret = await deriveSecret(earlySecret, "derived", emptyHash, hashLength);
-    const handshakeSecret = await hkdfExtract(derivedSecret, sharedSecret);
-
-    // Client Handshake Traffic Secret
-    const clientHandshakeTrafficSecret = await deriveSecret(
-        handshakeSecret,
-        "c hs traffic",
-        handshakeContext,
-        hashLength,
-    );
-
-    // Server Handshake Traffic Secret
-    const serverHandshakeTrafficSecret = await deriveSecret(
-        handshakeSecret,
-        "s hs traffic",
-        handshakeContext,
-        hashLength,
-    );
-
-    // Master Secret = HKDF-Extract(Derive-Secret(Handshake Secret, "derived", ""), 0)
-    const derivedFromHandshake = await deriveSecret(
-        handshakeSecret,
-        "derived",
-        emptyHash,
-        hashLength,
-    );
-    const masterSecret = await hkdfExtract(derivedFromHandshake, new Uint8Array(1));
-
-    // Client Application Traffic Secret
-    const clientApplicationTrafficSecret = await deriveSecret(
-        masterSecret,
-        "c ap traffic",
-        handshakeContext,
-        hashLength,
-    );
-
-    // Server Application Traffic Secret
-    const serverApplicationTrafficSecret = await deriveSecret(
-        masterSecret,
-        "s ap traffic",
-        handshakeContext,
-        hashLength,
-    );
+    const handshakeSecrets = await deriveHandshakeTrafficSecrets(sharedSecret, handshakeContext);
+    const appSecrets = await deriveApplicationTrafficSecrets(handshakeSecrets.masterSecret, handshakeContext);
 
     return {
-        clientHandshakeTrafficSecret,
-        serverHandshakeTrafficSecret,
-        clientApplicationTrafficSecret,
-        serverApplicationTrafficSecret,
+        clientHandshakeTrafficSecret: handshakeSecrets.clientHandshakeTrafficSecret,
+        serverHandshakeTrafficSecret: handshakeSecrets.serverHandshakeTrafficSecret,
+        clientApplicationTrafficSecret: appSecrets.clientApplicationTrafficSecret,
+        serverApplicationTrafficSecret: appSecrets.serverApplicationTrafficSecret,
     };
 }
 
@@ -284,30 +464,10 @@ export async function hkdfExpandLabel(
     label: string,
     context: ByteBuffer,
     length: number,
+    cipherSuite: number = 0x1301,
 ): Promise<ByteBuffer> {
-    // Build HkdfLabel structure
-    const prefix = "tls13 ";
-    const fullLabel = new TextEncoder().encode(prefix + label);
-
-    const hkdfLabel = new Uint8Array(2 + 1 + fullLabel.byteLength + 1 + context.byteLength);
-    const view = new DataView(hkdfLabel.buffer);
-
-    let offset = 0;
-
-    // Length (2 bytes)
-    view.setUint16(offset, length);
-    offset += 2;
-
-    // Label length (1 byte) + label
-    hkdfLabel[offset++] = fullLabel.byteLength;
-    hkdfLabel.set(fullLabel, offset);
-    offset += fullLabel.byteLength;
-
-    // Context length (1 byte) + context
-    hkdfLabel[offset++] = context.byteLength;
-    hkdfLabel.set(context, offset);
-
-    return await hkdfExpand(secret, hkdfLabel, length);
+    const csInfo = getCipherSuiteInfo(cipherSuite);
+    return await hkdfExpandLabelWithHash(secret, label, context, length, csInfo.hashAlgorithm);
 }
 
 /**
@@ -318,6 +478,24 @@ export async function hmacSHA256(key: ByteBuffer, data: ByteBuffer): Promise<Byt
         "raw",
         key,
         { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+    );
+
+    const signature = await crypto.subtle.sign("HMAC", cryptoKey, data);
+    return new Uint8Array(signature);
+}
+
+/**
+ * Cipher-suite-aware HMAC
+ * Uses the hash algorithm from the cipher suite
+ */
+export async function hmacWithCipherSuite(key: ByteBuffer, data: ByteBuffer, cipherSuite: number = 0x1301): Promise<ByteBuffer> {
+    const csInfo = getCipherSuiteInfo(cipherSuite);
+    const cryptoKey = await crypto.subtle.importKey(
+        "raw",
+        key,
+        { name: "HMAC", hash: csInfo.hashAlgorithm },
         false,
         ["sign"],
     );
@@ -357,19 +535,26 @@ function getCipherKeyLength(cipherSuite: string): number {
 
 /**
  * Get cipher suite IV length in bytes
+ *
+ * For TLS 1.2 AES-GCM (RFC 5288): Uses 4-byte implicit IV from key derivation
+ * plus 8-byte explicit nonce sent with each record = 12 bytes total.
+ * This function returns the implicit IV length needed for key derivation.
+ *
+ * Note: TLS 1.3 uses HKDF (deriveHandshakeTrafficSecrets) not this function.
  */
 function getCipherIVLength(cipherSuite: string): number {
-    // AES-GCM uses 12-byte IV (96 bits)
-    if (cipherSuite.includes("GCM")) return 12;
+    // TLS 1.2 AES-GCM uses 4-byte implicit IV from key derivation (RFC 5288)
+    // The remaining 8 bytes are the explicit nonce sent with each record
+    if (cipherSuite.includes("GCM")) return 4;
 
-    // ChaCha20-Poly1305 uses 12-byte nonce
-    if (cipherSuite.includes("CHACHA20")) return 12;
+    // TLS 1.2 ChaCha20-Poly1305 uses 4-byte implicit IV (RFC 7905)
+    if (cipherSuite.includes("CHACHA20")) return 4;
 
     // AES-CBC uses 16-byte IV
     if (cipherSuite.includes("CBC")) return 16;
 
-    // Default to 12 bytes (GCM)
-    return 12;
+    // Default to 4 bytes for AEAD ciphers
+    return 4;
 }
 
 /**

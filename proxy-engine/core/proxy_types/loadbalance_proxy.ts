@@ -15,6 +15,7 @@
 import { ReverseProxy, type ReverseProxyConfig } from "./reverse_proxy.ts";
 import type { Route, UpstreamServer } from "../../gateway/router/request_router.ts";
 import type { HTTPRequest, HTTPResponse } from "../network/transport/http/http.ts";
+import { parseCookie, formatSetCookie, type Cookie } from "../network/utils/cookies.ts";
 
 /**
  * Session affinity configuration
@@ -147,7 +148,8 @@ export class LoadBalancerProxy extends ReverseProxy {
 
           // Add session cookie if using cookie-based affinity
           if (this.lbConfig.sessionAffinity?.cookieName) {
-            this.addSessionCookie(response, sessionKey, affinityServer.id);
+            const isSecure = context.protocol === "https";
+            this.addSessionCookie(response, sessionKey, affinityServer.id, isSecure);
           }
         }
 
@@ -199,23 +201,23 @@ export class LoadBalancerProxy extends ReverseProxy {
   }
 
   /**
-   * Parse cookie header
+   * Parse cookie header with validation
    */
   private parseCookies(cookieHeader: string): Record<string, string> {
-    const cookies: Record<string, string> = {};
-    const pairs = cookieHeader.split(";");
+    // Use the validated utility function that properly decodes values
+    const cookies = parseCookie(cookieHeader);
 
-    for (const pair of pairs) {
-      const [name, ...valueParts] = pair.split("=");
-      const trimmedName = name.trim();
-      const value = valueParts.join("=").trim();
+    // Filter out dangerous keys to prevent prototype pollution
+    const dangerousKeys = ["__proto__", "constructor", "prototype"];
+    const safeCookies: Record<string, string> = {};
 
-      if (trimmedName) {
-        cookies[trimmedName] = value;
+    for (const [key, value] of Object.entries(cookies)) {
+      if (!dangerousKeys.includes(key) && !key.startsWith("__")) {
+        safeCookies[key] = value;
       }
     }
 
-    return cookies;
+    return safeCookies;
   }
 
   /**
@@ -250,18 +252,31 @@ export class LoadBalancerProxy extends ReverseProxy {
   }
 
   /**
-   * Add session cookie to response
+   * Add session cookie to response with security attributes
    */
   private addSessionCookie(
     response: HTTPResponse,
     sessionKey: string,
     _serverId: string,
+    isSecure: boolean = false,
   ): void {
     const cookieName = this.lbConfig.sessionAffinity?.cookieName || "LBSESSION";
     const maxAge = this.lbConfig.sessionAffinity?.cookieMaxAge || 3600;
     const path = this.lbConfig.sessionAffinity?.cookiePath || "/";
 
-    const cookieValue = `${cookieName}=${sessionKey}; Path=${path}; Max-Age=${maxAge}; HttpOnly`;
+    // Build secure cookie object with proper security attributes
+    const cookie: Cookie = {
+      name: cookieName,
+      value: sessionKey,
+      path,
+      maxAge,
+      httpOnly: true,
+      sameSite: "Lax", // CSRF protection
+      secure: isSecure, // Only send over HTTPS when connection is secure
+    };
+
+    // Use utility function for consistent formatting
+    const cookieValue = formatSetCookie(cookie);
 
     // Add to Set-Cookie header
     const existing = response.headers["set-cookie"];

@@ -79,9 +79,9 @@ Deno.test({
     table.enterScope(ScopeType.BLOCK);
 
     assertEquals(table.currentScope.type, ScopeType.BLOCK);
-    assertEquals(table.currentScope.parent.type, ScopeType.BLOCK);
-    assertEquals(table.currentScope.parent.parent.type, ScopeType.FUNCTION);
-    assertEquals(table.currentScope.parent.parent.parent.type, ScopeType.GLOBAL);
+    assertEquals(table.currentScope.parent!.type, ScopeType.BLOCK);
+    assertEquals(table.currentScope.parent!.parent!.type, ScopeType.FUNCTION);
+    assertEquals(table.currentScope.parent!.parent!.parent!.type, ScopeType.GLOBAL);
   },
 });
 

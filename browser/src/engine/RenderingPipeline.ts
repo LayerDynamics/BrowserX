@@ -111,9 +111,18 @@ export class RenderingPipeline {
     private enableJavaScript: boolean;
     private resources: ResourceInfo[] = [];
     public lastRenderResult?: RenderingResult;
+    private ownsRequestPipeline: boolean;
 
-    constructor(options: RenderingOptions = {}) {
-        this.requestPipeline = new RequestPipeline();
+    constructor(options: RenderingOptions = {}, requestPipeline?: RequestPipeline) {
+        // Use provided RequestPipeline or create a new one
+        // This allows sharing connection pools across multiple pipelines
+        if (requestPipeline) {
+            this.requestPipeline = requestPipeline;
+            this.ownsRequestPipeline = false;
+        } else {
+            this.requestPipeline = new RequestPipeline();
+            this.ownsRequestPipeline = true;
+        }
         this.width = options.width ?? 1024;
         this.height = options.height ?? 768;
         this.devicePixelRatio = options.devicePixelRatio ?? 1.0;
@@ -173,7 +182,19 @@ export class RenderingPipeline {
             const styleStart = Date.now();
             const styleResolver = new StyleResolver(cssom);
             const renderTree = new RenderTree();
-            renderTree.build(dom, styleResolver);
+
+            // Get the document element (html) from the document node
+            // The HTMLTreeBuilder returns a document node (nodeType 9), but the
+            // RenderTreeBuilder expects an element node (nodeType 1)
+            const documentElement = this.getDocumentElement(dom);
+            if (!documentElement) {
+                throw new RenderingPipelineError(
+                    "No document element found in DOM",
+                    "render-tree-build",
+                );
+            }
+
+            renderTree.build(documentElement, styleResolver);
             timing.styleResolution = Date.now() - styleStart;
 
             // 6. Layout → Compute geometry
@@ -192,6 +213,18 @@ export class RenderingPipeline {
             const displayList = new DisplayList();
             const paintContext = new PaintContext();
             this.paint(layoutTree, paintContext);
+
+            // Transfer paint commands from context to display list
+            // Convert from PaintContext format { type, params } to DisplayList format { type, ...params }
+            for (const command of paintContext.getCommands()) {
+                // Safely spread params if it's an object, otherwise just use the type
+                const params = command.params && typeof command.params === "object" ? command.params as Record<string, unknown> : {};
+                const displayCommand = {
+                    type: command.type,
+                    ...params,
+                } as import("./rendering/paint/DisplayList.ts").AnyPaintCommand;
+                displayList.add(displayCommand);
+            }
             timing.paintRecording = Date.now() - paintStart;
 
             // 8. Composite → Render to pixels
@@ -230,8 +263,21 @@ export class RenderingPipeline {
 
     /**
      * Fetch HTML from URL
+     *
+     * Handles special URLs that don't require network access:
+     * - about:blank - Returns empty HTML document
+     * - data: URLs - Returns data directly from the URL
      */
     private async fetchHTML(url: string | URL): Promise<RequestResult> {
+        const urlString = typeof url === "string" ? url : url.toString();
+
+        // Handle special URLs that don't require network access
+        // Check before parsing since some special URLs (like about:blank) may not parse correctly
+        const specialResponse = this.handleSpecialURL(urlString);
+        if (specialResponse) {
+            return specialResponse;
+        }
+
         try {
             return await this.requestPipeline.get(url, {
                 headers: {
@@ -245,6 +291,143 @@ export class RenderingPipeline {
                 error instanceof Error ? error : undefined,
             );
         }
+    }
+
+    /**
+     * Handle special URLs that don't require network access
+     *
+     * @param urlString - The URL as a string
+     * @returns RequestResult if handled, undefined otherwise
+     */
+    private handleSpecialURL(urlString: string): RequestResult | undefined {
+        // Handle about: URLs - returns an empty HTML document
+        // about:blank is the most common, but all about: URLs are handled similarly
+        if (urlString === "about:blank" || urlString.startsWith("about:")) {
+            const emptyHtml = "<!DOCTYPE html><html><head></head><body></body></html>";
+            const body = new TextEncoder().encode(emptyHtml) as ByteBuffer;
+
+            return {
+                request: {
+                    id: `req-special-${Date.now()}` as import("../types/identifiers.ts").RequestID,
+                    method: "GET",
+                    url: urlString as import("../types/identifiers.ts").URLString,
+                    version: "1.1",
+                    headers: new Map(),
+                    createdAt: Date.now(),
+                },
+                response: {
+                    id: `req-special-${Date.now()}` as import("../types/identifiers.ts").RequestID,
+                    statusCode: 200,
+                    statusText: "OK",
+                    version: "1.1",
+                    headers: new Map([
+                        ["content-type", "text/html; charset=utf-8"],
+                        ["content-length", String(body.byteLength)],
+                    ]),
+                    body: body,
+                    receivedAt: Date.now(),
+                    fromCache: false,
+                    timings: {
+                        dnsStart: 0,
+                        dnsEnd: 0,
+                        connectStart: 0,
+                        connectEnd: 0,
+                        requestStart: 0,
+                        responseStart: 0,
+                        responseEnd: 0,
+                        duration: 0,
+                    },
+                },
+                fromCache: false,
+                timing: {
+                    dnsLookup: 0,
+                    tcpConnection: 0,
+                    tlsHandshake: 0,
+                    requestSent: 0,
+                    firstByte: 0,
+                    download: 0,
+                    total: 0,
+                },
+            };
+        }
+
+        // Handle data: URLs - return data directly from the URL
+        if (urlString.startsWith("data:")) {
+            const dataUrl = urlString;
+            const commaIndex = dataUrl.indexOf(",");
+            if (commaIndex === -1) {
+                return undefined; // Invalid data URL
+            }
+
+            const meta = dataUrl.substring(5, commaIndex); // Skip "data:"
+            const data = dataUrl.substring(commaIndex + 1);
+
+            // Parse media type and encoding
+            const isBase64 = meta.endsWith(";base64");
+            const mediaType = isBase64 ? meta.slice(0, -7) : meta;
+            const contentType = mediaType || "text/plain;charset=US-ASCII";
+
+            // Decode the data
+            let body: ByteBuffer;
+            if (isBase64) {
+                // Decode base64
+                const binaryString = atob(data);
+                const tempBody = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    tempBody[i] = binaryString.charCodeAt(i);
+                }
+                body = tempBody as ByteBuffer;
+            } else {
+                // URL-decode and convert to bytes
+                body = new TextEncoder().encode(decodeURIComponent(data)) as ByteBuffer;
+            }
+
+            return {
+                request: {
+                    id: `req-data-${Date.now()}` as import("../types/identifiers.ts").RequestID,
+                    method: "GET",
+                    url: urlString as import("../types/identifiers.ts").URLString,
+                    version: "1.1",
+                    headers: new Map(),
+                    createdAt: Date.now(),
+                },
+                response: {
+                    id: `req-data-${Date.now()}` as import("../types/identifiers.ts").RequestID,
+                    statusCode: 200,
+                    statusText: "OK",
+                    version: "1.1",
+                    headers: new Map([
+                        ["content-type", contentType],
+                        ["content-length", String(body.byteLength)],
+                    ]),
+                    body: body,
+                    receivedAt: Date.now(),
+                    fromCache: false,
+                    timings: {
+                        dnsStart: 0,
+                        dnsEnd: 0,
+                        connectStart: 0,
+                        connectEnd: 0,
+                        requestStart: 0,
+                        responseStart: 0,
+                        responseEnd: 0,
+                        duration: 0,
+                    },
+                },
+                fromCache: false,
+                timing: {
+                    dnsLookup: 0,
+                    tcpConnection: 0,
+                    tlsHandshake: 0,
+                    requestSent: 0,
+                    firstByte: 0,
+                    download: 0,
+                    total: 0,
+                },
+            };
+        }
+
+        return undefined;
     }
 
     /**
@@ -491,6 +674,28 @@ export class RenderingPipeline {
             grouped[resource.type] = (grouped[resource.type] || 0) + 1;
         }
         return grouped;
+    }
+
+    /**
+     * Get the document element (html) from a DOM node
+     * Handles both document nodes (nodeType 9) and element nodes (nodeType 1)
+     */
+    private getDocumentElement(dom: DOMNode): DOMNode | null {
+        // If it's already an element, return it
+        if (dom.nodeType === 1) {
+            return dom;
+        }
+
+        // If it's a document, find the first element child (usually <html>)
+        if (dom.nodeType === 9 && dom.childNodes) {
+            for (const child of dom.childNodes) {
+                if (child.nodeType === 1) {
+                    return child;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -4,22 +4,36 @@
  */
 
 import {
+  ArrayExpression,
+  BinaryExpression,
+  BinaryOperator,
+  CallExpression,
+  ClickStatement,
   DeleteStatement,
   Expression,
   ForStatement,
+  Identifier,
   IfStatement,
   InsertStatement,
+  Literal,
+  MemberExpression,
   NavigateStatement,
+  ObjectExpression,
+  PdfStatement,
+  ScreenshotStatement,
   SelectStatement,
   SetStatement,
   ShowStatement,
   Statement,
+  UnaryExpression,
   UpdateStatement,
+  WaitStatement,
 } from "../types/ast.ts";
 import { QueryID } from "../types/primitives.ts";
 import {
   AssignStep,
   BranchStep,
+  ClickStep,
   DOMQueryStep,
   EvaluateJSStep,
   ExecutionPlan,
@@ -30,12 +44,97 @@ import {
   LoopStep,
   NavigateStep,
   ParallelStep,
+  PDFStep,
   ReadVariableStep,
   ResourceRequirements,
+  ScreenshotStep,
   SortStep,
   TypeStep,
+  WaitStep,
 } from "./plan.ts";
 import { DependencyGraphBuilder } from "./dependency-graph.ts";
+
+/**
+ * Escape a string for safe use in JavaScript string literals
+ * Prevents injection attacks by escaping special characters
+ */
+function escapeJsString(str: string): string {
+  return str
+    .replace(/\\/g, '\\\\')  // Escape backslashes first
+    .replace(/'/g, "\\'")    // Escape single quotes
+    .replace(/"/g, '\\"')    // Escape double quotes
+    .replace(/\n/g, '\\n')   // Escape newlines
+    .replace(/\r/g, '\\r')   // Escape carriage returns
+    .replace(/\t/g, '\\t')   // Escape tabs
+    .replace(/\x00/g, '\\0') // Escape null bytes
+    .replace(/\u2028/g, '\\u2028') // Escape line separator
+    .replace(/\u2029/g, '\\u2029'); // Escape paragraph separator
+}
+
+/**
+ * Validate and sanitize a CSS selector to prevent injection
+ */
+function sanitizeSelector(selector: string): string {
+  // Check for null bytes (can be used for injection attacks)
+  if (selector.includes('\x00')) {
+    throw new Error('Invalid selector: contains null bytes');
+  }
+
+  // Check for XSS patterns (script tags, javascript: URLs, event handlers)
+  const xssPatterns = /<script|javascript:|on\w+=/gi;
+  if (xssPatterns.test(selector)) {
+    throw new Error('Invalid selector: contains dangerous XSS content');
+  }
+
+  // Check for code execution patterns in attribute selectors
+  // Prevents [attr=eval(...)] or [attr=Function(...)] style attacks
+  const codePatterns = /\[\s*[^\]]*(?:eval|function|constructor|__proto__|prototype)\s*[^\]]*\]/gi;
+  if (codePatterns.test(selector)) {
+    throw new Error('Invalid selector: contains code execution patterns');
+  }
+
+  // Validate balanced brackets to prevent escape attacks
+  let bracketCount = 0;
+  for (const char of selector) {
+    if (char === '[') bracketCount++;
+    if (char === ']') bracketCount--;
+    if (bracketCount < 0) {
+      throw new Error('Invalid selector: unbalanced brackets');
+    }
+  }
+  if (bracketCount !== 0) {
+    throw new Error('Invalid selector: unbalanced brackets');
+  }
+
+  return escapeJsString(selector);
+}
+
+/**
+ * Validate and sanitize a property name
+ */
+function sanitizePropertyName(property: string): string {
+  // Property names should only contain valid identifier characters
+  if (!/^[a-zA-Z_$][a-zA-Z0-9_$-]*$/.test(property)) {
+    throw new Error(`Invalid property name: ${property}`);
+  }
+  return escapeJsString(property);
+}
+
+/**
+ * Convert SQL LIKE pattern to JavaScript regex pattern
+ * % -> .* (match any characters)
+ * _ -> . (match single character)
+ * Escape special regex characters
+ */
+function likePatternToRegex(pattern: string): string {
+  // Escape special regex characters first (except % and _)
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Convert SQL wildcards to regex
+  const regexPattern = escaped
+    .replace(/%/g, '.*')
+    .replace(/_/g, '.');
+  return `^${regexPattern}$`;
+}
 
 /**
  * Execution planner
@@ -134,6 +233,18 @@ export class ExecutionPlanner {
       case "SHOW":
         return this.generateShowSteps(stmt as ShowStatement, dependencies);
 
+      case "CLICK":
+        return this.generateClickSteps(stmt as ClickStatement, dependencies);
+
+      case "WAIT":
+        return this.generateWaitSteps(stmt as WaitStatement, dependencies);
+
+      case "SCREENSHOT":
+        return this.generateScreenshotSteps(stmt as ScreenshotStatement, dependencies);
+
+      case "PDF":
+        return this.generatePdfSteps(stmt as PdfStatement, dependencies);
+
       default:
         // Return a no-op step ID
         return "";
@@ -153,7 +264,7 @@ export class ExecutionPlanner {
         type: ExecutionStepType.NAVIGATE,
         url: stmt.source.value as string,
         estimatedCost: 500,
-        dependencies: steps,
+        dependencies: [...steps],  // Copy to avoid circular reference when steps is mutated
         cacheable: true,
         cacheKey: `nav:${stmt.source.value}`,
       };
@@ -182,7 +293,7 @@ export class ExecutionPlanner {
       })),
       filter: stmt.where,
       estimatedCost: 10,
-      dependencies: steps,
+      dependencies: [...steps],  // Copy to avoid circular reference
       cacheable: false,
     };
     this.currentSteps.push(domQueryStep);
@@ -216,7 +327,7 @@ export class ExecutionPlanner {
         inputVariable: "__filtered_result",
         outputVariable: "__sorted_result",
         estimatedCost: 10,
-        dependencies: steps,
+        dependencies: [...steps],  // Copy to avoid circular reference
         cacheable: false,
       };
       this.currentSteps.push(sortStep);
@@ -228,12 +339,12 @@ export class ExecutionPlanner {
       const limitStep: LimitStep = {
         id: this.generateStepId(),
         type: ExecutionStepType.LIMIT,
-        limit: stmt.limit.limit,
+        limit: stmt.limit.count,
         offset: stmt.limit.offset,
         inputVariable: "__sorted_result",
         outputVariable: "__final_result",
         estimatedCost: 1,
-        dependencies: steps,
+        dependencies: [...steps],  // Copy to avoid circular reference
         cacheable: false,
       };
       this.currentSteps.push(limitStep);
@@ -247,7 +358,7 @@ export class ExecutionPlanner {
    * Generate steps for NAVIGATE statement
    */
   private generateNavigateSteps(stmt: NavigateStatement, dependencies: string[]): string {
-    // Extract URL
+    // Extract URL - can be a literal or an expression
     let url = "";
     if (stmt.url.type === "LITERAL") {
       url = stmt.url.value as string;
@@ -257,6 +368,7 @@ export class ExecutionPlanner {
       id: this.generateStepId(),
       type: ExecutionStepType.NAVIGATE,
       url,
+      urlExpression: stmt.url, // Store the expression for runtime evaluation
       options: stmt.options
         ? {
           waitFor: stmt.options.waitUntil,
@@ -271,8 +383,8 @@ export class ExecutionPlanner {
         : undefined,
       estimatedCost: 500,
       dependencies,
-      cacheable: true,
-      cacheKey: `nav:${url}`,
+      cacheable: url !== "", // Only cacheable if URL is known at compile time
+      cacheKey: url ? `nav:${url}` : undefined,
     };
 
     this.currentSteps.push(navStep);
@@ -338,7 +450,8 @@ export class ExecutionPlanner {
       id: this.generateStepId(),
       type: ExecutionStepType.LOOP,
       iteratorVariable: stmt.variable,
-      collectionVariable: "__collection", // Will be bound at runtime
+      collectionVariable: "__collection",
+      collectionExpression: stmt.collection, // Store the expression for runtime evaluation
       bodySteps,
       estimatedCost: bodySteps.reduce((sum, s) => sum + s.estimatedCost, 0) * 10, // Assume 10 iterations
       dependencies,
@@ -356,14 +469,14 @@ export class ExecutionPlanner {
   private generateIfSteps(stmt: IfStatement, dependencies: string[]): string {
     // Generate then branch steps
     const savedSteps = this.currentSteps.length;
-    this.generateSteps(stmt.thenBranch, []);
+    this.generateSteps(stmt.then, []);
     const thenSteps = this.currentSteps.splice(savedSteps);
 
     // Generate else branch steps
     let elseSteps: ExecutionStep[] = [];
-    if (stmt.elseBranch) {
+    if (stmt.else) {
       const savedSteps2 = this.currentSteps.length;
-      this.generateSteps(stmt.elseBranch, []);
+      this.generateSteps(stmt.else, []);
       elseSteps = this.currentSteps.splice(savedSteps2);
     }
 
@@ -397,11 +510,11 @@ export class ExecutionPlanner {
       type: ExecutionStepType.TYPE,
       selector: this.extractSelectorFromExpression(stmt.target) || "body",
       selectorType: "css",
-      text: String(stmt.value.type === "LITERAL" ? (stmt.value as any).value : ""),
+      text: String(stmt.value.type === "LITERAL" ? (stmt.value as Literal).value : ""),
       clear: false,
       delay: 50, // Delay between keystrokes
       estimatedCost: 20,
-      dependencies: steps,
+      dependencies: [...steps],  // Copy for consistency with other steps
       cacheable: false,
     };
 
@@ -425,7 +538,7 @@ export class ExecutionPlanner {
         script: this.buildUpdateScript(selector, assignment.property, assignment.value),
         args: [],
         estimatedCost: 15,
-        dependencies: steps,
+        dependencies: [...steps],  // Copy to avoid circular reference when steps is mutated
         cacheable: false,
       };
 
@@ -442,11 +555,14 @@ export class ExecutionPlanner {
   private generateDeleteSteps(stmt: DeleteStatement, dependencies: string[]): string {
     const selector = this.extractSelectorFromExpression(stmt.target) || "body";
 
+    // Sanitize selector to prevent injection
+    const safeSelector = sanitizeSelector(selector);
+
     const evalStep: EvaluateJSStep = {
       id: this.generateStepId(),
       type: ExecutionStepType.EVALUATE_JS,
       script: `
-      const elements = document.querySelectorAll('${selector}');
+      const elements = document.querySelectorAll('${safeSelector}');
       elements.forEach(el => el.remove());
       return elements.length;  // Return count of deleted elements
     `,
@@ -480,20 +596,327 @@ export class ExecutionPlanner {
   }
 
   /**
+   * Generate steps for CLICK statement
+   */
+  private generateClickSteps(stmt: ClickStatement, dependencies: string[]): string {
+    const selector = this.extractSelectorFromExpression(stmt.selector) || "body";
+
+    const clickStep: ClickStep = {
+      id: this.generateStepId(),
+      type: ExecutionStepType.CLICK,
+      selector,
+      selectorType: "css",
+      waitForNavigation: stmt.options?.waitForNavigation,
+      estimatedCost: 15,
+      dependencies,
+      cacheable: false,
+    };
+
+    this.currentSteps.push(clickStep);
+    return clickStep.id;
+  }
+
+  /**
+   * Generate steps for WAIT statement
+   */
+  private generateWaitSteps(stmt: WaitStatement, dependencies: string[]): string {
+    const waitStep: WaitStep = {
+      id: this.generateStepId(),
+      type: ExecutionStepType.WAIT,
+      waitType: stmt.waitType,
+      duration: stmt.waitType === "time" && stmt.value.type === "LITERAL"
+        ? (stmt.value as Literal).value as number
+        : undefined,
+      selector: stmt.waitType === "selector" && stmt.value.type === "LITERAL"
+        ? String((stmt.value as Literal).value)
+        : undefined,
+      condition: stmt.waitType === "function" && stmt.value.type === "LITERAL"
+        ? String((stmt.value as Literal).value)
+        : undefined,
+      estimatedCost: stmt.waitType === "time"
+        ? (stmt.value.type === "LITERAL" ? (stmt.value as Literal).value as number : 1000)
+        : 50,
+      dependencies,
+      cacheable: false,
+    };
+
+    this.currentSteps.push(waitStep);
+    return waitStep.id;
+  }
+
+  /**
+   * Generate steps for SCREENSHOT statement
+   */
+  private generateScreenshotSteps(stmt: ScreenshotStatement, dependencies: string[]): string {
+    const screenshotStep: ScreenshotStep = {
+      id: this.generateStepId(),
+      type: ExecutionStepType.SCREENSHOT,
+      fullPage: stmt.options?.fullPage,
+      selector: stmt.options?.selector
+        ? this.extractSelectorFromExpression(stmt.options.selector) || undefined
+        : undefined,
+      format: stmt.options?.format,
+      quality: stmt.options?.quality,
+      estimatedCost: 100,
+      dependencies,
+      cacheable: false,
+    };
+
+    this.currentSteps.push(screenshotStep);
+    return screenshotStep.id;
+  }
+
+  /**
+   * Generate steps for PDF statement
+   */
+  private generatePdfSteps(stmt: PdfStatement, dependencies: string[]): string {
+    // Map format to supported PDFStep formats (A4 | Letter)
+    const format = stmt.options?.format;
+    const mappedFormat: "A4" | "Letter" | undefined =
+      format === "A4" || format === "Letter" ? format :
+      format === "Legal" || format === "A3" ? "Letter" : // Fallback for unsupported formats
+      undefined;
+
+    const pdfStep: PDFStep = {
+      id: this.generateStepId(),
+      type: ExecutionStepType.PDF,
+      format: mappedFormat,
+      landscape: stmt.options?.landscape,
+      estimatedCost: 200,
+      dependencies,
+      cacheable: false,
+    };
+
+    this.currentSteps.push(pdfStep);
+    return pdfStep.id;
+  }
+
+  /**
+   * Convert an Expression AST node to JavaScript code string
+   */
+  private expressionToJavaScript(expr: Expression): string {
+    switch (expr.type) {
+      case "LITERAL": {
+        const lit = expr as Literal;
+        return JSON.stringify(lit.value);
+      }
+
+      case "IDENTIFIER": {
+        const ident = expr as Identifier;
+        // Sanitize identifier name to prevent injection
+        const safeName = ident.name.replace(/[^a-zA-Z0-9_$]/g, "");
+        // Block dangerous identifiers that could enable prototype pollution
+        const dangerousIdentifiers = ["__proto__", "constructor", "prototype"];
+        if (dangerousIdentifiers.includes(safeName)) {
+          throw new Error(`Dangerous identifier not allowed: ${safeName}`);
+        }
+        return safeName;
+      }
+
+      case "BINARY": {
+        const binary = expr as BinaryExpression;
+        const left = this.expressionToJavaScript(binary.left);
+        const right = this.expressionToJavaScript(binary.right);
+
+        // Handle operators that require special JavaScript expressions
+        switch (binary.operator) {
+          case "LIKE": {
+            // Convert LIKE pattern to regex and test
+            if (binary.right.type === "LITERAL") {
+              const pattern = String((binary.right as Literal).value);
+              const regexPattern = likePatternToRegex(pattern);
+              return `(new RegExp(${JSON.stringify(regexPattern)}, 'i').test(String(${left})))`;
+            }
+            // For dynamic patterns, use runtime conversion
+            return "((function(text, pattern) {" +
+              "var escaped = String(pattern).replace(/[.*+?^${}()|[\\\\]\\\\\\\\]/g, '\\\\$&');" +
+              "var regexPattern = '^' + escaped.replace(/%/g, '.*').replace(/_/g, '.') + '$';" +
+              "return new RegExp(regexPattern, 'i').test(String(text));" +
+              "})(" + left + ", " + right + "))";
+          }
+
+          case "NOT LIKE": {
+            if (binary.right.type === "LITERAL") {
+              const pattern = String((binary.right as Literal).value);
+              const regexPattern = likePatternToRegex(pattern);
+              return `(!new RegExp(${JSON.stringify(regexPattern)}, 'i').test(String(${left})))`;
+            }
+            return "((function(text, pattern) {" +
+              "var escaped = String(pattern).replace(/[.*+?^${}()|[\\\\]\\\\\\\\]/g, '\\\\$&');" +
+              "var regexPattern = '^' + escaped.replace(/%/g, '.*').replace(/_/g, '.') + '$';" +
+              "return !new RegExp(regexPattern, 'i').test(String(text));" +
+              "})(" + left + ", " + right + "))";
+          }
+
+          case "MATCHES": {
+            // MATCHES uses regex directly
+            if (binary.right.type === "LITERAL") {
+              const pattern = String((binary.right as Literal).value);
+              return `(new RegExp(${JSON.stringify(pattern)}).test(String(${left})))`;
+            }
+            return `(new RegExp(${right}).test(String(${left})))`;
+          }
+
+          case "CONTAINS": {
+            return `(String(${left}).includes(String(${right})))`;
+          }
+
+          case "IN": {
+            // IN requires array check with proper semantics
+            return `(Array.isArray(${right}) ? ${right}.some(item => item === ${left}) : false)`;
+          }
+
+          case "NOT IN": {
+            // NOT IN requires negated array check
+            return `(Array.isArray(${right}) ? !${right}.some(item => item === ${left}) : true)`;
+          }
+
+          default: {
+            const op = this.binaryOperatorToJS(binary.operator);
+            return `(${left} ${op} ${right})`;
+          }
+        }
+      }
+
+      case "UNARY": {
+        const unary = expr as UnaryExpression;
+        const operand = this.expressionToJavaScript(unary.operand);
+        const op = unary.operator === "NOT" ? "!" : unary.operator;
+        return `(${op}${operand})`;
+      }
+
+      case "CALL": {
+        const call = expr as CallExpression;
+        const args = call.arguments.map((arg) => this.expressionToJavaScript(arg)).join(", ");
+        // Map query function names to JavaScript equivalents
+        const funcName = this.mapFunctionToJS(call.callee);
+        return `${funcName}(${args})`;
+      }
+
+      case "MEMBER": {
+        const member = expr as MemberExpression;
+
+        // Protect against prototype pollution attacks
+        const dangerousProps = ["__proto__", "constructor", "prototype"];
+        if (dangerousProps.includes(member.property)) {
+          throw new Error(`Dangerous property access: ${member.property}`);
+        }
+
+        const obj = this.expressionToJavaScript(member.object);
+        if (member.computed) {
+          // For computed access, still check property value if it's a literal
+          return `${obj}[${JSON.stringify(member.property)}]`;
+        }
+        // Sanitize property name
+        const safeProp = member.property.replace(/[^a-zA-Z0-9_$]/g, "");
+        return `${obj}.${safeProp}`;
+      }
+
+      case "ARRAY": {
+        const arr = expr as ArrayExpression;
+        const elements = arr.elements.map((el) => this.expressionToJavaScript(el)).join(", ");
+        return `[${elements}]`;
+      }
+
+      case "OBJECT": {
+        const obj = expr as ObjectExpression;
+        const props = obj.properties.map((prop) => {
+          const key = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(prop.key)
+            ? prop.key
+            : JSON.stringify(prop.key);
+          const value = this.expressionToJavaScript(prop.value);
+          return `${key}: ${value}`;
+        }).join(", ");
+        return `{${props}}`;
+      }
+
+      default:
+        // Fallback for unknown expression types
+        return JSON.stringify(String(expr));
+    }
+  }
+
+  /**
+   * Convert binary operator to JavaScript operator
+   * Note: LIKE, NOT LIKE, MATCHES, CONTAINS, IN, NOT IN are handled
+   * specially in expressionToJavaScript() and should not reach here
+   */
+  private binaryOperatorToJS(op: BinaryOperator): string {
+    switch (op) {
+      case "=": return "===";
+      case "!=": return "!==";
+      case "AND": return "&&";
+      case "OR": return "||";
+      case "||": return "+"; // String concatenation maps to +
+      // These operators are handled in expressionToJavaScript BINARY case
+      case "IN":
+      case "NOT IN":
+      case "LIKE":
+      case "NOT LIKE":
+      case "MATCHES":
+      case "CONTAINS":
+        throw new Error(`Operator ${op} should be handled in expressionToJavaScript(), not binaryOperatorToJS()`);
+      default: return op; // +, -, *, /, %, >, >=, <, <= work as-is
+    }
+  }
+
+  /**
+   * Map query function names to JavaScript equivalents
+   */
+  private mapFunctionToJS(funcName: string): string {
+    const mapping: Record<string, string> = {
+      // String functions
+      "UPPER": "String.prototype.toUpperCase.call",
+      "LOWER": "String.prototype.toLowerCase.call",
+      "TRIM": "String.prototype.trim.call",
+      "LENGTH": "(s => s.length)",
+      "CONCAT": "((...args) => args.join(''))",
+      "SUBSTRING": "String.prototype.substring.call",
+      "REPLACE": "String.prototype.replace.call",
+
+      // Math functions
+      "ABS": "Math.abs",
+      "ROUND": "Math.round",
+      "FLOOR": "Math.floor",
+      "CEIL": "Math.ceil",
+      "MIN": "Math.min",
+      "MAX": "Math.max",
+      "POW": "Math.pow",
+      "SQRT": "Math.sqrt",
+
+      // Array functions
+      "COUNT": "(arr => Array.isArray(arr) ? arr.length : 0)",
+      "SUM": "(arr => Array.isArray(arr) ? arr.reduce((a,b) => a+b, 0) : 0)",
+      "AVG": "(arr => Array.isArray(arr) && arr.length ? arr.reduce((a,b) => a+b, 0) / arr.length : 0)",
+
+      // Type conversion
+      "TO_STRING": "String",
+      "TO_NUMBER": "Number",
+      "TO_BOOLEAN": "Boolean",
+      "PARSE_JSON": "JSON.parse",
+      "TO_JSON": "JSON.stringify",
+    };
+
+    return mapping[funcName.toUpperCase()] || funcName.toLowerCase();
+  }
+
+  /**
    * Build JavaScript for UPDATE
+   * Uses sanitization to prevent injection attacks
    */
   private buildUpdateScript(selector: string, property: string, value: Expression): string {
-    const valueStr = value.type === "LITERAL"
-      ? JSON.stringify((value as any).value)
-      : `"${value}"`; // Simplified
+    // Sanitize inputs to prevent JavaScript injection
+    const safeSelector = sanitizeSelector(selector);
+    const safeProperty = sanitizePropertyName(property);
+    const valueStr = this.expressionToJavaScript(value);
 
     return `
-    const elements = document.querySelectorAll('${selector}');
+    const elements = document.querySelectorAll('${safeSelector}');
     elements.forEach(el => {
-      if ('${property}' in el) {
-        el['${property}'] = ${valueStr};
+      if ('${safeProperty}' in el) {
+        el['${safeProperty}'] = ${valueStr};
       } else {
-        el.setAttribute('${property}', ${valueStr});
+        el.setAttribute('${safeProperty}', ${valueStr});
       }
     });
   `;
@@ -519,7 +942,7 @@ export class ExecutionPlanner {
     // Priority 2: Check if fields contain selector information
     for (const field of stmt.fields) {
       if (field.expression && field.expression.type === "IDENTIFIER") {
-        const name = (field.expression as any).name;
+        const name = (field.expression as Identifier).name;
 
         // If field name looks like a CSS selector, use it
         if (
@@ -556,21 +979,19 @@ export class ExecutionPlanner {
    * Helper to extract selector from expression
    */
   private extractSelectorFromExpression(expr: Expression): string | null {
-    if (expr.type === "BINARY" && (expr as any).operator === "=") {
-      const binaryExpr = expr as any;
-      // Look for patterns like: selector = ".myclass"
-      if (
-        binaryExpr.left.type === "IDENTIFIER" &&
-        binaryExpr.left.name.toLowerCase() === "selector" &&
-        binaryExpr.right.type === "LITERAL"
-      ) {
-        return String(binaryExpr.right.value);
-      }
-    }
-
-    // Recursively check nested expressions
     if (expr.type === "BINARY") {
-      const binaryExpr = expr as any;
+      const binaryExpr = expr as BinaryExpression;
+      // Look for patterns like: selector = ".myclass"
+      if (binaryExpr.operator === "=") {
+        if (
+          binaryExpr.left.type === "IDENTIFIER" &&
+          (binaryExpr.left as Identifier).name.toLowerCase() === "selector" &&
+          binaryExpr.right.type === "LITERAL"
+        ) {
+          return String((binaryExpr.right as Literal).value);
+        }
+      }
+      // Recursively check nested expressions
       return this.extractSelectorFromExpression(binaryExpr.left) ||
         this.extractSelectorFromExpression(binaryExpr.right);
     }

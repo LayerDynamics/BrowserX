@@ -211,6 +211,7 @@ export class DNSResolver {
     options: DNSQueryOptions,
   ): Promise<DNSRecord[]> {
     const timeout = options.timeout ?? this.config.timeout;
+    let timeoutId: number | undefined;
 
     try {
       // Use Deno's built-in DNS resolution
@@ -218,10 +219,15 @@ export class DNSResolver {
 
       // Apply timeout
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("DNS query timeout")), timeout);
+        timeoutId = setTimeout(() => reject(new Error("DNS query timeout")), timeout) as unknown as number;
       });
 
       const addresses = await Promise.race([lookupPromise, timeoutPromise]);
+
+      // Clear timeout if lookup resolved first
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
 
       // Convert to DNS records
       const now = Date.now();
@@ -233,6 +239,10 @@ export class DNSResolver {
         cachedAt: now,
       }));
     } catch (error) {
+      // Clear timeout on error path as well
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
       throw new Error(
         `DNS lookup failed for ${hostname}: ${error instanceof Error ? error.message : String(error)}`,
       );

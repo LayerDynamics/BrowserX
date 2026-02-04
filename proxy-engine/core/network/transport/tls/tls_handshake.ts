@@ -267,10 +267,10 @@ export class TLSHandshake {
       case TLSHandshakeState.CLIENT_HELLO:
         return await this.handleServerHello(message);
 
-      case TLSHandshakeState.SERVER_HELLO:
+      case TLSHandshakeState.CERTIFICATE:
         return await this.handleCertificate(message);
 
-      case TLSHandshakeState.CERTIFICATE:
+      case TLSHandshakeState.SERVER_KEY_EXCHANGE:
         return await this.handleServerKeyExchange(message);
 
       case TLSHandshakeState.SERVER_HELLO_DONE:
@@ -688,10 +688,49 @@ export class TLSHandshake {
 
     if (this.version === TLSVersion.TLS_1_3) {
       // TLS 1.3: ServerHello includes encrypted extensions, certificate, finished
+      // Derive master secret using TLS 1.3 HKDF-based key schedule
+      // For simplified mock, use a derived secret from shared key material
+      const sharedSecret = this.keyShareEntry || this.generateRandom();
+      const handshakeContext = await this.computeTranscriptHash();
+
+      // Derive handshake secrets
+      const secrets = await this.deriveTLS13Secrets(sharedSecret, handshakeContext);
+
+      // For TLS 1.3, the "master secret" equivalent is derived from handshake secret
+      // We'll use the client handshake traffic secret as the basis for key derivation
+      this.masterSecret = secrets.clientHandshakeTrafficSecret;
+
+      // Derive encryption keys from the traffic secret
+      this.clientWriteKey = await this.hkdfExpandLabel(
+        secrets.clientHandshakeTrafficSecret,
+        "key",
+        new Uint8Array(0),
+        16
+      );
+      this.clientWriteIV = await this.hkdfExpandLabel(
+        secrets.clientHandshakeTrafficSecret,
+        "iv",
+        new Uint8Array(0),
+        12
+      );
+      this.serverWriteKey = await this.hkdfExpandLabel(
+        secrets.serverHandshakeTrafficSecret,
+        "key",
+        new Uint8Array(0),
+        16
+      );
+      this.serverWriteIV = await this.hkdfExpandLabel(
+        secrets.serverHandshakeTrafficSecret,
+        "iv",
+        new Uint8Array(0),
+        12
+      );
+
       this.state = TLSHandshakeState.ESTABLISHED;
       return await this.createClientFinished();
     } else {
       // TLS 1.2: Continue to Certificate
+      // State CERTIFICATE means we're waiting to receive/process the Certificate
       this.state = TLSHandshakeState.CERTIFICATE;
       return null;
     }

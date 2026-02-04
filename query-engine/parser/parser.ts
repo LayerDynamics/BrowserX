@@ -9,7 +9,9 @@ import {
   Assignment,
   BinaryExpression,
   BinaryOperator,
+  BlockStatement,
   CallExpression,
+  ClickStatement,
   CTE,
   DeleteStatement,
   Expression,
@@ -21,9 +23,12 @@ import {
   LimitClause,
   Literal,
   MemberExpression,
+  NavigateOptions,
   NavigateStatement,
   ObjectExpression,
   OrderBy,
+  PdfStatement,
+  ScreenshotStatement,
   SelectStatement,
   SetStatement,
   ShowStatement,
@@ -31,6 +36,7 @@ import {
   Statement,
   UnaryExpression,
   UpdateStatement,
+  WaitStatement,
   WithStatement,
 } from "../types/ast.ts";
 import { DataType } from "../types/primitives.ts";
@@ -81,9 +87,65 @@ export class Parser {
         return this.parseDelete();
       case TokenType.WITH:
         return this.parseWith();
+      case TokenType.LEFT_BRACE:
+        return this.parseBraceBlockStatement();
+      case TokenType.CLICK:
+        return this.parseClick();
+      case TokenType.WAIT:
+        return this.parseWait();
+      case TokenType.SCREENSHOT:
+        return this.parseScreenshot();
+      case TokenType.PDF:
+        return this.parsePdf();
       default:
         throw this.error(`Unexpected statement: ${token.value}`);
     }
+  }
+
+  /**
+   * Parse a brace-delimited block statement { ... }
+   */
+  private parseBraceBlockStatement(): Statement {
+    this.consume(TokenType.LEFT_BRACE);
+    const statements: Statement[] = [];
+
+    while (!this.check(TokenType.RIGHT_BRACE) && !this.isAtEnd()) {
+      statements.push(this.parseStatement());
+    }
+
+    this.consume(TokenType.RIGHT_BRACE);
+
+    if (statements.length === 1) {
+      return statements[0];
+    }
+
+    return {
+      type: "BLOCK",
+      statements,
+    };
+  }
+
+  /**
+   * Parse a DO...END block, returning a BlockStatement or single Statement
+   */
+  private parseDoEndBlock(): Statement {
+    this.consume(TokenType.DO);
+    const statements: Statement[] = [];
+
+    while (!this.check(TokenType.END) && !this.isAtEnd()) {
+      statements.push(this.parseStatement());
+    }
+
+    this.consume(TokenType.END);
+
+    if (statements.length === 1) {
+      return statements[0];
+    }
+
+    return {
+      type: "BLOCK",
+      statements,
+    };
   }
 
   /**
@@ -181,12 +243,15 @@ export class Parser {
   }
 
   /**
-   * Parse source (URL or subquery)
+   * Parse source (URL, CSS selector, or subquery)
    */
   private parseSource(): Source {
     if (this.check(TokenType.STRING)) {
       const token = this.advance();
-      return { type: "URL", value: token.value };
+      const value = token.value;
+      // Detect CSS selectors: starts with ., #, [, or contains > + ~ or element.class patterns without protocol
+      const isCssSelector = this.isCssSelector(value);
+      return { type: isCssSelector ? "SELECTOR" : "URL", value };
     }
 
     if (this.match(TokenType.LEFT_PAREN)) {
@@ -204,6 +269,33 @@ export class Parser {
   }
 
   /**
+   * Detect if a string is a CSS selector rather than a URL
+   */
+  private isCssSelector(value: string): boolean {
+    // If it looks like a URL (has protocol), it's not a CSS selector
+    if (/^https?:\/\//i.test(value)) {
+      return false;
+    }
+    // CSS selectors typically:
+    // - Start with . (class), # (id), [ (attribute), or * (universal)
+    // - Contain > + ~ (combinators)
+    // - Contain : (pseudo-class/element)
+    // - Start with element name followed by . or # or [ (e.g., div.class, a[href])
+    const cssSelectorPatterns = [
+      /^\./,               // Class selector: .class
+      /^#/,                // ID selector: #id
+      /^\[/,               // Attribute selector: [attr]
+      /^\*/,               // Universal selector: *
+      /^[a-z]+\./i,        // Element with class: div.class
+      /^[a-z]+#/i,         // Element with ID: div#id
+      /^[a-z]+\[/i,        // Element with attribute: a[href]
+      /[>\+~]/,            // Combinators: >, +, ~
+      /:[a-z-]+/i,         // Pseudo-class/element: :hover, ::before
+    ];
+    return cssSelectorPatterns.some(pattern => pattern.test(value));
+  }
+
+  /**
    * Parse ORDER BY clause
    */
   private parseOrderBy(): OrderBy[] {
@@ -212,7 +304,12 @@ export class Parser {
     const orderBy: OrderBy[] = [];
 
     do {
-      const field = this.consume(TokenType.IDENTIFIER).value;
+      // Parse field name with optional dotted path (e.g., user.age)
+      let field = this.consume(TokenType.IDENTIFIER).value;
+      while (this.match(TokenType.DOT)) {
+        field += "." + this.consume(TokenType.IDENTIFIER).value;
+      }
+
       let direction: "ASC" | "DESC" = "ASC";
 
       if (this.check(TokenType.IDENTIFIER)) {
@@ -236,12 +333,12 @@ export class Parser {
    * Parse LIMIT clause
    */
   private parseLimit(): LimitClause {
-    const limit = parseInt(this.consume(TokenType.NUMBER).value);
+    const count = parseInt(this.consume(TokenType.NUMBER).value);
     const offset = this.match(TokenType.OFFSET)
       ? parseInt(this.consume(TokenType.NUMBER).value)
       : undefined;
 
-    return { limit, offset };
+    return { count, offset };
   }
 
   /**
@@ -266,10 +363,12 @@ export class Parser {
   /**
    * Parse navigate options with validation
    */
-  private parseNavigateOptions(): any {
-    const obj = this.parseObjectLiteral() as any;
+  private parseNavigateOptions(): NavigateOptions {
+    // Consume the opening brace before parsing object literal
+    this.consume(TokenType.LEFT_BRACE);
+    const obj = this.parseObjectLiteral();
 
-    // Validate structure
+    // Validate structure - check properties array for valid top-level keys
     const validTopLevelKeys = new Set([
       "proxy",
       "browser",
@@ -279,106 +378,179 @@ export class Parser {
       "screenshot",
     ]);
 
-    for (const key of Object.keys(obj)) {
-      if (!validTopLevelKeys.has(key)) {
-        throw new Error(
-          `Invalid navigate option: '${key}'. Valid options are: ${Array.from(validTopLevelKeys).join(", ")}`,
+    // Check for duplicate keys
+    const seenKeys = new Set<string>();
+    for (const prop of obj.properties) {
+      if (!validTopLevelKeys.has(prop.key)) {
+        throw this.error(
+          `Invalid navigate option: '${prop.key}'. Valid options are: ${Array.from(validTopLevelKeys).join(", ")}`,
         );
       }
+      if (seenKeys.has(prop.key)) {
+        throw this.error(`Duplicate navigate option: '${prop.key}'`);
+      }
+      seenKeys.add(prop.key);
     }
 
-    // Validate proxy option
-    if (obj.proxy !== undefined) {
-      if (typeof obj.proxy !== "object" || obj.proxy === null) {
-        throw new Error("Navigate proxy option must be an object");
-      }
-
-      const validProxyKeys = new Set([
-        "enabled",
-        "cache",
-        "rateLimit",
-        "intercept",
-      ]);
-
-      for (const key of Object.keys(obj.proxy)) {
-        if (!validProxyKeys.has(key)) {
-          throw new Error(
-            `Invalid proxy option: '${key}'. Valid options are: ${Array.from(validProxyKeys).join(", ")}`,
-          );
-        }
-      }
-
-      // Validate nested cache object
-      if (obj.proxy.cache !== undefined && typeof obj.proxy.cache !== "object") {
-        throw new Error("Proxy cache option must be an object");
-      }
+    // Check for mutually exclusive options
+    if (seenKeys.has("waitFor") && seenKeys.has("waitUntil")) {
+      throw this.error("Cannot specify both 'waitFor' and 'waitUntil'");
     }
 
-    // Validate browser option
-    if (obj.browser !== undefined) {
-      if (typeof obj.browser !== "object" || obj.browser === null) {
-        throw new Error("Navigate browser option must be an object");
-      }
+    // Transform ObjectExpression into NavigateOptions
+    return this.transformToNavigateOptions(obj);
+  }
 
-      const validBrowserKeys = new Set([
-        "viewport",
-        "userAgent",
-        "timeout",
-        "headers",
-      ]);
+  /**
+   * Transform an ObjectExpression AST node into a NavigateOptions object
+   */
+  private transformToNavigateOptions(obj: ObjectExpression): NavigateOptions {
+    const options: NavigateOptions = {};
 
-      for (const key of Object.keys(obj.browser)) {
-        if (!validBrowserKeys.has(key)) {
-          throw new Error(
-            `Invalid browser option: '${key}'. Valid options are: ${Array.from(validBrowserKeys).join(", ")}`,
-          );
-        }
+    for (const prop of obj.properties) {
+      const value = this.extractLiteralValue(prop.value);
+
+      switch (prop.key) {
+        case "timeout":
+          options.timeout = value as number;
+          break;
+        case "waitUntil":
+          options.waitUntil = value as "load" | "domcontentloaded" | "networkidle";
+          break;
+        case "proxy":
+          options.proxy = this.extractProxyConfig(prop.value);
+          break;
+        case "browser":
+          options.browser = this.extractBrowserConfig(prop.value);
+          break;
       }
     }
 
-    // Validate waitFor/waitUntil option
-    if (obj.waitFor !== undefined && obj.waitUntil !== undefined) {
-      throw new Error("Cannot specify both 'waitFor' and 'waitUntil'");
-    }
+    return options;
+  }
 
-    const validWaitValues = new Set([
-      "load",
-      "domcontentloaded",
-      "networkidle",
+  /**
+   * Extract a literal value from an Expression
+   */
+  private extractLiteralValue(expr: Expression): unknown {
+    if (expr.type === "LITERAL") {
+      return (expr as Literal).value;
+    }
+    if (expr.type === "OBJECT") {
+      const result: Record<string, unknown> = {};
+      for (const prop of (expr as ObjectExpression).properties) {
+        result[prop.key] = this.extractLiteralValue(prop.value);
+      }
+      return result;
+    }
+    if (expr.type === "ARRAY") {
+      return (expr as ArrayExpression).elements.map((el) =>
+        this.extractLiteralValue(el)
+      );
+    }
+    return undefined;
+  }
+
+  /**
+   * Extract ProxyConfig from an Expression with validation
+   */
+  private extractProxyConfig(expr: Expression): NavigateOptions["proxy"] {
+    if (expr.type !== "OBJECT") return undefined;
+    const obj = expr as ObjectExpression;
+    const config: NavigateOptions["proxy"] = {};
+
+    const validProxyKeys = new Set([
+      "enabled",
+      "cache",
+      "ttl",
+      "headers",
+      "rotate",
+      "pool",
+      "strategy",
+      "timeout",
+      "rateLimit",
     ]);
 
-    if (obj.waitFor !== undefined) {
-      const waitForStr = String(obj.waitFor);
-      if (!validWaitValues.has(waitForStr) && !waitForStr.match(/^[.#\[].*$/)) {
-        throw new Error(
-          `Invalid waitFor value: '${waitForStr}'. Must be 'load', 'domcontentloaded', 'networkidle', or a CSS selector`,
+    for (const prop of obj.properties) {
+      // Validate proxy option key
+      if (!validProxyKeys.has(prop.key)) {
+        throw this.error(
+          `Invalid proxy option: '${prop.key}'. Valid options are: ${Array.from(validProxyKeys).join(", ")}`,
         );
       }
+
+      const value = this.extractLiteralValue(prop.value);
+      switch (prop.key) {
+        case "enabled":
+          config.enabled = value as boolean;
+          break;
+        case "cache":
+          config.cache = value as boolean | "only";
+          break;
+        case "ttl":
+          config.ttl = value as number;
+          break;
+        case "headers":
+          config.headers = value as Record<string, string>;
+          break;
+        case "rotate":
+          config.rotate = value as boolean;
+          break;
+        case "pool":
+          config.pool = value as string;
+          break;
+        case "strategy":
+          config.strategy = value as "round-robin" | "random" | "least-connections";
+          break;
+        case "timeout":
+          config.timeout = value as number;
+          break;
+        case "rateLimit":
+          config.rateLimit = value as number;
+          break;
+      }
     }
 
-    if (obj.waitUntil !== undefined) {
-      const waitUntilStr = String(obj.waitUntil);
-      if (!validWaitValues.has(waitUntilStr) && !waitUntilStr.match(/^[.#\[].*$/)) {
-        throw new Error(
-          `Invalid waitUntil value: '${waitUntilStr}'. Must be 'load', 'domcontentloaded', 'networkidle', or a CSS selector`,
+    return config;
+  }
+
+  /**
+   * Extract BrowserConfig from an Expression with validation
+   */
+  private extractBrowserConfig(expr: Expression): NavigateOptions["browser"] {
+    if (expr.type !== "OBJECT") return undefined;
+    const obj = expr as ObjectExpression;
+    const config: NavigateOptions["browser"] = {};
+
+    const validBrowserKeys = new Set([
+      "viewport",
+      "userAgent",
+      "headless",
+    ]);
+
+    for (const prop of obj.properties) {
+      // Validate browser option key
+      if (!validBrowserKeys.has(prop.key)) {
+        throw this.error(
+          `Invalid browser option: '${prop.key}'. Valid options are: ${Array.from(validBrowserKeys).join(", ")}`,
         );
       }
-    }
 
-    // Validate timeout option
-    if (obj.timeout !== undefined) {
-      const timeout = Number(obj.timeout);
-      if (isNaN(timeout) || timeout < 0) {
-        throw new Error("Timeout must be a non-negative number");
+      const value = this.extractLiteralValue(prop.value);
+      switch (prop.key) {
+        case "viewport":
+          config.viewport = value as { width: number; height: number };
+          break;
+        case "userAgent":
+          config.userAgent = value as string;
+          break;
+        case "headless":
+          config.headless = value as boolean;
+          break;
       }
     }
 
-    // Validate screenshot option
-    if (obj.screenshot !== undefined && typeof obj.screenshot !== "boolean") {
-      throw new Error("Screenshot option must be a boolean");
-    }
-
-    return obj;
+    return config;
   }
 
   /**
@@ -432,17 +604,29 @@ export class Parser {
 
   /**
    * Parse FOR statement
+   * Supports:
+   *   FOR variable IN collection DO ... END
+   *   FOR EACH variable IN collection statement
    */
   private parseFor(): ForStatement {
     this.consume(TokenType.FOR);
-    this.consume(TokenType.EACH);
+
+    // EACH keyword is optional
+    this.match(TokenType.EACH);
 
     const variable = this.consume(TokenType.IDENTIFIER).value;
 
     this.consume(TokenType.IN);
 
     const collection = this.parseExpression();
-    const body = this.parseStatement();
+
+    // Check for DO...END block syntax or single statement
+    let body: Statement;
+    if (this.check(TokenType.DO)) {
+      body = this.parseDoEndBlock();
+    } else {
+      body = this.parseStatement();
+    }
 
     return {
       type: "FOR",
@@ -461,15 +645,15 @@ export class Parser {
     const condition = this.parseExpression();
 
     this.consume(TokenType.THEN);
-    const thenBranch = this.parseStatement();
+    const thenStatement = this.parseStatement();
 
-    const elseBranch = this.match(TokenType.ELSE) ? this.parseStatement() : undefined;
+    const elseStatement = this.match(TokenType.ELSE) ? this.parseStatement() : undefined;
 
     return {
       type: "IF",
       condition,
-      thenBranch,
-      elseBranch,
+      then: thenStatement,
+      else: elseStatement,
     };
   }
 
@@ -521,9 +705,13 @@ export class Parser {
 
   /**
    * Parse DELETE statement
+   * Syntax: DELETE FROM <target> or DELETE <target>
    */
   private parseDelete(): DeleteStatement {
     this.consume(TokenType.DELETE);
+
+    // Optionally consume FROM keyword
+    this.match(TokenType.FROM);
 
     const target = this.parseExpression();
 
@@ -558,6 +746,178 @@ export class Parser {
       ctes,
       query,
     };
+  }
+
+  /**
+   * Parse CLICK statement
+   */
+  private parseClick(): ClickStatement {
+    this.consume(TokenType.CLICK);
+
+    const selector = this.parseExpression();
+
+    return {
+      type: "CLICK",
+      selector,
+    };
+  }
+
+  /**
+   * Parse WAIT statement
+   */
+  private parseWait(): WaitStatement {
+    this.consume(TokenType.WAIT);
+
+    // Check for WAIT FOR selector syntax
+    if (this.match(TokenType.FOR)) {
+      const value = this.parseExpression();
+      return {
+        type: "WAIT",
+        waitType: "selector",
+        value,
+      };
+    }
+
+    // WAIT duration (number in ms)
+    const value = this.parseExpression();
+
+    return {
+      type: "WAIT",
+      waitType: "time",
+      value,
+    };
+  }
+
+  /**
+   * Parse SCREENSHOT statement
+   */
+  private parseScreenshot(): ScreenshotStatement {
+    this.consume(TokenType.SCREENSHOT);
+
+    // Check for optional options
+    const options = this.match(TokenType.WITH) ? this.parseScreenshotOptions() : undefined;
+
+    return {
+      type: "SCREENSHOT",
+      options,
+    };
+  }
+
+  /**
+   * Parse screenshot options
+   */
+  private parseScreenshotOptions(): {
+    selector?: Expression;
+    fullPage?: boolean;
+    format?: "png" | "jpeg";
+    quality?: number;
+    path?: string;
+  } {
+    this.consume(TokenType.LEFT_BRACE);
+    const options: {
+      selector?: Expression;
+      fullPage?: boolean;
+      format?: "png" | "jpeg";
+      quality?: number;
+      path?: string;
+    } = {};
+
+    if (!this.check(TokenType.RIGHT_BRACE)) {
+      do {
+        const key = this.consumeKeywordOrIdentifier().value.toLowerCase();
+        this.consume(TokenType.COLON);
+        const value = this.parseExpression();
+
+        switch (key) {
+          case "selector":
+            options.selector = value;
+            break;
+          case "fullpage":
+            options.fullPage =
+              value.type === "LITERAL" && (value as Literal).value === true;
+            break;
+          case "format":
+            if (value.type === "LITERAL") {
+              options.format = (value as Literal).value as "png" | "jpeg";
+            }
+            break;
+          case "quality":
+            if (value.type === "LITERAL") {
+              options.quality = (value as Literal).value as number;
+            }
+            break;
+          case "path":
+            if (value.type === "LITERAL") {
+              options.path = (value as Literal).value as string;
+            }
+            break;
+        }
+      } while (this.match(TokenType.COMMA));
+    }
+
+    this.consume(TokenType.RIGHT_BRACE);
+
+    return options;
+  }
+
+  /**
+   * Parse PDF statement
+   */
+  private parsePdf(): PdfStatement {
+    this.consume(TokenType.PDF);
+
+    // Check for optional options
+    const options = this.match(TokenType.WITH) ? this.parsePdfOptions() : undefined;
+
+    return {
+      type: "PDF",
+      options,
+    };
+  }
+
+  /**
+   * Parse PDF options
+   */
+  private parsePdfOptions(): {
+    format?: "A4" | "Letter" | "Legal" | "A3";
+    landscape?: boolean;
+    path?: string;
+  } {
+    this.consume(TokenType.LEFT_BRACE);
+    const options: {
+      format?: "A4" | "Letter" | "Legal" | "A3";
+      landscape?: boolean;
+      path?: string;
+    } = {};
+
+    if (!this.check(TokenType.RIGHT_BRACE)) {
+      do {
+        const key = this.consumeKeywordOrIdentifier().value.toLowerCase();
+        this.consume(TokenType.COLON);
+        const value = this.parseExpression();
+
+        switch (key) {
+          case "format":
+            if (value.type === "LITERAL") {
+              options.format = (value as Literal).value as "A4" | "Letter" | "Legal" | "A3";
+            }
+            break;
+          case "landscape":
+            options.landscape =
+              value.type === "LITERAL" && (value as Literal).value === true;
+            break;
+          case "path":
+            if (value.type === "LITERAL") {
+              options.path = (value as Literal).value as string;
+            }
+            break;
+        }
+      } while (this.match(TokenType.COMMA));
+    }
+
+    this.consume(TokenType.RIGHT_BRACE);
+
+    return options;
   }
 
   /**
@@ -899,13 +1259,20 @@ export class Parser {
 
   /**
    * Parse object literal
+   * Accepts keywords, identifiers, and string literals as keys (e.g., { cache: true, "Authorization": "Bearer token" })
    */
   private parseObjectLiteral(): ObjectExpression {
     const properties: { key: string; value: Expression }[] = [];
 
     if (!this.check(TokenType.RIGHT_BRACE)) {
       do {
-        const key = this.consume(TokenType.IDENTIFIER).value;
+        let key: string;
+        // Accept string literals as keys (e.g., "Authorization": "value")
+        if (this.check(TokenType.STRING)) {
+          key = this.advance().value;
+        } else {
+          key = this.consumeKeywordOrIdentifier().value;
+        }
         this.consume(TokenType.COLON);
         const value = this.parseExpression();
 
@@ -959,7 +1326,160 @@ export class Parser {
   private consume(type: TokenType): Token {
     if (this.check(type)) return this.advance();
 
-    throw this.error(`Expected ${TokenType[type]}, got ${TokenType[this.peek().type]}`);
+    const expected = this.tokenTypeToUserString(type);
+    const got = this.tokenToUserString(this.peek());
+    throw this.error(`Expected ${expected}, got ${got}`);
+  }
+
+  /**
+   * Consume a keyword or identifier token (for object keys that can be keywords)
+   */
+  private consumeKeywordOrIdentifier(): Token {
+    const token = this.peek();
+
+    // Accept identifier
+    if (token.type === TokenType.IDENTIFIER) {
+      return this.advance();
+    }
+
+    // Accept any keyword token as an identifier in key position
+    const keywordTokenTypes = [
+      TokenType.CACHE,
+      TokenType.CACHED,
+      TokenType.HEADERS,
+      TokenType.COOKIES,
+      TokenType.SCREENSHOT,
+      TokenType.PDF,
+      TokenType.SELECT,
+      TokenType.FROM,
+      TokenType.WHERE,
+      TokenType.ORDER,
+      TokenType.BY,
+      TokenType.LIMIT,
+      TokenType.OFFSET,
+      TokenType.NAVIGATE,
+      TokenType.TO,
+      TokenType.WITH,
+      TokenType.CAPTURE,
+      TokenType.SET,
+      TokenType.SHOW,
+      TokenType.FOR,
+      TokenType.EACH,
+      TokenType.IN,
+      TokenType.IF,
+      TokenType.THEN,
+      TokenType.ELSE,
+      TokenType.DO,
+      TokenType.END,
+      TokenType.INSERT,
+      TokenType.INTO,
+      TokenType.UPDATE,
+      TokenType.DELETE,
+      TokenType.AS,
+      TokenType.AND,
+      TokenType.OR,
+      TokenType.NOT,
+      TokenType.LIKE,
+      TokenType.MATCHES,
+      TokenType.CONTAINS,
+      TokenType.NULL,
+      TokenType.PARALLEL,
+      TokenType.BATCH,
+      TokenType.STREAM,
+      TokenType.RETRY,
+      TokenType.CLICK,
+      TokenType.TYPE,
+      TokenType.WAIT,
+      TokenType.EVALUATE,
+      TokenType.INVALIDATE,
+      TokenType.CONNECTIONS,
+      TokenType.METRICS,
+      TokenType.STATE,
+    ];
+
+    if (keywordTokenTypes.includes(token.type)) {
+      return this.advance();
+    }
+
+    throw this.error(`Expected an identifier, got ${this.tokenToUserString(token)}`);
+  }
+
+  /**
+   * Convert a token type to a user-friendly string
+   */
+  private tokenTypeToUserString(type: TokenType): string {
+    const friendlyNames: Partial<Record<TokenType, string>> = {
+      [TokenType.LEFT_PAREN]: "'('",
+      [TokenType.RIGHT_PAREN]: "')'",
+      [TokenType.LEFT_BRACE]: "'{'",
+      [TokenType.RIGHT_BRACE]: "'}'",
+      [TokenType.LEFT_BRACKET]: "'['",
+      [TokenType.RIGHT_BRACKET]: "']'",
+      [TokenType.COMMA]: "','",
+      [TokenType.DOT]: "'.'",
+      [TokenType.SEMICOLON]: "';'",
+      [TokenType.COLON]: "':'",
+      [TokenType.STAR]: "'*'",
+      [TokenType.PLUS]: "'+'",
+      [TokenType.MINUS]: "'-'",
+      [TokenType.SLASH]: "'/'",
+      [TokenType.EQUALS]: "'='",
+      [TokenType.NOT_EQUALS]: "'!=' or '<>'",
+      [TokenType.LESS]: "'<'",
+      [TokenType.LESS_EQ]: "'<='",
+      [TokenType.GREATER]: "'>'",
+      [TokenType.GREATER_EQ]: "'>='",
+      [TokenType.STRING]: "a string",
+      [TokenType.NUMBER]: "a number",
+      [TokenType.IDENTIFIER]: "an identifier",
+      [TokenType.EOF]: "end of query",
+      [TokenType.SELECT]: "'SELECT'",
+      [TokenType.FROM]: "'FROM'",
+      [TokenType.WHERE]: "'WHERE'",
+      [TokenType.AND]: "'AND'",
+      [TokenType.OR]: "'OR'",
+      [TokenType.NOT]: "'NOT'",
+      [TokenType.AS]: "'AS'",
+      [TokenType.BOOLEAN]: "a boolean (TRUE or FALSE)",
+      [TokenType.NULL]: "'NULL'",
+      [TokenType.NAVIGATE]: "'NAVIGATE'",
+      [TokenType.TO]: "'TO'",
+      [TokenType.WITH]: "'WITH'",
+      [TokenType.SET]: "'SET'",
+      [TokenType.SHOW]: "'SHOW'",
+      [TokenType.FOR]: "'FOR'",
+      [TokenType.IN]: "'IN'",
+      [TokenType.IF]: "'IF'",
+      [TokenType.THEN]: "'THEN'",
+      [TokenType.ELSE]: "'ELSE'",
+      [TokenType.INSERT]: "'INSERT'",
+      [TokenType.INTO]: "'INTO'",
+      [TokenType.UPDATE]: "'UPDATE'",
+      [TokenType.DELETE]: "'DELETE'",
+      [TokenType.CLICK]: "'CLICK'",
+      [TokenType.TYPE]: "'TYPE'",
+      [TokenType.WAIT]: "'WAIT'",
+      [TokenType.CAPTURE]: "'CAPTURE'",
+    };
+    return friendlyNames[type] ?? TokenType[type];
+  }
+
+  /**
+   * Convert a token to a user-friendly string (includes value for identifiers/literals)
+   */
+  private tokenToUserString(token: Token): string {
+    switch (token.type) {
+      case TokenType.IDENTIFIER:
+        return `identifier '${token.value}'`;
+      case TokenType.STRING:
+        return `string "${token.value}"`;
+      case TokenType.NUMBER:
+        return `number ${token.value}`;
+      case TokenType.EOF:
+        return "end of query";
+      default:
+        return this.tokenTypeToUserString(token.type);
+    }
   }
 
   private error(message: string): Error {

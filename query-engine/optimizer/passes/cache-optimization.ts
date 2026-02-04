@@ -53,10 +53,13 @@ export class CacheOptimizationPass {
 
       case "FOR":
         // FOR loops with side effects are not cacheable
+        // Analyze body for metadata tracking even though loops aren't cacheable
         const bodyCacheability = this.analyzeCacheability(stmt.body);
         const metadata: CacheMetadata = {
           cacheable: false,
-          reason: "FOR loops with iterations are not cacheable",
+          reason: bodyCacheability.cacheable
+            ? "FOR loops with iterations are not cacheable"
+            : `FOR loops are not cacheable (body reason: ${bodyCacheability.reason})`,
         };
         this.cacheMetadata.set(stmt, metadata);
         return metadata;
@@ -269,7 +272,7 @@ export class CacheOptimizationPass {
       : "";
 
     // Add LIMIT if present
-    const limit = stmt.limit ? `${stmt.limit.limit}:${stmt.limit.offset || 0}` : "";
+    const limit = stmt.limit ? `${stmt.limit.count}:${stmt.limit.offset || 0}` : "";
 
     return `select:${url}:${fieldNames}:${whereClause}:${orderBy}:${limit}`;
   }

@@ -5,7 +5,7 @@
  */
 
 export { Runtime, RuntimeState } from "./runtime.ts";
-export type { RuntimeConfig, RuntimeEvent, RuntimeEventListener, RuntimeStats } from "./runtime.ts";
+export type { RuntimeCache, RuntimeConfig, RuntimeEvent, RuntimeEventListener, RuntimeStats } from "./runtime.ts";
 
 export {
   ConfigBuilder,

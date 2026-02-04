@@ -3,7 +3,7 @@
  * Interfaces with the Proxy Engine to manage traffic and caching
  */
 
-import { CacheLookupStep, CacheStoreStep } from "../../planner/mod.ts";
+import { CacheLookupStep, CacheRetrieveStep, CacheStoreStep } from "../../planner/mod.ts";
 import { DurationMs, RequestID, URLString } from "../../types/primitives.ts";
 import type { Runtime } from "../../../proxy-engine/core/runtime/mod.ts";
 
@@ -139,6 +139,26 @@ export class ProxyController {
       };
     }
 
+    // Use runtime cache if available (proxy engine integration)
+    if (this.runtime?.cache) {
+      const cachedValue = this.runtime.cache.get(step.cacheKey);
+      if (cachedValue !== null && cachedValue !== undefined) {
+        this.cacheHits++;
+        return {
+          hit: true,
+          value: cachedValue,
+          metadata: {},
+        };
+      }
+      this.cacheMisses++;
+      return {
+        hit: false,
+        reason: "not_found",
+        value: null,
+      };
+    }
+
+    // Fall back to local cache
     const entry = this.cache.get(step.cacheKey);
 
     if (!entry) {
@@ -183,6 +203,42 @@ export class ProxyController {
   }
 
   /**
+   * Execute cache retrieve step - returns the cached value directly
+   */
+  async executeCacheRetrieve(step: CacheRetrieveStep): Promise<unknown> {
+    // Use runtime cache if available (proxy engine integration)
+    if (this.runtime?.cache) {
+      const cachedValue = this.runtime.cache.get(step.cacheKey);
+      if (cachedValue !== null && cachedValue !== undefined) {
+        this.cacheHits++;
+        return cachedValue;
+      }
+      this.cacheMisses++;
+      return undefined;
+    }
+
+    // Fall back to local cache
+    const entry = this.cache.get(step.cacheKey);
+
+    if (!entry) {
+      this.cacheMisses++;
+      return undefined;
+    }
+
+    // Check if entry is expired
+    const now = Date.now();
+    if (now > entry.expiresAt) {
+      this.cache.delete(step.cacheKey);
+      this.currentCacheSize -= this.calculateEntrySize(entry);
+      this.cacheMisses++;
+      return undefined;
+    }
+
+    this.cacheHits++;
+    return entry.value;
+  }
+
+  /**
    * Execute cache store step
    */
   async executeCacheStore(step: CacheStoreStep): Promise<void> {
@@ -191,6 +247,14 @@ export class ProxyController {
     }
 
     const ttl = step.ttl || this.config.cache.defaultTTL;
+
+    // Use runtime cache if available (proxy engine integration)
+    if (this.runtime?.cache) {
+      this.runtime.cache.set(step.cacheKey, step.value, ttl);
+      return;
+    }
+
+    // Fall back to local cache
     const now = Date.now();
 
     const entry: CacheEntry = {

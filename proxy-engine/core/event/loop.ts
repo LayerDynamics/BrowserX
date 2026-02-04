@@ -35,6 +35,8 @@ export class EventLoop {
   private nextTimerId = 1;
   private nextTaskId = 1;
   private currentTime = 0;
+  private sleepTimeoutId?: number;
+  private sleepResolve?: () => void;
 
   /**
    * Start the event loop
@@ -89,6 +91,18 @@ export class EventLoop {
    */
   stop(): void {
     this.running = false;
+
+    // Clear any pending sleep timeout to prevent dangling promises
+    if (this.sleepTimeoutId !== undefined) {
+      globalThis.clearTimeout(this.sleepTimeoutId);
+      this.sleepTimeoutId = undefined;
+    }
+
+    // Resolve any pending sleep promise
+    if (this.sleepResolve) {
+      this.sleepResolve();
+      this.sleepResolve = undefined;
+    }
   }
 
   /**
@@ -232,6 +246,16 @@ export class EventLoop {
     this.macroTasks = [];
     this.microTasks = [];
     this.timers.clear();
+
+    // Clear any pending sleep timeout
+    if (this.sleepTimeoutId !== undefined) {
+      globalThis.clearTimeout(this.sleepTimeoutId);
+      this.sleepTimeoutId = undefined;
+    }
+    if (this.sleepResolve) {
+      this.sleepResolve();
+      this.sleepResolve = undefined;
+    }
   }
 
   /**
@@ -270,7 +294,12 @@ export class EventLoop {
    */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => {
-      globalThis.setTimeout(resolve, ms);
+      this.sleepResolve = resolve;
+      this.sleepTimeoutId = globalThis.setTimeout(() => {
+        this.sleepTimeoutId = undefined;
+        this.sleepResolve = undefined;
+        resolve();
+      }, ms) as unknown as number;
     });
   }
 }

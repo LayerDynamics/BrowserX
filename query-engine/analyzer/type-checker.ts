@@ -9,12 +9,15 @@ import {
   CallExpression,
   Expression,
   Identifier,
+  InsertStatement,
   Literal,
   MemberExpression,
   ObjectExpression,
   SelectStatement,
   Statement,
   UnaryExpression,
+  UpdateStatement,
+  WithStatement,
 } from "../types/ast.ts";
 import { DataType } from "../types/primitives.ts";
 import { Symbol, SymbolTable, SymbolType } from "./symbols.ts";
@@ -115,7 +118,7 @@ export class TypeChecker {
 
     // Check LIMIT is a number
     if (stmt.limit) {
-      if (stmt.limit.limit < 0) {
+      if (stmt.limit.count < 0) {
         throw new TypeCheckError("LIMIT must be non-negative");
       }
       if (stmt.limit.offset !== undefined && stmt.limit.offset < 0) {
@@ -186,9 +189,67 @@ export class TypeChecker {
     const leftType = this.inferType(expr.left);
     const rightType = this.inferType(expr.right);
 
-    // Comparison operators return boolean
+    // Special operators with specific type requirements
+    // IN: checks if left operand exists in right operand (array/collection)
+    if (expr.operator === "IN") {
+      // Right side should be an Array (or UNKNOWN which is permissive)
+      if (rightType !== DataType.ARRAY && rightType !== DataType.UNKNOWN) {
+        throw new TypeCheckError(
+          `Right operand of IN must be Array, got ${rightType}`,
+        );
+      }
+      return DataType.BOOLEAN;
+    }
+
+    // MATCHES: checks if string matches regex pattern
+    if (expr.operator === "MATCHES") {
+      // Left should be String (or UNKNOWN), right should be Regex (or UNKNOWN)
+      if (leftType !== DataType.STRING && leftType !== DataType.UNKNOWN) {
+        throw new TypeCheckError(
+          `Left operand of MATCHES must be String, got ${leftType}`,
+        );
+      }
+      if (rightType !== DataType.REGEX && rightType !== DataType.UNKNOWN) {
+        throw new TypeCheckError(
+          `Right operand of MATCHES must be Regex, got ${rightType}`,
+        );
+      }
+      return DataType.BOOLEAN;
+    }
+
+    // LIKE: SQL-style pattern matching (both operands should be strings)
+    if (expr.operator === "LIKE") {
+      if (leftType !== DataType.STRING && leftType !== DataType.UNKNOWN) {
+        throw new TypeCheckError(
+          `Left operand of LIKE must be String, got ${leftType}`,
+        );
+      }
+      if (rightType !== DataType.STRING && rightType !== DataType.UNKNOWN) {
+        throw new TypeCheckError(
+          `Right operand of LIKE must be String, got ${rightType}`,
+        );
+      }
+      return DataType.BOOLEAN;
+    }
+
+    // CONTAINS: checks if string contains substring
+    if (expr.operator === "CONTAINS") {
+      if (leftType !== DataType.STRING && leftType !== DataType.UNKNOWN) {
+        throw new TypeCheckError(
+          `Left operand of CONTAINS must be String, got ${leftType}`,
+        );
+      }
+      if (rightType !== DataType.STRING && rightType !== DataType.UNKNOWN) {
+        throw new TypeCheckError(
+          `Right operand of CONTAINS must be String, got ${rightType}`,
+        );
+      }
+      return DataType.BOOLEAN;
+    }
+
+    // Standard comparison operators return boolean
     if (
-      ["=", "!=", ">", ">=", "<", "<=", "IN", "LIKE", "MATCHES", "CONTAINS"].includes(expr.operator)
+      ["=", "!=", ">", ">=", "<", "<="].includes(expr.operator)
     ) {
       // Check types are compatible
       if (
@@ -330,7 +391,7 @@ export class TypeChecker {
     // Check symbol table for user-defined functions
     const symbol = this.symbolTable.resolve(functionName);
     if (symbol && symbol.type === SymbolType.FUNCTION) {
-      return symbol.metadata?.returnType || DataType.UNKNOWN;
+      return (symbol.metadata?.returnType as DataType) || DataType.UNKNOWN;
     }
 
     return DataType.UNKNOWN;
@@ -411,39 +472,40 @@ export class TypeChecker {
     }
 
     // Check branches
-    this.checkStatement(stmt.thenBranch);
-    if (stmt.elseBranch) {
-      this.checkStatement(stmt.elseBranch);
+    this.checkStatement(stmt.then);
+    if (stmt.else) {
+      this.checkStatement(stmt.else);
     }
   }
 
   /**
    * Check INSERT statement
    */
-  private checkInsert(stmt: any): void {
-    // Check all values are expressions
-    for (const value of stmt.values) {
-      this.checkExpression(value);
+  private checkInsert(stmt: InsertStatement): void {
+    // Check the value expression
+    if (stmt.value) {
+      this.checkExpression(stmt.value);
+    }
+    // Check the target expression
+    if (stmt.target) {
+      this.checkExpression(stmt.target);
     }
   }
 
   /**
    * Check UPDATE statement
    */
-  private checkUpdate(stmt: any): void {
-    // Check SET clause expressions
-    for (const [_field, value] of Object.entries(stmt.set)) {
-      this.checkExpression(value as any);
+  private checkUpdate(stmt: UpdateStatement): void {
+    // Check assignment expressions
+    if (stmt.assignments) {
+      for (const assignment of stmt.assignments) {
+        this.checkExpression(assignment.value);
+      }
     }
 
-    // Check WHERE clause
-    if (stmt.where) {
-      const whereType = this.inferType(stmt.where);
-      if (whereType !== DataType.BOOLEAN && whereType !== DataType.UNKNOWN) {
-        throw new TypeCheckError(
-          `WHERE clause must be Boolean, got ${whereType}`,
-        );
-      }
+    // Check target expression
+    if (stmt.target) {
+      this.checkExpression(stmt.target);
     }
   }
 
@@ -465,12 +527,20 @@ export class TypeChecker {
   /**
    * Check WITH statement
    */
-  private checkWith(stmt: any): void {
-    // Check CTE query
-    this.checkStatement(stmt.query);
+  private checkWith(stmt: WithStatement): void {
+    // Check all CTE queries
+    if (stmt.ctes) {
+      for (const cte of stmt.ctes) {
+        if (cte.query) {
+          this.checkStatement(cte.query);
+        }
+      }
+    }
 
-    // Check body
-    this.checkStatement(stmt.body);
+    // Check main query
+    if (stmt.query) {
+      this.checkStatement(stmt.query);
+    }
   }
 
   /**
@@ -505,6 +575,38 @@ export class TypeChecker {
       return true;
     }
 
+    // Allow comparison between URL and STRING (URLs are string-like)
+    if (
+      (type1 === DataType.URL && type2 === DataType.STRING) ||
+      (type1 === DataType.STRING && type2 === DataType.URL)
+    ) {
+      return true;
+    }
+
+    // Allow comparison between URL and NULL
+    if (
+      (type1 === DataType.URL && type2 === DataType.NULL) ||
+      (type1 === DataType.NULL && type2 === DataType.URL)
+    ) {
+      return true;
+    }
+
+    // Allow comparison between ARRAY and NULL
+    if (
+      (type1 === DataType.ARRAY && type2 === DataType.NULL) ||
+      (type1 === DataType.NULL && type2 === DataType.ARRAY)
+    ) {
+      return true;
+    }
+
+    // Allow comparison between OBJECT and NULL
+    if (
+      (type1 === DataType.OBJECT && type2 === DataType.NULL) ||
+      (type1 === DataType.NULL && type2 === DataType.OBJECT)
+    ) {
+      return true;
+    }
+
     return false;
   }
 
@@ -522,6 +624,11 @@ export class TypeChecker {
       return true;
     }
 
+    // UNKNOWN can be used where any type is expected
+    if (fromType === DataType.UNKNOWN) {
+      return true;
+    }
+
     // NULL can be coerced to any nullable type
     if (fromType === DataType.NULL) {
       return true;
@@ -534,6 +641,24 @@ export class TypeChecker {
 
     // BOOLEAN can be coerced to STRING
     if (fromType === DataType.BOOLEAN && toType === DataType.STRING) {
+      return true;
+    }
+
+    // URL can be coerced to STRING (and vice versa)
+    if (
+      (fromType === DataType.URL && toType === DataType.STRING) ||
+      (fromType === DataType.STRING && toType === DataType.URL)
+    ) {
+      return true;
+    }
+
+    // DOCUMENT can be coerced to STRING (serialization)
+    if (fromType === DataType.DOCUMENT && toType === DataType.STRING) {
+      return true;
+    }
+
+    // BYTES can be coerced to STRING (base64 encoding)
+    if (fromType === DataType.BYTES && toType === DataType.STRING) {
       return true;
     }
 

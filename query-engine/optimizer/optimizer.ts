@@ -196,9 +196,9 @@ export class QueryOptimizer {
             break;
 
           case "IF":
-            collectMetadata(st.thenBranch);
-            if (st.elseBranch) {
-              collectMetadata(st.elseBranch);
+            collectMetadata(st.then);
+            if (st.else) {
+              collectMetadata(st.else);
             }
             break;
 
@@ -300,3 +300,8 @@ export class QueryOptimizer {
     return [...this.passes];
   }
 }
+
+/**
+ * Optimizer - alias for QueryOptimizer for test compatibility
+ */
+export const Optimizer = QueryOptimizer;

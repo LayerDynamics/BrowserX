@@ -184,7 +184,10 @@ export class WebGPUCanvasContext {
             alphaMode: config.alphaMode || "opaque",
             colorSpace: config.colorSpace || "srgb",
             usage: config.usage || GPUTextureUsage.RENDER_ATTACHMENT,
-            viewFormats: config.viewFormats || [],
+            // Only include viewFormats if provided and non-empty (Deno WebGPU FFI issue with empty arrays)
+            ...(config.viewFormats && config.viewFormats.length > 0
+                ? { viewFormats: config.viewFormats }
+                : {}),
         };
 
         if (this.context) {

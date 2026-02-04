@@ -28,6 +28,26 @@ import {
     GPUValidationError,
 } from "../errors.ts";
 
+// webgpu_x platform detection integration
+import {
+    detectPlatform,
+    Platform,
+    isAppleSilicon,
+    darwinPreferredBackend,
+    linuxPreferredBackend,
+    windowsPreferredBackend,
+    darwinRecommendedMemoryStrategy,
+    linuxRecommendedMemoryStrategy,
+    windowsRecommendedMemoryStrategy,
+    getSystemInfo,
+} from "../utils/DetectSystem.ts";
+
+// webgpu_x GPU detection integration
+import {
+    getVendorFeatures,
+    getOptimalWorkgroupSize,
+} from "../utils/DetectGPUType.ts";
+
 // ============================================================================
 // Device Configuration
 // ============================================================================
@@ -240,10 +260,23 @@ export class WebGPUDevice {
 
     /**
      * Request GPU adapter with preferred options
+     *
+     * Uses webgpu_x platform detection for optimal configuration:
+     * - Apple Silicon: Always high-performance (unified memory)
+     * - Linux/Windows: Respect user preference or default to high-performance
      */
     private async requestAdapter(): Promise<GPUAdapter | null> {
+        // Use platform detection to optimize power preference
+        let powerPreference = this.config.powerPreference;
+        const platform = detectPlatform();
+
+        // Apple Silicon has unified memory, always use high-performance
+        if (platform === Platform.Darwin && isAppleSilicon()) {
+            powerPreference = "high-performance";
+        }
+
         const options: GPURequestAdapterOptions = {
-            powerPreference: this.config.powerPreference,
+            powerPreference,
         };
 
         const adapter = await navigator.gpu.requestAdapter(options);
@@ -776,6 +809,153 @@ export class WebGPUDevice {
      */
     onError(callback: (error: GPUDeviceError) => void): void {
         this.errorCallbacks.push(callback);
+    }
+
+    // ========================================================================
+    // Platform & System Info (webgpu_x integration)
+    // ========================================================================
+
+    /**
+     * Get comprehensive system information using webgpu_x
+     *
+     * Returns platform, preferred backend, and memory strategy recommendations.
+     */
+    getSystemInfo(): ReturnType<typeof getSystemInfo> {
+        return getSystemInfo();
+    }
+
+    /**
+     * Get preferred graphics backend for the current platform
+     *
+     * Uses webgpu_x platform detection:
+     * - Darwin: Metal or OpenGL
+     * - Linux: Vulkan or OpenGL
+     * - Windows: DX12 or Vulkan
+     */
+    getPreferredBackend(): string {
+        const platform = detectPlatform();
+        switch (platform) {
+            case Platform.Darwin:
+                return darwinPreferredBackend();
+            case Platform.Linux:
+                return linuxPreferredBackend();
+            case Platform.Windows:
+                return windowsPreferredBackend();
+            default:
+                return "unknown";
+        }
+    }
+
+    /**
+     * Get recommended memory strategy for the current platform
+     *
+     * Returns platform-specific memory allocation strategy from webgpu_x.
+     */
+    getRecommendedMemoryStrategy(): string {
+        const platform = detectPlatform();
+        switch (platform) {
+            case Platform.Darwin:
+                return darwinRecommendedMemoryStrategy();
+            case Platform.Linux:
+                return linuxRecommendedMemoryStrategy();
+            case Platform.Windows:
+                return windowsRecommendedMemoryStrategy();
+            default:
+                return "default";
+        }
+    }
+
+    /**
+     * Check if running on Apple Silicon
+     *
+     * Uses webgpu_x for accurate Apple Silicon detection.
+     */
+    isAppleSilicon(): boolean {
+        return isAppleSilicon();
+    }
+
+    /**
+     * Get current platform
+     */
+    getPlatform(): Platform {
+        return detectPlatform();
+    }
+
+    /**
+     * Get vendor-specific GPU features using webgpu_x
+     *
+     * @param vendorId - PCI vendor ID (optional, auto-detects if not provided)
+     * @returns Vendor feature information
+     */
+    getVendorFeatures(vendorId?: number): ReturnType<typeof getVendorFeatures> {
+        // If vendor ID provided, use it directly
+        if (vendorId !== undefined) {
+            return getVendorFeatures(vendorId);
+        }
+
+        // Try to detect vendor from adapter info
+        if (this.adapter) {
+            const info = (this.adapter as any).info;
+            if (info?.vendor) {
+                // Common vendor IDs
+                const vendorIds: Record<string, number> = {
+                    nvidia: 0x10DE,
+                    amd: 0x1002,
+                    intel: 0x8086,
+                    apple: 0x106B,
+                    qualcomm: 0x5143,
+                    arm: 0x13B5,
+                };
+
+                const vendorLower = info.vendor.toLowerCase();
+                for (const [name, id] of Object.entries(vendorIds)) {
+                    if (vendorLower.includes(name)) {
+                        return getVendorFeatures(id);
+                    }
+                }
+            }
+        }
+
+        // Default to unknown vendor
+        return getVendorFeatures(0);
+    }
+
+    /**
+     * Get optimal workgroup size for compute operations
+     *
+     * Uses webgpu_x vendor-specific optimization.
+     *
+     * @param problemSize - Total number of elements to process
+     * @param vendorId - PCI vendor ID (optional)
+     * @returns Optimal workgroup size
+     */
+    getOptimalWorkgroupSize(problemSize: number, vendorId?: number): number {
+        const maxWorkgroupSize = this.limits?.maxComputeInvocationsPerWorkgroup ?? 256;
+
+        // Use provided vendor ID or try to detect
+        let effectiveVendorId = vendorId ?? 0;
+
+        if (effectiveVendorId === 0 && this.adapter) {
+            const info = (this.adapter as any).info;
+            if (info?.vendor) {
+                const vendorIds: Record<string, number> = {
+                    nvidia: 0x10DE,
+                    amd: 0x1002,
+                    intel: 0x8086,
+                    apple: 0x106B,
+                };
+
+                const vendorLower = info.vendor.toLowerCase();
+                for (const [name, id] of Object.entries(vendorIds)) {
+                    if (vendorLower.includes(name)) {
+                        effectiveVendorId = id;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return getOptimalWorkgroupSize(problemSize, maxWorkgroupSize, effectiveVendorId);
     }
 
     // ========================================================================

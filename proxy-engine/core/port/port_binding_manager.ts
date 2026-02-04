@@ -41,6 +41,40 @@ export enum AllocationStrategy {
 export class PortBindingManager {
   private bindings = new Map<string, PortBinding>();
   private reservations = new Set<string>();
+  private cleanupIntervalId?: number;
+
+  constructor(autoCleanup: boolean = true, cleanupIntervalMs: number = 60000) {
+    if (autoCleanup) {
+      this.startAutoCleanup(cleanupIntervalMs);
+    }
+  }
+
+  /**
+   * Start automatic cleanup interval
+   */
+  private startAutoCleanup(intervalMs: number): void {
+    this.cleanupIntervalId = setInterval(() => {
+      this.cleanup();
+    }, intervalMs) as unknown as number;
+  }
+
+  /**
+   * Stop automatic cleanup (for resource management)
+   */
+  stopAutoCleanup(): void {
+    if (this.cleanupIntervalId !== undefined) {
+      clearInterval(this.cleanupIntervalId);
+      this.cleanupIntervalId = undefined;
+    }
+  }
+
+  /**
+   * Shutdown the port binding manager and release all resources
+   */
+  shutdown(): void {
+    this.stopAutoCleanup();
+    this.unbindAll();
+  }
 
   /**
    * Bind to a specific port
@@ -65,13 +99,19 @@ export class PortBindingManager {
     }
 
     try {
-      // Attempt to bind
-      const listener = Deno.listen({
+      // Attempt to bind using TCP listen options
+      const tcpOptions: Deno.TcpListenOptions = {
         port,
         hostname,
-        reuseAddress: config.reuseAddress,
-        reusePort: config.reusePort,
-      });
+      };
+      // Add optional properties if defined
+      if (config.reuseAddress !== undefined) {
+        (tcpOptions as Deno.TcpListenOptions & { reuseAddress?: boolean }).reuseAddress = config.reuseAddress;
+      }
+      if (config.reusePort !== undefined) {
+        (tcpOptions as Deno.TcpListenOptions & { reusePort?: boolean }).reusePort = config.reusePort;
+      }
+      const listener = Deno.listen(tcpOptions);
 
       const binding: PortBinding = {
         port,
@@ -327,5 +367,6 @@ export class PortBindingManager {
 
 /**
  * Global port binding manager instance
+ * Created with autoCleanup disabled to avoid dangling intervals during tests
  */
-export const globalPortManager = new PortBindingManager();
+export const globalPortManager = new PortBindingManager(false);

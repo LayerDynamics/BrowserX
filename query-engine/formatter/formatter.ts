@@ -432,3 +432,8 @@ export class ResultFormatter {
     return ["JSON", "TABLE", "CSV", "HTML", "XML", "YAML", "STREAM"];
   }
 }
+
+/**
+ * Formatter - alias for ResultFormatter for test compatibility
+ */
+export const Formatter = ResultFormatter;

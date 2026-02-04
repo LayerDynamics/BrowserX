@@ -129,6 +129,59 @@ export type RuntimeEvent =
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
 
 /**
+ * Simple cache interface for runtime cache
+ */
+export interface RuntimeCache {
+  get(key: string): unknown | null;
+  set(key: string, value: unknown, ttl: number): void;
+  delete(key: string): boolean;
+  has(key: string): boolean;
+  clear(): void;
+}
+
+/**
+ * Default runtime cache implementation with TTL support
+ */
+class DefaultRuntimeCache implements RuntimeCache {
+  private storage = new Map<string, { value: unknown; expiresAt: number }>();
+
+  get(key: string): unknown | null {
+    const entry = this.storage.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.storage.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  set(key: string, value: unknown, ttl: number): void {
+    this.storage.set(key, {
+      value,
+      expiresAt: Date.now() + ttl,
+    });
+  }
+
+  delete(key: string): boolean {
+    return this.storage.delete(key);
+  }
+
+  has(key: string): boolean {
+    const entry = this.storage.get(key);
+    if (!entry) return false;
+    if (Date.now() > entry.expiresAt) {
+      this.storage.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  clear(): void {
+    this.storage.clear();
+  }
+}
+
+/**
  * Proxy engine runtime
  */
 export class Runtime {
@@ -139,7 +192,14 @@ export class Runtime {
   private eventListeners: RuntimeEventListener[] = [];
   private signalHandlersRegistered = false;
 
+  /**
+   * Runtime cache for query engine integration
+   */
+  public readonly cache: RuntimeCache;
+
   constructor(private config: RuntimeConfig) {
+    // Initialize runtime cache
+    this.cache = new DefaultRuntimeCache();
     // Set defaults
     this.config.gracefulShutdown = config.gracefulShutdown ?? true;
     this.config.gracefulShutdownTimeout = config.gracefulShutdownTimeout ?? 30000;
@@ -195,32 +255,51 @@ export class Runtime {
    * Start all gateway servers
    */
   private async startGateways(): Promise<void> {
-    for (const config of this.config.gateways) {
-      try {
-        const gateway = new GatewayServer(config);
-        this.gateways.push(gateway);
+    const startPromises: Promise<void>[] = [];
 
-        // Start gateway in background
-        gateway.start().catch((error) => {
-          this.log("error", `Gateway ${config.host}:${config.port} error:`, error);
+    for (const config of this.config.gateways) {
+      const gateway = new GatewayServer(config);
+      this.gateways.push(gateway);
+
+      // Start gateway in background (accept loop runs indefinitely)
+      gateway.start().catch((error) => {
+        this.log("error", `Gateway ${config.host}:${config.port} error:`, error);
+        this.emitEvent({
+          type: "error",
+          error: error instanceof Error ? error : new Error(String(error)),
+        });
+      });
+
+      // Collect ready promises - wait for gateway to be ready before emitting event
+      startPromises.push(
+        gateway.waitForReady().then(() => {
+          this.emitEvent({
+            type: "gateway_started",
+            host: config.host,
+            port: config.port,
+          });
+          this.log("info", `Gateway started on ${config.host}:${config.port}`);
+        }).catch((error) => {
+          this.log("error", `Gateway ${config.host}:${config.port} failed to become ready:`, error);
           this.emitEvent({
             type: "error",
             error: error instanceof Error ? error : new Error(String(error)),
           });
-        });
-
-        this.emitEvent({
-          type: "gateway_started",
-          host: config.host,
-          port: config.port,
-        });
-
-        this.log("info", `Gateway started on ${config.host}:${config.port}`);
-      } catch (error) {
-        this.log("error", `Failed to start gateway ${config.host}:${config.port}:`, error);
-        throw error;
-      }
+          throw error; // Re-throw to fail the Promise.all
+        })
+      );
     }
+
+    // Wait for ALL gateways to be ready before continuing
+    // Use Promise.allSettled to collect all results, then check for failures
+    const results = await Promise.allSettled(startPromises);
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+
+    if (failures.length > 0) {
+      const errorMessages = failures.map(f => f.reason?.message || String(f.reason)).join("; ");
+      throw new Error(`${failures.length} gateway(s) failed to start: ${errorMessages}`);
+    }
+    this.log("info", `All ${this.gateways.length} gateways ready`);
   }
 
   private metricsServer?: Deno.HttpServer;
@@ -360,15 +439,21 @@ export class Runtime {
     });
 
     // Wait for all gateways to shutdown or timeout
+    let shutdownTimeoutId: number | undefined;
     const timeoutPromise = new Promise<void>((resolve) => {
-      setTimeout(() => {
+      shutdownTimeoutId = setTimeout(() => {
         this.log("warn", "Graceful shutdown timeout reached, forcing shutdown");
         resolve();
-      }, timeout);
+      }, timeout) as unknown as number;
     });
 
     await Promise.race([
-      Promise.all(shutdownPromises),
+      Promise.all(shutdownPromises).then(() => {
+        // Clear timeout if shutdown completes before timeout
+        if (shutdownTimeoutId !== undefined) {
+          clearTimeout(shutdownTimeoutId);
+        }
+      }),
       timeoutPromise,
     ]);
 

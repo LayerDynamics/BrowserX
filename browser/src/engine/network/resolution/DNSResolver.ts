@@ -100,7 +100,7 @@ export class DNSResolver {
             }
         }
 
-        // All nameservers failed
+        // All methods failed
         throw new Error(
             `DNS resolution failed: ${lastError?.message || "All nameservers unreachable"}`,
         );
@@ -117,6 +117,7 @@ export class DNSResolver {
         hostname: string,
         type: DNSRecordType,
         nameserver: string,
+        timeoutMs: number = 5000, // Default 5 second timeout
     ): Promise<DNSResult> {
         // Build DNS query packet
         const query = this.buildQuery(hostname, type);
@@ -131,9 +132,13 @@ export class DNSResolver {
             // Send query
             await socket.write(query as ByteBuffer);
 
-            // Receive response (max 512 bytes for UDP DNS)
+            // Receive response with timeout (max 512 bytes for UDP DNS)
             const responseBuffer = new Uint8Array(512);
-            const bytesRead = await socket.read(responseBuffer);
+            const bytesRead = await this.withTimeout(
+                socket.read(responseBuffer),
+                timeoutMs,
+                `DNS query to ${nameserver} timed out after ${timeoutMs}ms`,
+            );
 
             if (bytesRead === null || bytesRead === 0) {
                 throw new Error("No response from DNS server");
@@ -146,6 +151,22 @@ export class DNSResolver {
             // Always close socket
             await socket.close();
         }
+    }
+
+    /**
+     * Wraps a promise with a timeout
+     */
+    private withTimeout<T>(
+        promise: Promise<T>,
+        timeoutMs: number,
+        errorMessage: string,
+    ): Promise<T> {
+        return Promise.race([
+            promise,
+            new Promise<T>((_, reject) => {
+                setTimeout(() => reject(new Error(errorMessage)), timeoutMs);
+            }),
+        ]);
     }
 
     /**
@@ -288,8 +309,10 @@ export class DNSResolver {
      * Constructs a DNS query packet according to RFC 1035
      */
     private buildQuery(hostname: string, type: DNSRecordType): Uint8Array {
-        // Generate random query ID
-        const queryId = Math.floor(Math.random() * 65536);
+        // Generate cryptographically secure random query ID to prevent DNS spoofing
+        const queryIdBuffer = new Uint16Array(1);
+        crypto.getRandomValues(queryIdBuffer);
+        const queryId = queryIdBuffer[0];
 
         // Encode hostname
         const encodedName = encodeDomainName(hostname);

@@ -11,6 +11,7 @@ export {
   type AssignStep,
   type BranchStep,
   type CacheLookupStep,
+  type CacheRetrieveStep,
   type CacheStoreStep,
   type ClickStep,
   type DependencyNode,
