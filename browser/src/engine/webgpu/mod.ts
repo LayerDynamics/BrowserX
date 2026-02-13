@@ -355,3 +355,16 @@ export {
     createModelMatrix,
     type DeviceConfig as WebGPUXDeviceConfig,
 } from "./utils/FrameworkHelpers.ts";
+
+// ============================================================================
+// Offscreen Rendering
+// ============================================================================
+
+export {
+    OffscreenWebGPU,
+    OffscreenWebGPUState,
+    OffscreenWebGPUError,
+    OffscreenDeviceLostError,
+    type OffscreenWebGPUConfig,
+    type OffscreenWebGPUStatistics,
+} from "./offscreen/mod.ts";
