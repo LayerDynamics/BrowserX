@@ -368,3 +368,32 @@ export {
     type OffscreenWebGPUConfig,
     type OffscreenWebGPUStatistics,
 } from "./offscreen/mod.ts";
+
+// ============================================================================
+// WGSL Shaders
+// ============================================================================
+
+export {
+    // Shader sources
+    COMPOSITOR_SHADER,
+    CompositorEntryPoints,
+    type CompositorFragmentEntryPoint,
+
+    // Uniform buffer layout
+    CompositorUniformOffsets,
+    CompositorVertexLayout,
+
+    // Helper functions
+    createCompositorShaderModule,
+    createCompositorUniformBuffer,
+    writeCompositorUniforms,
+    createIdentityTransform,
+    createTranslationTransform,
+    createScaleTransform,
+    createCompositorBindGroupLayout,
+    createCompositorBindGroup,
+
+    // Vertex data
+    createFullScreenQuadVertices,
+    createFullScreenQuadBuffer,
+} from "./shaders/mod.ts";
