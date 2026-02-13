@@ -1027,3 +1027,82 @@ pub fn gpu_destroy_adapter(handle: u64) {
 pub fn gpu_cleanup_all() {
     crate::gpu::device::gpu_cleanup_all();
 }
+
+// ============================================================================
+// GPU TEXTURE READBACK
+// ============================================================================
+// Functions for reading GPU texture data back to CPU memory
+
+/// Create a readback buffer for texture data
+/// device_handle: Handle to the GPU device
+/// size: Size of the buffer in bytes
+/// Returns: buffer handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_readback_buffer(device_handle: u64, size: u64) -> u64 {
+    crate::gpu::readback::gpu_create_readback_buffer(device_handle, size)
+}
+
+/// Copy texture to readback buffer
+/// device_handle: Handle to the GPU device
+/// texture_handle: Handle to the source texture
+/// buffer_handle: Handle to the destination readback buffer
+/// width: Width of the texture region to copy
+/// height: Height of the texture region to copy
+/// bytes_per_row: Bytes per row (must be aligned to 256 bytes for WebGPU)
+/// Returns: 1 on success, 0 on failure
+#[deno_bindgen]
+pub fn gpu_copy_texture_to_buffer(
+    device_handle: u64,
+    texture_handle: u64,
+    buffer_handle: u64,
+    width: u32,
+    height: u32,
+    bytes_per_row: u32,
+) -> u8 {
+    if crate::gpu::readback::gpu_copy_texture_to_buffer(
+        device_handle,
+        texture_handle,
+        buffer_handle,
+        width,
+        height,
+        bytes_per_row,
+    ) {
+        1
+    } else {
+        0
+    }
+}
+
+/// Read data from mapped buffer
+/// device_handle: Handle to the GPU device (needed for polling)
+/// buffer_handle: Handle to the readback buffer
+/// Returns: JSON-encoded Vec<u8> containing the pixel data, or empty string on failure
+#[deno_bindgen]
+pub fn gpu_map_and_read_buffer(device_handle: u64, buffer_handle: u64) -> String {
+    crate::gpu::readback::gpu_map_and_read_buffer(device_handle, buffer_handle)
+}
+
+/// Destroy a readback buffer and release its resources
+#[deno_bindgen]
+pub fn gpu_destroy_readback_buffer(handle: u64) {
+    crate::gpu::readback::gpu_destroy_readback_buffer(handle);
+}
+
+/// Calculate the required bytes per row with proper alignment (256 bytes for WebGPU)
+/// width: Width of the texture in pixels
+/// bytes_per_pixel: Bytes per pixel (e.g., 4 for RGBA8)
+/// Returns: Aligned bytes per row
+#[deno_bindgen]
+pub fn gpu_calculate_aligned_bytes_per_row(width: u32, bytes_per_pixel: u32) -> u32 {
+    crate::gpu::readback::calculate_aligned_bytes_per_row(width, bytes_per_pixel)
+}
+
+/// Calculate the required buffer size for a texture readback
+/// width: Width of the texture in pixels
+/// height: Height of the texture in pixels
+/// bytes_per_pixel: Bytes per pixel (e.g., 4 for RGBA8)
+/// Returns: Required buffer size in bytes
+#[deno_bindgen]
+pub fn gpu_calculate_readback_buffer_size(width: u32, height: u32, bytes_per_pixel: u32) -> u64 {
+    crate::gpu::readback::calculate_readback_buffer_size(width, height, bytes_per_pixel)
+}

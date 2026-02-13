@@ -1,6 +1,7 @@
 pub mod detection;
 pub mod device;
 pub mod limits;
+pub mod readback;
 pub mod vendors;
 pub mod non_vendor;
 
@@ -16,4 +17,10 @@ pub use device::{
 pub use limits::{
     validate_bind_group_count, validate_buffer_size, validate_inter_stage_variables,
     validate_texture_dimensions, validate_workgroup_size, DeviceLimits, ValidationResult,
+};
+pub use readback::{
+    gpu_create_readback_buffer, gpu_copy_texture_to_buffer,
+    gpu_map_and_read_buffer, gpu_destroy_readback_buffer,
+    gpu_cleanup_readback_buffers, calculate_aligned_bytes_per_row,
+    calculate_readback_buffer_size,
 };

@@ -42,6 +42,13 @@ pub use gpu::device::{
     gpu_destroy_device, gpu_destroy_adapter, gpu_cleanup_all,
 };
 
+pub use gpu::readback::{
+    gpu_create_readback_buffer, gpu_copy_texture_to_buffer,
+    gpu_map_and_read_buffer, gpu_destroy_readback_buffer,
+    gpu_cleanup_readback_buffers, calculate_aligned_bytes_per_row,
+    calculate_readback_buffer_size,
+};
+
 pub use memory::buffer_pool::{
     buffer_pool_acquire, buffer_pool_add, buffer_pool_clear, buffer_pool_configure,
     buffer_pool_evict, buffer_pool_release, buffer_pool_remove, buffer_pool_stats,
