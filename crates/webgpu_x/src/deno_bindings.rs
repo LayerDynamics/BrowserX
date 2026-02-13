@@ -1188,3 +1188,154 @@ pub fn gpu_destroy_bind_group(handle: u64) {
 pub fn gpu_cleanup_bind_groups() {
     crate::gpu::bind_group::gpu_cleanup_bind_groups();
 }
+
+// ============================================================================
+// GPU COMMAND ENCODING
+// ============================================================================
+// Functions for recording GPU commands and render passes
+
+/// Create a command encoder for recording GPU commands
+/// device_handle: Handle to the GPU device
+/// Returns: command encoder handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_command_encoder(device_handle: u64) -> u64 {
+    crate::command::encoder::gpu_create_command_encoder(device_handle)
+}
+
+/// Begin a render pass with color attachment
+/// encoder_handle: Handle to the command encoder
+/// color_attachment_json: JSON descriptor for color attachment
+///   Example: {
+///     "view": 12345,
+///     "load_op": "clear",
+///     "store_op": "store",
+///     "clear_value": [0.0, 0.0, 0.0, 1.0]
+///   }
+/// Returns: render pass handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_begin_render_pass(encoder_handle: u64, color_attachment_json: &str) -> u64 {
+    crate::command::encoder::gpu_begin_render_pass(encoder_handle, color_attachment_json)
+}
+
+/// Set the render pipeline for a render pass
+/// pass_handle: Handle to the render pass
+/// pipeline_handle: Handle to the render pipeline
+#[deno_bindgen]
+pub fn gpu_render_pass_set_pipeline(pass_handle: u64, pipeline_handle: u64) {
+    crate::command::encoder::gpu_render_pass_set_pipeline(pass_handle, pipeline_handle);
+}
+
+/// Set a bind group for a render pass
+/// pass_handle: Handle to the render pass
+/// index: Bind group slot index
+/// bind_group_handle: Handle to the bind group
+#[deno_bindgen]
+pub fn gpu_render_pass_set_bind_group(pass_handle: u64, index: u32, bind_group_handle: u64) {
+    crate::command::encoder::gpu_render_pass_set_bind_group(pass_handle, index, bind_group_handle);
+}
+
+/// Set a vertex buffer for a render pass
+/// pass_handle: Handle to the render pass
+/// slot: Vertex buffer slot index
+/// buffer_handle: Handle to the vertex buffer
+#[deno_bindgen]
+pub fn gpu_render_pass_set_vertex_buffer(pass_handle: u64, slot: u32, buffer_handle: u64) {
+    crate::command::encoder::gpu_render_pass_set_vertex_buffer(pass_handle, slot, buffer_handle);
+}
+
+/// Issue a draw command for a render pass
+/// pass_handle: Handle to the render pass
+/// vertex_count: Number of vertices to draw
+/// instance_count: Number of instances to draw
+/// first_vertex: Index of the first vertex
+/// first_instance: Index of the first instance
+#[deno_bindgen]
+pub fn gpu_render_pass_draw(
+    pass_handle: u64,
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32,
+) {
+    crate::command::encoder::gpu_render_pass_draw(
+        pass_handle,
+        vertex_count,
+        instance_count,
+        first_vertex,
+        first_instance,
+    );
+}
+
+/// End a render pass
+/// pass_handle: Handle to the render pass
+#[deno_bindgen]
+pub fn gpu_end_render_pass(pass_handle: u64) {
+    crate::command::encoder::gpu_end_render_pass(pass_handle);
+}
+
+/// Finish a command encoder and get a command buffer
+/// encoder_handle: Handle to the command encoder
+/// Returns: command buffer handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_finish_command_encoder(encoder_handle: u64) -> u64 {
+    crate::command::encoder::gpu_finish_command_encoder(encoder_handle)
+}
+
+/// Submit a command buffer to the device queue
+/// device_handle: Handle to the GPU device
+/// command_buffer_handle: Handle to the command buffer
+#[deno_bindgen]
+pub fn gpu_queue_submit(device_handle: u64, command_buffer_handle: u64) {
+    crate::command::encoder::gpu_queue_submit(device_handle, command_buffer_handle);
+}
+
+/// Destroy a command buffer
+/// handle: Handle to the command buffer
+#[deno_bindgen]
+pub fn gpu_destroy_command_buffer(handle: u64) {
+    crate::command::encoder::gpu_destroy_command_buffer(handle);
+}
+
+/// Execute a complete render pass (higher-level helper)
+/// device_handle: Handle to the GPU device
+/// color_attachment_json: JSON descriptor for color attachment
+/// pipeline_handle: Handle to render pipeline (0 if none)
+/// vertex_buffer_handle: Handle to vertex buffer (0 if none)
+/// vertex_count: Number of vertices to draw
+/// instance_count: Number of instances (1 for single instance)
+/// Returns: 1 on success, 0 on failure
+#[deno_bindgen]
+pub fn gpu_execute_render_pass(
+    device_handle: u64,
+    color_attachment_json: &str,
+    pipeline_handle: u64,
+    vertex_buffer_handle: u64,
+    vertex_count: u32,
+    instance_count: u32,
+) -> u8 {
+    if crate::command::encoder::gpu_execute_render_pass(
+        device_handle,
+        color_attachment_json,
+        pipeline_handle,
+        vertex_buffer_handle,
+        vertex_count,
+        instance_count,
+    ) {
+        1
+    } else {
+        0
+    }
+}
+
+/// Destroy a render pipeline
+/// handle: Handle to the render pipeline
+#[deno_bindgen]
+pub fn gpu_destroy_render_pipeline(handle: u64) {
+    crate::command::encoder::gpu_destroy_render_pipeline(handle);
+}
+
+/// Clean up all command-related resources
+#[deno_bindgen]
+pub fn gpu_cleanup_command_resources() {
+    crate::command::encoder::gpu_cleanup_command_resources();
+}

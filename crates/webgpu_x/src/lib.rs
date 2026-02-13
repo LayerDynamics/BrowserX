@@ -15,6 +15,7 @@ pub mod texture;
 pub mod tensor;
 pub mod framework;
 pub mod web;
+pub mod command;
 
 // All FFI bindings in one module
 pub mod deno_bindings;
@@ -97,4 +98,14 @@ pub use pipeline::cache::{
 pub use framework::{
     create_model_matrix, create_orthographic_matrix, create_perspective_matrix,
     create_view_matrix, opengl_to_wgpu_matrix, DeviceConfig,
+};
+
+pub use command::{
+    gpu_create_command_encoder, gpu_begin_render_pass,
+    gpu_render_pass_set_pipeline, gpu_render_pass_set_bind_group,
+    gpu_render_pass_set_vertex_buffer, gpu_render_pass_draw,
+    gpu_end_render_pass, gpu_finish_command_encoder,
+    gpu_queue_submit, gpu_destroy_command_buffer,
+    gpu_cleanup_command_resources,
+    ColorAttachmentDescriptor,
 };
