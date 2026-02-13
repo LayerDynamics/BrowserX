@@ -150,6 +150,40 @@ import {
   opencl_supports_version,
   opencl_supports_fp64,
 
+  // GPU Texture Readback
+  gpu_create_readback_buffer,
+  gpu_copy_texture_to_buffer,
+  gpu_map_and_read_buffer,
+  gpu_destroy_readback_buffer,
+  gpu_calculate_aligned_bytes_per_row,
+  gpu_calculate_readback_buffer_size,
+
+  // GPU Bind Groups
+  gpu_create_buffer,
+  gpu_destroy_buffer,
+  gpu_create_texture_view,
+  gpu_destroy_texture_view,
+  gpu_create_sampler,
+  gpu_destroy_sampler,
+  gpu_create_bind_group,
+  gpu_destroy_bind_group,
+  gpu_cleanup_bind_groups,
+
+  // GPU Command Encoding
+  gpu_create_command_encoder,
+  gpu_begin_render_pass,
+  gpu_render_pass_set_pipeline,
+  gpu_render_pass_set_bind_group,
+  gpu_render_pass_set_vertex_buffer,
+  gpu_render_pass_draw,
+  gpu_end_render_pass,
+  gpu_finish_command_encoder,
+  gpu_queue_submit,
+  gpu_destroy_command_buffer,
+  gpu_execute_render_pass,
+  gpu_destroy_render_pipeline,
+  gpu_cleanup_command_resources,
+
   // Types
   type DarwinSystemInfo,
   type LinuxSystemInfo,
@@ -331,6 +365,97 @@ export interface DeviceConfig {
   optional_features: string[];
   /** Required limits (name -> value) */
   required_limits: Record<string, number>;
+}
+
+/**
+ * Color attachment descriptor for render passes
+ */
+export interface ColorAttachmentDescriptor {
+  /** Texture view handle */
+  view: bigint;
+  /** Load operation: "clear" or "load" */
+  load_op: "clear" | "load";
+  /** Store operation: "store" or "discard" */
+  store_op: "store" | "discard";
+  /** Clear color [r, g, b, a] (required if load_op is "clear") */
+  clear_value?: [number, number, number, number];
+  /** Optional resolve target texture view handle */
+  resolve_target?: bigint | null;
+}
+
+/**
+ * Sampler descriptor for creating GPU samplers
+ */
+export interface SamplerDescriptor {
+  /** Address mode U: 0=ClampToEdge, 1=Repeat, 2=MirrorRepeat */
+  address_mode_u?: number;
+  /** Address mode V: 0=ClampToEdge, 1=Repeat, 2=MirrorRepeat */
+  address_mode_v?: number;
+  /** Address mode W: 0=ClampToEdge, 1=Repeat, 2=MirrorRepeat */
+  address_mode_w?: number;
+  /** Magnification filter: 0=Nearest, 1=Linear */
+  mag_filter?: number;
+  /** Minification filter: 0=Nearest, 1=Linear */
+  min_filter?: number;
+  /** Mipmap filter: 0=Nearest, 1=Linear */
+  mipmap_filter?: number;
+}
+
+/**
+ * Texture view descriptor
+ */
+export interface TextureViewDescriptor {
+  /** Optional format override */
+  format?: number;
+  /** Optional dimension override */
+  dimension?: number;
+  /** Base mip level */
+  base_mip_level?: number;
+  /** Mip level count */
+  mip_level_count?: number;
+  /** Base array layer */
+  base_array_layer?: number;
+  /** Array layer count */
+  array_layer_count?: number;
+}
+
+/**
+ * Buffer binding entry for bind groups
+ */
+export interface BufferBindingEntry {
+  handle: bigint;
+  offset?: number;
+  size?: number;
+}
+
+/**
+ * Bind group entry descriptor
+ */
+export interface BindGroupEntry {
+  /** Binding index */
+  binding: number;
+  /** Buffer binding (one of buffer, texture_view, or sampler) */
+  buffer?: BufferBindingEntry;
+  /** Texture view handle */
+  texture_view?: bigint;
+  /** Sampler handle */
+  sampler?: bigint;
+}
+
+/**
+ * Buffer usage flags (matches WebGPU/wgpu)
+ */
+export enum BufferUsage {
+  MAP_READ = 0x0001,
+  MAP_WRITE = 0x0002,
+  COPY_SRC = 0x0004,
+  COPY_DST = 0x0008,
+  INDEX = 0x0010,
+  VERTEX = 0x0020,
+  UNIFORM = 0x0040,
+  STORAGE = 0x0080,
+  INDIRECT = 0x0100,
+  QUERY_RESOLVE = 0x0200,
 }
 
 /**
@@ -1688,6 +1813,313 @@ export class WebGPUX {
     } catch {
       return null;
     }
+  }
+
+  // ============================================================================
+  // GPU Texture Readback
+  // ============================================================================
+
+  /**
+   * Create a readback buffer for GPU to CPU data transfer
+   * @param deviceHandle - GPU device handle
+   * @param size - Buffer size in bytes
+   * @returns Buffer handle (0 on failure)
+   */
+  createReadbackBuffer(deviceHandle: bigint, size: bigint): bigint {
+    return gpu_create_readback_buffer(deviceHandle, size);
+  }
+
+  /**
+   * Copy texture to buffer for readback
+   * @param encoderHandle - Command encoder handle
+   * @param textureHandle - Source texture
+   * @param bufferHandle - Destination buffer
+   * @param width - Texture width
+   * @param height - Texture height
+   * @param bytesPerPixel - Bytes per pixel (e.g., 4 for RGBA8)
+   * @returns true on success
+   */
+  copyTextureToBuffer(
+    encoderHandle: bigint,
+    textureHandle: bigint,
+    bufferHandle: bigint,
+    width: number,
+    height: number,
+    bytesPerPixel: number = 4,
+  ): boolean {
+    return gpu_copy_texture_to_buffer(encoderHandle, textureHandle, bufferHandle, width, height, bytesPerPixel) === 1;
+  }
+
+  /**
+   * Map buffer and read data to CPU
+   * @param deviceHandle - GPU device handle
+   * @param bufferHandle - Buffer handle
+   * @returns Base64-encoded data or empty string
+   */
+  mapAndReadBuffer(deviceHandle: bigint, bufferHandle: bigint): string {
+    return gpu_map_and_read_buffer(deviceHandle, bufferHandle);
+  }
+
+  /**
+   * Destroy a readback buffer
+   * @param handle - Buffer handle
+   */
+  destroyReadbackBuffer(handle: bigint): void {
+    gpu_destroy_readback_buffer(handle);
+  }
+
+  /**
+   * Calculate aligned bytes per row for texture readback
+   * @param width - Texture width
+   * @param bytesPerPixel - Bytes per pixel (e.g., 4 for RGBA8)
+   * @returns Aligned bytes per row (256-byte aligned)
+   */
+  calculateAlignedBytesPerRow(width: number, bytesPerPixel: number): number {
+    return gpu_calculate_aligned_bytes_per_row(width, bytesPerPixel);
+  }
+
+  /**
+   * Calculate readback buffer size
+   * @param width - Texture width
+   * @param height - Texture height
+   * @param bytesPerPixel - Bytes per pixel
+   * @returns Total buffer size needed
+   */
+  calculateReadbackBufferSize(width: number, height: number, bytesPerPixel: number): bigint {
+    return gpu_calculate_readback_buffer_size(width, height, bytesPerPixel) as bigint;
+  }
+
+  // ============================================================================
+  // GPU Bind Groups
+  // ============================================================================
+
+  /**
+   * Create a GPU buffer
+   * @param deviceHandle - GPU device handle
+   * @param size - Buffer size in bytes
+   * @param usage - Buffer usage flags
+   * @param mapped - Whether buffer should be mapped at creation (0 or 1)
+   * @returns Buffer handle (0 on failure)
+   */
+  createGPUBuffer(deviceHandle: bigint, size: bigint, usage: number, mapped: number = 0): bigint {
+    return gpu_create_buffer(deviceHandle, size, usage, mapped);
+  }
+
+  /**
+   * Destroy a GPU buffer
+   * @param handle - Buffer handle
+   */
+  destroyGPUBuffer(handle: bigint): void {
+    gpu_destroy_buffer(handle);
+  }
+
+  /**
+   * Create a texture view
+   * @param deviceHandle - GPU device handle
+   * @param descriptorJson - JSON descriptor with texture handle and view settings
+   * @returns Texture view handle (0 on failure)
+   */
+  createTextureView(deviceHandle: bigint, descriptorJson: string): bigint {
+    return gpu_create_texture_view(deviceHandle, descriptorJson);
+  }
+
+  /**
+   * Destroy a texture view
+   * @param handle - Texture view handle
+   */
+  destroyTextureView(handle: bigint): void {
+    gpu_destroy_texture_view(handle);
+  }
+
+  /**
+   * Create a sampler
+   * @param deviceHandle - GPU device handle
+   * @param descriptorJson - JSON sampler descriptor
+   * @returns Sampler handle (0 on failure)
+   */
+  createSampler(deviceHandle: bigint, descriptorJson: string): bigint {
+    return gpu_create_sampler(deviceHandle, descriptorJson);
+  }
+
+  /**
+   * Destroy a sampler
+   * @param handle - Sampler handle
+   */
+  destroySampler(handle: bigint): void {
+    gpu_destroy_sampler(handle);
+  }
+
+  /**
+   * Create a bind group
+   * @param deviceHandle - GPU device handle
+   * @param layoutHandle - Bind group layout handle
+   * @param entriesJson - JSON array of binding entries
+   * @returns Bind group handle (0 on failure)
+   */
+  createBindGroup(deviceHandle: bigint, layoutHandle: bigint, entriesJson: string): bigint {
+    return gpu_create_bind_group(deviceHandle, layoutHandle, entriesJson);
+  }
+
+  /**
+   * Destroy a bind group
+   * @param handle - Bind group handle
+   */
+  destroyBindGroup(handle: bigint): void {
+    gpu_destroy_bind_group(handle);
+  }
+
+  /**
+   * Clean up all bind group resources
+   */
+  cleanupBindGroups(): void {
+    gpu_cleanup_bind_groups();
+  }
+
+  // ============================================================================
+  // GPU Command Encoding
+  // ============================================================================
+
+  /**
+   * Create a command encoder
+   * @param deviceHandle - GPU device handle
+   * @returns Command encoder handle (0 on failure)
+   */
+  createCommandEncoder(deviceHandle: bigint): bigint {
+    return gpu_create_command_encoder(deviceHandle);
+  }
+
+  /**
+   * Begin a render pass
+   * @param encoderHandle - Command encoder handle
+   * @param colorAttachmentJson - JSON color attachment descriptor
+   * @returns Render pass handle (0 on failure)
+   */
+  beginRenderPass(encoderHandle: bigint, colorAttachmentJson: string): bigint {
+    return gpu_begin_render_pass(encoderHandle, colorAttachmentJson);
+  }
+
+  /**
+   * Set render pipeline for render pass
+   * @param passHandle - Render pass handle
+   * @param pipelineHandle - Pipeline handle
+   */
+  renderPassSetPipeline(passHandle: bigint, pipelineHandle: bigint): void {
+    gpu_render_pass_set_pipeline(passHandle, pipelineHandle);
+  }
+
+  /**
+   * Set bind group for render pass
+   * @param passHandle - Render pass handle
+   * @param index - Bind group slot index
+   * @param bindGroupHandle - Bind group handle
+   */
+  renderPassSetBindGroup(passHandle: bigint, index: number, bindGroupHandle: bigint): void {
+    gpu_render_pass_set_bind_group(passHandle, index, bindGroupHandle);
+  }
+
+  /**
+   * Set vertex buffer for render pass
+   * @param passHandle - Render pass handle
+   * @param slot - Vertex buffer slot
+   * @param bufferHandle - Buffer handle
+   */
+  renderPassSetVertexBuffer(passHandle: bigint, slot: number, bufferHandle: bigint): void {
+    gpu_render_pass_set_vertex_buffer(passHandle, slot, bufferHandle);
+  }
+
+  /**
+   * Issue draw command
+   * @param passHandle - Render pass handle
+   * @param vertexCount - Number of vertices
+   * @param instanceCount - Number of instances
+   * @param firstVertex - First vertex index
+   * @param firstInstance - First instance index
+   */
+  renderPassDraw(
+    passHandle: bigint,
+    vertexCount: number,
+    instanceCount: number,
+    firstVertex: number,
+    firstInstance: number,
+  ): void {
+    gpu_render_pass_draw(passHandle, vertexCount, instanceCount, firstVertex, firstInstance);
+  }
+
+  /**
+   * End a render pass
+   * @param passHandle - Render pass handle
+   */
+  endRenderPass(passHandle: bigint): void {
+    gpu_end_render_pass(passHandle);
+  }
+
+  /**
+   * Finish command encoder and get command buffer
+   * @param encoderHandle - Command encoder handle
+   * @returns Command buffer handle (0 on failure)
+   */
+  finishCommandEncoder(encoderHandle: bigint): bigint {
+    return gpu_finish_command_encoder(encoderHandle);
+  }
+
+  /**
+   * Submit command buffer to queue
+   * @param deviceHandle - GPU device handle
+   * @param commandBufferHandle - Command buffer handle
+   */
+  queueSubmit(deviceHandle: bigint, commandBufferHandle: bigint): void {
+    gpu_queue_submit(deviceHandle, commandBufferHandle);
+  }
+
+  /**
+   * Destroy a command buffer
+   * @param handle - Command buffer handle
+   */
+  destroyCommandBuffer(handle: bigint): void {
+    gpu_destroy_command_buffer(handle);
+  }
+
+  /**
+   * Execute a complete render pass (convenience helper)
+   * @param deviceHandle - GPU device handle
+   * @param colorAttachmentJson - Color attachment descriptor
+   * @param pipelineHandle - Pipeline handle (0 if none)
+   * @param vertexBufferHandle - Vertex buffer handle (0 if none)
+   * @param vertexCount - Number of vertices
+   * @param instanceCount - Number of instances
+   * @returns true on success
+   */
+  executeRenderPass(
+    deviceHandle: bigint,
+    colorAttachmentJson: string,
+    pipelineHandle: bigint,
+    vertexBufferHandle: bigint,
+    vertexCount: number,
+    instanceCount: number,
+  ): boolean {
+    return gpu_execute_render_pass(
+      deviceHandle,
+      colorAttachmentJson,
+      pipelineHandle,
+      vertexBufferHandle,
+      vertexCount,
+      instanceCount,
+    ) === 1;
+  }
+
+  /**
+   * Destroy a render pipeline
+   * @param handle - Render pipeline handle
+   */
+  destroyRenderPipeline(handle: bigint): void {
+    gpu_destroy_render_pipeline(handle);
+  }
+
+  /**
+   * Clean up all command resources
+   */
+  cleanupCommandResources(): void {
+    gpu_cleanup_command_resources();
   }
 }
 
