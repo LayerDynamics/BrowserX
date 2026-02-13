@@ -12,9 +12,10 @@
  */
 
 import type { ByteBuffer, Pixels } from "../types/identifiers.ts";
-import type { DOMElement, DOMNode, DOMNodeType } from "../types/dom.ts";
+import type { DOMElement, DOMNode, DOMNodeType, HTMLCanvasElement, ImageBitmap } from "../types/dom.ts";
 import type { CSSStyleSheet } from "../types/css.ts";
 import type { LayoutBox } from "../types/rendering.ts";
+import type { OffscreenCanvas } from "../types/webgpu.ts";
 import { RequestPipeline, type RequestResult } from "./RequestPipeline.ts";
 import { HTMLTokenizer } from "./rendering/html-parser/HTMLTokenizer.ts";
 import { HTMLTreeBuilder } from "./rendering/html-parser/HTMLTreeBuilder.ts";
@@ -29,6 +30,10 @@ import { DisplayList } from "./rendering/paint/DisplayList.ts";
 import { PaintContext } from "./rendering/paint/PaintContext.ts";
 import { CompositorThread } from "./rendering/compositor/CompositorThread.ts";
 import { ScriptExecutor } from "./javascript/ScriptExecutor.ts";
+import { OffscreenWebGPU, OffscreenWebGPUState } from "./webgpu/offscreen/mod.ts";
+import { WebGPUCompositorLayer, LayerType, LayerBlendMode, LayerState } from "./webgpu/compositor/mod.ts";
+import { WebGPUDevice } from "./webgpu/adapter/Device.ts";
+import { WebGPUTextureManager } from "./webgpu/operations/render/TextureManager.ts";
 
 /**
  * Rendering options
@@ -41,6 +46,7 @@ export interface RenderingOptions {
     enableImages?: boolean;
     enableCSS?: boolean;
     timeout?: number;
+    signal?: AbortSignal;
 }
 
 /**
@@ -85,6 +91,37 @@ export interface ResourceInfo {
 }
 
 /**
+ * WebGPU statistics
+ */
+export interface WebGPUStats {
+    active: boolean;
+    available: boolean;
+    offscreen?: import("./webgpu/offscreen/mod.ts").OffscreenWebGPUStatistics;
+    device?: import("../types/webgpu.ts").GPUDeviceStats;
+    layer?: import("./webgpu/compositor/mod.ts").LayerStatistics;
+}
+
+/**
+ * Rendering pipeline statistics
+ */
+export interface RenderingPipelineStats {
+    viewport: {
+        width: number;
+        height: number;
+        devicePixelRatio: number;
+    };
+    resources: {
+        total: number;
+        byType: Record<string, number>;
+        totalSize: number;
+        cachedCount: number;
+    };
+    requestPipeline: ReturnType<import("./RequestPipeline.ts").RequestPipeline["getStats"]>;
+    compositor: import("./rendering/compositor/CompositorThread.ts").CompositorStats;
+    webgpu: WebGPUStats;
+}
+
+/**
  * Rendering Pipeline Error
  */
 export class RenderingPipelineError extends Error {
@@ -99,12 +136,32 @@ export class RenderingPipelineError extends Error {
 }
 
 /**
+ * Create OffscreenCanvas abstraction for Deno runtime
+ * Deno doesn't have native OffscreenCanvas, so we create a shim
+ * that satisfies the type requirements. Actual rendering is handled by webgpu_x.
+ */
+function createOffscreenCanvas(width: number, height: number): OffscreenCanvas {
+    return {
+        width,
+        height,
+        getContext: (_contextId: string) => null,
+        convertToBlob: async () => new Blob(),
+        transferToImageBitmap: () => ({
+            width,
+            height,
+            close: () => {},
+        } as ImageBitmap),
+    } as OffscreenCanvas;
+}
+
+/**
  * Rendering Pipeline
  * High-level orchestrator for page rendering
  */
 export class RenderingPipeline {
     private requestPipeline: RequestPipeline;
     private compositor: CompositorThread;
+    private canvas: OffscreenCanvas;
     private width: number;
     private height: number;
     private devicePixelRatio: number;
@@ -112,6 +169,13 @@ export class RenderingPipeline {
     private resources: ResourceInfo[] = [];
     public lastRenderResult?: RenderingResult;
     private ownsRequestPipeline: boolean;
+
+    // WebGPU rendering support
+    private webgpu: OffscreenWebGPU | null = null;
+    private webgpuDevice: WebGPUDevice | null = null;
+    private webgpuTextureManager: WebGPUTextureManager | null = null;
+    private webgpuLayer: WebGPUCompositorLayer | null = null;
+    private useWebGPU: boolean = false;
 
     constructor(options: RenderingOptions = {}, requestPipeline?: RequestPipeline) {
         // Use provided RequestPipeline or create a new one
@@ -127,13 +191,150 @@ export class RenderingPipeline {
         this.height = options.height ?? 768;
         this.devicePixelRatio = options.devicePixelRatio ?? 1.0;
         this.enableJavaScript = options.enableJavaScript ?? false;
+
+        // Create OffscreenCanvas for compositor rendering
+        this.canvas = createOffscreenCanvas(
+            this.width * this.devicePixelRatio,
+            this.height * this.devicePixelRatio
+        );
+
+        // Initialize compositor with canvas
         this.compositor = new CompositorThread();
+        this.compositor.initialize(this.canvas as unknown as HTMLCanvasElement);
+    }
+
+    // ========================================================================
+    // WebGPU Initialization
+    // ========================================================================
+
+    /**
+     * Initialize WebGPU for GPU-accelerated rendering
+     *
+     * Attempts to initialize WebGPU for GPU-accelerated compositing:
+     * - Creates OffscreenWebGPU context for headless rendering
+     * - Creates WebGPUDevice for GPU resource management
+     * - Creates WebGPUCompositorLayer for layer-based rendering
+     *
+     * Falls back gracefully to headless mode if WebGPU is unavailable.
+     *
+     * @returns true if WebGPU was initialized successfully, false otherwise
+     */
+    async initializeWebGPU(): Promise<boolean> {
+        try {
+            // Check WebGPU availability
+            if (typeof navigator === "undefined" || !navigator.gpu) {
+                return false;
+            }
+
+            // Initialize OffscreenWebGPU for headless rendering with pixel readback
+            this.webgpu = new OffscreenWebGPU({
+                debug: false,
+                label: "RenderingPipeline-OffscreenWebGPU",
+            });
+
+            await this.webgpu.initialize(
+                this.width * this.devicePixelRatio,
+                this.height * this.devicePixelRatio
+            );
+
+            // Initialize WebGPUDevice for GPU resource management
+            this.webgpuDevice = new WebGPUDevice({
+                powerPreference: "high-performance",
+                label: "RenderingPipeline-WebGPUDevice",
+            });
+
+            await this.webgpuDevice.initialize();
+
+            // Create texture manager for GPU texture operations
+            this.webgpuTextureManager = new WebGPUTextureManager(this.webgpuDevice);
+
+            // Create WebGPUCompositorLayer for layer-based rendering
+            // This layer will be used to render the paint output
+            this.webgpuLayer = new WebGPUCompositorLayer(
+                this.webgpuDevice,
+                this.webgpuTextureManager,
+                {
+                    id: "root-layer" as import("../types/webgpu.ts").LayerID,
+                    type: LayerType.ROOT,
+                    x: 0 as Pixels,
+                    y: 0 as Pixels,
+                    width: (this.width * this.devicePixelRatio) as Pixels,
+                    height: (this.height * this.devicePixelRatio) as Pixels,
+                    zIndex: 0,
+                    opacity: 1.0,
+                    blendMode: LayerBlendMode.NORMAL,
+                    visible: true,
+                    clipToBounds: false,
+                    backgroundColor: [1, 1, 1, 1], // White background
+                }
+            );
+
+            // Set device lost handler for recovery
+            this.webgpu.setDeviceLostHandler((reason) => {
+                console.warn(`[RenderingPipeline] WebGPU device lost: ${reason}`);
+                this.useWebGPU = false;
+            });
+
+            this.useWebGPU = true;
+            return true;
+        } catch (error) {
+            // WebGPU initialization failed, fall back to headless mode
+            console.warn(
+                `[RenderingPipeline] WebGPU initialization failed, using headless fallback: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+
+            // Clean up partial initialization
+            await this.disposeWebGPU();
+
+            return false;
+        }
+    }
+
+    /**
+     * Check if WebGPU rendering is active
+     */
+    isWebGPUActive(): boolean {
+        return this.useWebGPU && this.webgpu !== null && this.webgpu.isReady();
+    }
+
+    /**
+     * Dispose WebGPU resources
+     */
+    private async disposeWebGPU(): Promise<void> {
+        if (this.webgpuLayer) {
+            this.webgpuLayer.destroy();
+            this.webgpuLayer = null;
+        }
+
+        if (this.webgpuTextureManager) {
+            this.webgpuTextureManager.destroy();
+            this.webgpuTextureManager = null;
+        }
+
+        if (this.webgpuDevice) {
+            this.webgpuDevice.destroy();
+            this.webgpuDevice = null;
+        }
+
+        if (this.webgpu) {
+            this.webgpu.dispose();
+            this.webgpu = null;
+        }
+
+        this.useWebGPU = false;
     }
 
     /**
      * Load and render page
      */
     async render(url: string | URL, options: RenderingOptions = {}): Promise<RenderingResult> {
+        // Check if already aborted
+        if (options.signal?.aborted) {
+            throw options.signal.reason || new Error("Rendering aborted");
+        }
+
         const startTime = Date.now();
         const timing: Partial<RenderingTiming> = {};
         this.resources = [];
@@ -141,7 +342,7 @@ export class RenderingPipeline {
         try {
             // 1. Fetch HTML
             const htmlStart = Date.now();
-            const htmlResult = await this.fetchHTML(url);
+            const htmlResult = await this.fetchHTML(url, options.signal);
             timing.htmlFetch = Date.now() - htmlStart;
 
             this.resources.push({
@@ -268,7 +469,7 @@ export class RenderingPipeline {
      * - about:blank - Returns empty HTML document
      * - data: URLs - Returns data directly from the URL
      */
-    private async fetchHTML(url: string | URL): Promise<RequestResult> {
+    private async fetchHTML(url: string | URL, signal?: AbortSignal): Promise<RequestResult> {
         const urlString = typeof url === "string" ? url : url.toString();
 
         // Handle special URLs that don't require network access
@@ -283,6 +484,7 @@ export class RenderingPipeline {
                 headers: {
                     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 },
+                signal,
             });
         } catch (error) {
             throw new RenderingPipelineError(
@@ -620,8 +822,29 @@ export class RenderingPipeline {
 
     /**
      * Get rendered pixels
+     *
+     * Returns the rendered pixels from the compositor.
+     * When WebGPU is active, uses GPU readback for real rendered pixels.
+     * Otherwise, falls back to headless compositor (returns white pixels).
+     *
+     * @returns Pixel data as RGBA Uint8ClampedArray
      */
     async getPixels(): Promise<Uint8ClampedArray> {
+        // Use WebGPU pixel readback when available
+        if (this.useWebGPU && this.webgpu && this.webgpu.isReady()) {
+            try {
+                return await this.webgpu.getPixels();
+            } catch (error) {
+                console.warn(
+                    `[RenderingPipeline] WebGPU pixel readback failed, falling back to compositor: ${
+                        error instanceof Error ? error.message : String(error)
+                    }`
+                );
+                // Fall through to compositor fallback
+            }
+        }
+
+        // Fallback to headless compositor
         return await this.compositor.getPixels();
     }
 
@@ -634,21 +857,43 @@ export class RenderingPipeline {
 
     /**
      * Set viewport size
+     *
+     * Resizes both the WebGL compositor and WebGPU offscreen context if active.
      */
     setViewportSize(width: number, height: number): void {
         this.width = width;
         this.height = height;
-        this.compositor.resize(
-            width * this.devicePixelRatio,
-            height * this.devicePixelRatio,
-        );
+
+        const scaledWidth = width * this.devicePixelRatio;
+        const scaledHeight = height * this.devicePixelRatio;
+
+        // Resize WebGL compositor
+        this.compositor.resize(scaledWidth, scaledHeight);
+
+        // Resize WebGPU resources if active
+        if (this.useWebGPU && this.webgpu && this.webgpu.isReady()) {
+            try {
+                this.webgpu.resize(scaledWidth, scaledHeight);
+
+                // Update WebGPU layer dimensions
+                if (this.webgpuLayer) {
+                    this.webgpuLayer.resize(scaledWidth as Pixels, scaledHeight as Pixels);
+                }
+            } catch (error) {
+                console.warn(
+                    `[RenderingPipeline] WebGPU resize failed: ${
+                        error instanceof Error ? error.message : String(error)
+                    }`
+                );
+            }
+        }
     }
 
     /**
      * Get rendering statistics
      */
-    getStats() {
-        return {
+    getStats(): RenderingPipelineStats {
+        const baseStats: RenderingPipelineStats = {
             viewport: {
                 width: this.width,
                 height: this.height,
@@ -662,7 +907,37 @@ export class RenderingPipeline {
             },
             requestPipeline: this.requestPipeline.getStats(),
             compositor: this.compositor.getStats(),
+            webgpu: {
+                active: this.useWebGPU,
+                available: typeof navigator !== "undefined" && !!navigator.gpu,
+            },
         };
+
+        // Add WebGPU statistics if active
+        if (this.useWebGPU && this.webgpu) {
+            baseStats.webgpu = {
+                ...baseStats.webgpu,
+                offscreen: this.webgpu.getStatistics(),
+            };
+        }
+
+        // Add WebGPU device statistics if available
+        if (this.useWebGPU && this.webgpuDevice && this.webgpuDevice.isReady()) {
+            baseStats.webgpu = {
+                ...baseStats.webgpu,
+                device: this.webgpuDevice.getStats(),
+            };
+        }
+
+        // Add WebGPU layer statistics if available
+        if (this.useWebGPU && this.webgpuLayer) {
+            baseStats.webgpu = {
+                ...baseStats.webgpu,
+                layer: this.webgpuLayer.getStatistics(),
+            };
+        }
+
+        return baseStats;
     }
 
     /**
@@ -773,9 +1048,19 @@ export class RenderingPipeline {
 
     /**
      * Close pipeline and cleanup
+     *
+     * Disposes all resources including WebGPU context, compositor, and request pipeline.
      */
     async close(): Promise<void> {
-        await this.requestPipeline.close();
+        // Dispose WebGPU resources first
+        await this.disposeWebGPU();
+
+        // Only close request pipeline if we own it
+        if (this.ownsRequestPipeline) {
+            await this.requestPipeline.close();
+        }
+
+        // Destroy compositor
         await this.compositor.destroy();
     }
 }
