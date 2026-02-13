@@ -1106,3 +1106,85 @@ pub fn gpu_calculate_aligned_bytes_per_row(width: u32, bytes_per_pixel: u32) -> 
 pub fn gpu_calculate_readback_buffer_size(width: u32, height: u32, bytes_per_pixel: u32) -> u64 {
     crate::gpu::readback::calculate_readback_buffer_size(width, height, bytes_per_pixel)
 }
+
+// ============================================================================
+// GPU BIND GROUPS
+// ============================================================================
+// Functions for creating samplers, texture views, buffers, and bind groups
+
+/// Create a GPU buffer for use in bind groups
+/// device_handle: Handle to the GPU device
+/// size: Size of the buffer in bytes
+/// usage: Buffer usage flags (as u32, see wgpu::BufferUsages)
+/// mapped_at_creation: 1 to map at creation, 0 otherwise
+/// Returns: buffer handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_buffer(device_handle: u64, size: u64, usage: u32, mapped_at_creation: u8) -> u64 {
+    crate::gpu::bind_group::gpu_create_buffer(device_handle, size, usage, mapped_at_creation != 0)
+}
+
+/// Destroy a GPU buffer
+#[deno_bindgen]
+pub fn gpu_destroy_buffer(handle: u64) {
+    crate::gpu::bind_group::gpu_destroy_buffer(handle);
+}
+
+/// Create a texture view from a texture
+/// texture_handle: Handle to the texture
+/// descriptor_json: JSON descriptor for the texture view (can be empty "{}")
+/// Returns: texture view handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_texture_view(texture_handle: u64, descriptor_json: &str) -> u64 {
+    crate::gpu::bind_group::gpu_create_texture_view(texture_handle, descriptor_json)
+}
+
+/// Destroy a texture view
+#[deno_bindgen]
+pub fn gpu_destroy_texture_view(handle: u64) {
+    crate::gpu::bind_group::gpu_destroy_texture_view(handle);
+}
+
+/// Create a sampler
+/// device_handle: Handle to the GPU device
+/// descriptor_json: JSON descriptor with mag_filter, min_filter, address_mode, etc.
+///   Example: {"mag_filter": 1, "min_filter": 1, "address_mode_u": 0}
+///   Filters: 0=Nearest, 1=Linear
+///   Address modes: 0=ClampToEdge, 1=Repeat, 2=MirrorRepeat
+/// Returns: sampler handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_sampler(device_handle: u64, descriptor_json: &str) -> u64 {
+    crate::gpu::bind_group::gpu_create_sampler(device_handle, descriptor_json)
+}
+
+/// Destroy a sampler
+#[deno_bindgen]
+pub fn gpu_destroy_sampler(handle: u64) {
+    crate::gpu::bind_group::gpu_destroy_sampler(handle);
+}
+
+/// Create a bind group
+/// device_handle: Handle to the GPU device
+/// layout_handle: Handle to the bind group layout
+/// entries_json: JSON array of bind group entries
+///   Example: [
+///     {"binding": 0, "buffer": {"handle": 123, "offset": 0, "size": 80}},
+///     {"binding": 1, "texture_view": 456},
+///     {"binding": 2, "sampler": 789}
+///   ]
+/// Returns: bind group handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_bind_group(device_handle: u64, layout_handle: u64, entries_json: &str) -> u64 {
+    crate::gpu::bind_group::gpu_create_bind_group(device_handle, layout_handle, entries_json)
+}
+
+/// Destroy a bind group
+#[deno_bindgen]
+pub fn gpu_destroy_bind_group(handle: u64) {
+    crate::gpu::bind_group::gpu_destroy_bind_group(handle);
+}
+
+/// Clean up all bind group resources (samplers, texture views, buffers, bind groups)
+#[deno_bindgen]
+pub fn gpu_cleanup_bind_groups() {
+    crate::gpu::bind_group::gpu_cleanup_bind_groups();
+}

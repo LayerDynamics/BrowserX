@@ -49,6 +49,15 @@ pub use gpu::readback::{
     calculate_readback_buffer_size,
 };
 
+pub use gpu::bind_group::{
+    gpu_create_sampler, gpu_destroy_sampler,
+    gpu_create_bind_group, gpu_destroy_bind_group,
+    gpu_create_texture_view, gpu_destroy_texture_view,
+    gpu_create_buffer, gpu_destroy_buffer,
+    gpu_cleanup_bind_groups,
+    SamplerDescriptor, BindGroupEntry, BufferBindingEntry,
+};
+
 pub use memory::buffer_pool::{
     buffer_pool_acquire, buffer_pool_add, buffer_pool_clear, buffer_pool_configure,
     buffer_pool_evict, buffer_pool_release, buffer_pool_remove, buffer_pool_stats,

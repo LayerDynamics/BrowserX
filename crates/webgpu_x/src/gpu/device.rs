@@ -48,11 +48,12 @@ fn next_texture_handle() -> u64 {
 lazy_static::lazy_static! {
     static ref INSTANCE: RwLock<Option<wgpu::Instance>> = RwLock::new(None);
     static ref ADAPTERS: RwLock<HashMap<u64, wgpu::Adapter>> = RwLock::new(HashMap::new());
-    /// Storage for GPU devices and their queues (accessible to readback module)
+    /// Storage for GPU devices and their queues (accessible to readback and bind_group modules)
     pub static ref DEVICES: RwLock<HashMap<u64, (wgpu::Device, wgpu::Queue)>> = RwLock::new(HashMap::new());
-    static ref BIND_GROUP_LAYOUTS: RwLock<HashMap<u64, wgpu::BindGroupLayout>> = RwLock::new(HashMap::new());
+    /// Storage for bind group layouts (accessible to bind_group module)
+    pub static ref BIND_GROUP_LAYOUTS: RwLock<HashMap<u64, wgpu::BindGroupLayout>> = RwLock::new(HashMap::new());
     static ref PIPELINE_LAYOUTS: RwLock<HashMap<u64, wgpu::PipelineLayout>> = RwLock::new(HashMap::new());
-    /// Storage for GPU textures (accessible to readback module)
+    /// Storage for GPU textures (accessible to readback and bind_group modules)
     pub static ref TEXTURES: RwLock<HashMap<u64, wgpu::Texture>> = RwLock::new(HashMap::new());
 }
 

@@ -1,3 +1,4 @@
+pub mod bind_group;
 pub mod detection;
 pub mod device;
 pub mod limits;
@@ -23,4 +24,12 @@ pub use readback::{
     gpu_map_and_read_buffer, gpu_destroy_readback_buffer,
     gpu_cleanup_readback_buffers, calculate_aligned_bytes_per_row,
     calculate_readback_buffer_size,
+};
+pub use bind_group::{
+    gpu_create_sampler, gpu_destroy_sampler,
+    gpu_create_bind_group, gpu_destroy_bind_group,
+    gpu_create_texture_view, gpu_destroy_texture_view,
+    gpu_create_buffer, gpu_destroy_buffer,
+    gpu_cleanup_bind_groups,
+    SamplerDescriptor, BindGroupEntry, BufferBindingEntry,
 };
