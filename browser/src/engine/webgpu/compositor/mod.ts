@@ -29,5 +29,8 @@ export {
     type DamageRect as LayerDamageRect,
     type LayerConfig,
     type LayerStatistics,
+    type TileConfig,
+    type TileData,
+    DEFAULT_TILE_SIZE,
     CompositorLayerError,
 } from "./WebGPUCompositorLayer.ts";

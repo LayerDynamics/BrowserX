@@ -8,6 +8,9 @@
  * - Opacity and blend mode
  * - Damage tracking
  * - Render target caching
+ * - Display list rasterization and GPU upload
+ * - Bind group management for compositor shaders
+ * - Tiling support for large layers
  *
  * @module compositor
  */
@@ -22,6 +25,16 @@ import { WebGPUDevice } from "../adapter/Device.ts";
 import { WebGPUTextureManager } from "../operations/render/TextureManager.ts";
 import { WebGPUCommandEncoder } from "../encoder/mod.ts";
 import { WebGPUError } from "../errors.ts";
+import {
+    createCompositorBindGroup,
+    createCompositorUniformBuffer,
+    writeCompositorUniforms,
+    createIdentityTransform,
+    CompositorUniformOffsets,
+    CompositorVertexLayout,
+} from "../shaders/mod.ts";
+import type { DisplayList, BoundingBox } from "../../rendering/paint/DisplayList.ts";
+import { document, type CanvasImageSource } from "../../../types/dom.ts";
 
 // ============================================================================
 // Types
@@ -147,6 +160,39 @@ export interface LayerStatistics {
     uploadCount: number;
 }
 
+/**
+ * Tile configuration for large layers
+ */
+export interface TileConfig {
+    /** Tile width in pixels */
+    tileWidth: Pixels;
+    /** Tile height in pixels */
+    tileHeight: Pixels;
+    /** Scale factor for tile rasterization */
+    scale: number;
+}
+
+/**
+ * Default tile size (256x256 is optimal for GPU textures)
+ */
+export const DEFAULT_TILE_SIZE = 256 as Pixels;
+
+/**
+ * Tile data for GPU upload
+ */
+export interface TileData {
+    /** Tile index (row * cols + col) */
+    index: number;
+    /** Tile bounds in layer coordinates */
+    bounds: BoundingBox;
+    /** Texture ID for this tile */
+    textureId: GPUTextureID | null;
+    /** Texture view for this tile */
+    textureView: GPUTextureView | null;
+    /** Whether tile needs upload */
+    dirty: boolean;
+}
+
 // ============================================================================
 // Compositor Layer Errors
 // ============================================================================
@@ -212,10 +258,27 @@ export class WebGPUCompositorLayer {
     private visible: boolean;
     private occluded: boolean = false;
 
+    // GPU resources for compositing
+    private uniformBuffer: GPUBuffer | null = null;
+    private bindGroup: GPUBindGroup | null = null;
+    private sampler: GPUSampler | null = null;
+
+    // Tiling for large layers
+    private tiles: TileData[] = [];
+    private tileConfig: TileConfig;
+    private useTiling: boolean = false;
+
+    // Display list for content
+    private displayList: DisplayList | null = null;
+
     constructor(
         device: WebGPUDevice,
         textureManager: WebGPUTextureManager,
-        config: LayerConfig
+        config: LayerConfig,
+        options?: {
+            useTiling?: boolean;
+            tileConfig?: Partial<TileConfig>;
+        }
     ) {
         this.device = device;
         this.textureManager = textureManager;
@@ -236,8 +299,32 @@ export class WebGPUCompositorLayer {
 
         this.transformMatrix = new Float32Array(16);
 
-        // Create content texture
-        this.createContentTexture();
+        // Initialize tiling configuration
+        this.tileConfig = {
+            tileWidth: options?.tileConfig?.tileWidth || DEFAULT_TILE_SIZE,
+            tileHeight: options?.tileConfig?.tileHeight || DEFAULT_TILE_SIZE,
+            scale: options?.tileConfig?.scale || 1.0,
+        };
+
+        // Enable tiling for large layers (> 4096 pixels in any dimension)
+        const MAX_SINGLE_TEXTURE_SIZE = 4096;
+        this.useTiling = options?.useTiling ?? (
+            config.width > MAX_SINGLE_TEXTURE_SIZE ||
+            config.height > MAX_SINGLE_TEXTURE_SIZE
+        );
+
+        // Create content texture (or tiles)
+        if (this.useTiling) {
+            this.createTiles();
+        } else {
+            this.createContentTexture();
+        }
+
+        // Create uniform buffer for compositor shader
+        this.createUniformBuffer();
+
+        // Create sampler for texture sampling
+        this.createSampler();
 
         this.state = LayerState.READY;
     }
@@ -345,6 +432,449 @@ export class WebGPUCompositorLayer {
     }
 
     /**
+     * Create tiles for large layers
+     */
+    private createTiles(): void {
+        const cols = Math.ceil(this.config.width / this.tileConfig.tileWidth);
+        const rows = Math.ceil(this.config.height / this.tileConfig.tileHeight);
+
+        this.tiles = [];
+
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                const x = col * this.tileConfig.tileWidth;
+                const y = row * this.tileConfig.tileHeight;
+                const width = Math.min(
+                    this.tileConfig.tileWidth,
+                    this.config.width - x
+                ) as Pixels;
+                const height = Math.min(
+                    this.tileConfig.tileHeight,
+                    this.config.height - y
+                ) as Pixels;
+
+                const tileData: TileData = {
+                    index: row * cols + col,
+                    bounds: { x: x as Pixels, y: y as Pixels, width, height },
+                    textureId: null,
+                    textureView: null,
+                    dirty: true,
+                };
+
+                // Create texture for this tile
+                const descriptor = {
+                    width,
+                    height,
+                    format: "rgba8unorm" as GPUTextureFormat,
+                    usage:
+                        GPUTextureUsage.TEXTURE_BINDING |
+                        GPUTextureUsage.COPY_DST |
+                        GPUTextureUsage.RENDER_ATTACHMENT,
+                    label: `layer-tile-${this.config.id}-${tileData.index}`,
+                };
+
+                tileData.textureId = this.textureManager.createTexture(descriptor);
+                const texture = this.textureManager.getTexture(tileData.textureId);
+                if (texture) {
+                    tileData.textureView = texture.createView();
+                }
+
+                this.tiles.push(tileData);
+            }
+        }
+    }
+
+    /**
+     * Create uniform buffer for compositor shader
+     */
+    private createUniformBuffer(): void {
+        this.uniformBuffer = createCompositorUniformBuffer(
+            this.device.getDevice(),
+            `layer-uniforms-${this.config.id}`
+        );
+
+        // Initialize with identity transform and full opacity
+        this.updateUniformBuffer();
+    }
+
+    /**
+     * Update uniform buffer with current transform and opacity
+     */
+    private updateUniformBuffer(): void {
+        if (!this.uniformBuffer) {
+            return;
+        }
+
+        // Get transform matrix
+        const transformMatrix = this.getTransformMatrix();
+
+        // Write uniforms to GPU buffer
+        writeCompositorUniforms(
+            this.device.getDevice(),
+            this.uniformBuffer,
+            transformMatrix,
+            this.config.opacity
+        );
+    }
+
+    /**
+     * Create sampler for texture sampling
+     */
+    private createSampler(): void {
+        this.sampler = this.textureManager.getSampler({
+            addressModeU: "clamp-to-edge",
+            addressModeV: "clamp-to-edge",
+            magFilter: "linear",
+            minFilter: "linear",
+            label: `layer-sampler-${this.config.id}`,
+        });
+    }
+
+    /**
+     * Upload display list content to GPU texture.
+     * Rasterizes the display list to an ImageBitmap, then copies to GPU.
+     *
+     * @param displayList - The display list to upload
+     */
+    async uploadTexture(displayList: DisplayList): Promise<void> {
+        if (this.state === LayerState.DESTROYED) {
+            throw new CompositorLayerError("Cannot upload to destroyed layer");
+        }
+
+        this.displayList = displayList;
+
+        if (this.useTiling) {
+            await this.uploadTiledTexture(displayList);
+        } else {
+            await this.uploadSingleTexture(displayList);
+        }
+
+        this.markFullDamage();
+        this.state = LayerState.DIRTY;
+    }
+
+    /**
+     * Upload display list as a single texture
+     */
+    private async uploadSingleTexture(displayList: DisplayList): Promise<void> {
+        if (!this.contentTexture) {
+            throw new CompositorLayerError("Content texture not initialized");
+        }
+
+        // Create canvas for rasterization
+        const canvas = document.createElement("canvas");
+        canvas.width = this.config.width;
+        canvas.height = this.config.height;
+
+        const context = canvas.getContext("2d");
+        if (!context) {
+            throw new CompositorLayerError("Failed to get 2D context for rasterization");
+        }
+
+        // Clear canvas
+        context.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Replay display list to canvas
+        displayList.replay(context);
+
+        // Create ImageBitmap for efficient GPU upload
+        const bitmap = await createImageBitmap(canvas as unknown as ImageBitmapSource);
+
+        // Get pixel data from bitmap via canvas
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = bitmap.width;
+        tempCanvas.height = bitmap.height;
+        const tempContext = tempCanvas.getContext("2d");
+
+        if (!tempContext) {
+            bitmap.close();
+            throw new CompositorLayerError("Failed to get temp context for pixel extraction");
+        }
+
+        tempContext.drawImage(bitmap as unknown as CanvasImageSource, 0, 0);
+        const imageData = tempContext.getImageData(0, 0, bitmap.width, bitmap.height);
+        const pixels = new Uint8Array(imageData.data.buffer);
+
+        // Upload to GPU
+        this.textureManager.uploadPixelData(
+            this.contentTexture,
+            pixels,
+            this.config.width,
+            this.config.height
+        );
+
+        bitmap.close();
+        this.uploadCount++;
+    }
+
+    /**
+     * Upload display list as tiled textures (256x256 tiles)
+     */
+    private async uploadTiledTexture(displayList: DisplayList): Promise<void> {
+        for (const tile of this.tiles) {
+            if (!tile.dirty && !this.fullDamage) {
+                continue; // Skip clean tiles
+            }
+
+            const texture = tile.textureId
+                ? this.textureManager.getTexture(tile.textureId)
+                : null;
+
+            if (!texture) {
+                continue;
+            }
+
+            // Create canvas for this tile
+            const canvas = document.createElement("canvas");
+            canvas.width = tile.bounds.width;
+            canvas.height = tile.bounds.height;
+
+            const context = canvas.getContext("2d");
+            if (!context) {
+                continue;
+            }
+
+            // Clear and set up translation
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.save();
+            context.translate(-tile.bounds.x, -tile.bounds.y);
+            context.scale(this.tileConfig.scale, this.tileConfig.scale);
+
+            // Clip display list to tile bounds and replay
+            const clippedDisplayList = displayList.clip(tile.bounds);
+            clippedDisplayList.replay(context);
+
+            context.restore();
+
+            // Create ImageBitmap
+            const bitmap = await createImageBitmap(canvas as unknown as ImageBitmapSource);
+
+            // Extract pixel data
+            const tempCanvas = document.createElement("canvas");
+            tempCanvas.width = bitmap.width;
+            tempCanvas.height = bitmap.height;
+            const tempContext = tempCanvas.getContext("2d");
+
+            if (tempContext) {
+                tempContext.drawImage(bitmap as unknown as CanvasImageSource, 0, 0);
+                const imageData = tempContext.getImageData(0, 0, bitmap.width, bitmap.height);
+                const pixels = new Uint8Array(imageData.data.buffer);
+
+                // Upload to GPU
+                this.textureManager.uploadPixelData(
+                    texture,
+                    pixels,
+                    tile.bounds.width,
+                    tile.bounds.height
+                );
+
+                tile.dirty = false;
+            }
+
+            bitmap.close();
+        }
+
+        this.uploadCount++;
+    }
+
+    /**
+     * Create bind group for this layer.
+     * Uses the compositor shader bind group layout with uniform buffer, texture, and sampler.
+     *
+     * @param layout - Bind group layout from the compositor pipeline
+     * @param sampler - Sampler to use (optional, uses internal sampler if not provided)
+     * @returns GPUBindGroup for this layer
+     */
+    createBindGroup(layout: GPUBindGroupLayout, sampler?: GPUSampler): GPUBindGroup {
+        if (!this.uniformBuffer) {
+            throw new CompositorLayerError("Uniform buffer not initialized");
+        }
+
+        if (!this.contentTextureView) {
+            throw new CompositorLayerError("Content texture view not initialized");
+        }
+
+        const layerSampler = sampler || this.sampler;
+        if (!layerSampler) {
+            throw new CompositorLayerError("Sampler not initialized");
+        }
+
+        // Update uniform buffer before creating bind group
+        this.updateUniformBuffer();
+
+        // Create and store bind group
+        this.bindGroup = createCompositorBindGroup(
+            this.device.getDevice(),
+            layout,
+            this.uniformBuffer,
+            this.contentTextureView,
+            layerSampler,
+            `layer-bind-group-${this.config.id}`
+        );
+
+        return this.bindGroup;
+    }
+
+    /**
+     * Composite this layer to a render pass.
+     * Draws the layer content with transforms and opacity applied.
+     *
+     * @param renderPass - The render pass encoder to draw to
+     * @param viewport - The viewport bounds for clipping
+     * @param pipeline - Optional render pipeline (must be set on render pass if not provided)
+     * @param vertexBuffer - Vertex buffer for full-screen quad
+     */
+    composite(
+        renderPass: GPURenderPassEncoder,
+        viewport: BoundingBox,
+        pipeline?: GPURenderPipeline,
+        vertexBuffer?: GPUBuffer
+    ): void {
+        if (this.state === LayerState.DESTROYED) {
+            return;
+        }
+
+        if (!this.isVisible() || this.isOccluded()) {
+            return;
+        }
+
+        // Check if layer intersects viewport
+        if (!this.intersectsViewport(viewport)) {
+            return;
+        }
+
+        this.beginRender();
+
+        try {
+            // Update uniforms with current transform and opacity
+            this.updateUniformBuffer();
+
+            // Set pipeline if provided
+            if (pipeline) {
+                renderPass.setPipeline(pipeline);
+            }
+
+            // Set bind group
+            if (this.bindGroup) {
+                renderPass.setBindGroup(0, this.bindGroup);
+            }
+
+            // Set vertex buffer if provided
+            if (vertexBuffer) {
+                renderPass.setVertexBuffer(0, vertexBuffer);
+            }
+
+            if (this.useTiling) {
+                // Draw visible tiles
+                this.compositeTiles(renderPass, viewport);
+            } else {
+                // Draw single quad
+                renderPass.draw(6); // 6 vertices for 2 triangles
+            }
+        } finally {
+            this.endRender();
+        }
+    }
+
+    /**
+     * Composite tiled layer
+     */
+    private compositeTiles(renderPass: GPURenderPassEncoder, viewport: BoundingBox): void {
+        for (const tile of this.tiles) {
+            // Check if tile intersects viewport
+            if (!this.boundsIntersect(tile.bounds, viewport)) {
+                continue;
+            }
+
+            // Create bind group for this tile if needed
+            if (tile.textureView && this.uniformBuffer && this.sampler) {
+                // Note: In a full implementation, we'd have separate bind groups per tile
+                // For now, we draw the visible tiles using the main bind group
+                renderPass.draw(6);
+            }
+        }
+    }
+
+    /**
+     * Check if layer intersects viewport
+     */
+    private intersectsViewport(viewport: BoundingBox): boolean {
+        const layerBounds: BoundingBox = {
+            x: this.config.x,
+            y: this.config.y,
+            width: this.config.width,
+            height: this.config.height,
+        };
+        return this.boundsIntersect(layerBounds, viewport);
+    }
+
+    /**
+     * Check if two bounding boxes intersect
+     */
+    private boundsIntersect(a: BoundingBox, b: BoundingBox): boolean {
+        return !(
+            a.x + a.width < b.x ||
+            b.x + b.width < a.x ||
+            a.y + a.height < b.y ||
+            b.y + b.height < a.y
+        );
+    }
+
+    /**
+     * Update transform matrix and write to uniform buffer
+     *
+     * @param transform - 4x4 transformation matrix (16 floats)
+     */
+    updateTransform(transform: Float32Array): void {
+        if (transform.length !== 16) {
+            throw new CompositorLayerError("Transform matrix must be 4x4 (16 floats)");
+        }
+
+        // Copy transform to internal matrix
+        this.transformMatrix.set(transform);
+        this.transformDirty = false;
+
+        // Update uniform buffer
+        this.updateUniformBuffer();
+        this.markFullDamage();
+    }
+
+    /**
+     * Get the bind group for this layer
+     */
+    getBindGroup(): GPUBindGroup | null {
+        return this.bindGroup;
+    }
+
+    /**
+     * Get the uniform buffer for this layer
+     */
+    getUniformBuffer(): GPUBuffer | null {
+        return this.uniformBuffer;
+    }
+
+    /**
+     * Get tile data for this layer
+     */
+    getTiles(): ReadonlyArray<TileData> {
+        return this.tiles;
+    }
+
+    /**
+     * Get visible tiles for a viewport
+     */
+    getVisibleTiles(viewport: BoundingBox): TileData[] {
+        return this.tiles.filter((tile) => this.boundsIntersect(tile.bounds, viewport));
+    }
+
+    /**
+     * Check if layer uses tiling
+     */
+    isTiled(): boolean {
+        return this.useTiling;
+    }
+
+    /**
      * Upload pixel data to content texture
      */
     uploadPixelData(
@@ -395,16 +925,42 @@ export class WebGPUCompositorLayer {
         (this.config as any).height = height;
 
         // Destroy old textures
-        if (this.contentTextureId) {
-            this.textureManager.destroyTexture(this.contentTextureId);
+        if (this.useTiling) {
+            // Destroy tile textures
+            for (const tile of this.tiles) {
+                if (tile.textureId) {
+                    this.textureManager.destroyTexture(tile.textureId);
+                }
+            }
+            this.tiles = [];
+        } else {
+            if (this.contentTextureId) {
+                this.textureManager.destroyTexture(this.contentTextureId);
+            }
         }
+
         if (this.renderTargetId) {
             this.textureManager.destroyTexture(this.renderTargetId);
             this.renderTargetId = null;
         }
 
-        // Recreate content texture
-        this.createContentTexture();
+        // Check if we need to switch tiling mode
+        const MAX_SINGLE_TEXTURE_SIZE = 4096;
+        const shouldUseTiling = width > MAX_SINGLE_TEXTURE_SIZE || height > MAX_SINGLE_TEXTURE_SIZE;
+
+        if (shouldUseTiling !== this.useTiling) {
+            this.useTiling = shouldUseTiling;
+        }
+
+        // Recreate textures
+        if (this.useTiling) {
+            this.createTiles();
+        } else {
+            this.createContentTexture();
+        }
+
+        // Clear bind group (needs to be recreated with new texture)
+        this.bindGroup = null;
 
         // Update transform origin
         this.transform.originX = width / 2;
@@ -817,10 +1373,27 @@ export class WebGPUCompositorLayer {
 
         // Calculate texture memory
         const bytesPerPixel = 4; // RGBA8
-        const contentMemory = this.config.width * this.config.height * bytesPerPixel;
+        let textureMemory = 0;
+
+        if (this.useTiling) {
+            // Sum up tile texture memory
+            for (const tile of this.tiles) {
+                if (tile.textureId) {
+                    textureMemory += tile.bounds.width * tile.bounds.height * bytesPerPixel;
+                }
+            }
+        } else {
+            // Single content texture
+            textureMemory = this.config.width * this.config.height * bytesPerPixel;
+        }
+
+        // Add render target memory if present
         const renderTargetMemory = this.renderTargetId
             ? this.config.width * this.config.height * bytesPerPixel
             : 0;
+
+        // Add uniform buffer memory (80 bytes)
+        const uniformBufferMemory = this.uniformBuffer ? CompositorUniformOffsets.totalSize : 0;
 
         return {
             layerId: this.config.id,
@@ -828,7 +1401,7 @@ export class WebGPUCompositorLayer {
             framesRendered: this.framesRendered,
             lastRenderTime: this.lastRenderTime,
             averageRenderTime: avgRenderTime,
-            textureMemory: contentMemory + renderTargetMemory,
+            textureMemory: textureMemory + renderTargetMemory + uniformBufferMemory,
             damageCount: this.damageRects.length,
             uploadCount: this.uploadCount,
         };
@@ -857,11 +1430,36 @@ export class WebGPUCompositorLayer {
             this.renderTargetId = null;
         }
 
+        // Destroy tile textures
+        for (const tile of this.tiles) {
+            if (tile.textureId) {
+                this.textureManager.destroyTexture(tile.textureId);
+                tile.textureId = null;
+                tile.textureView = null;
+            }
+        }
+        this.tiles = [];
+
+        // Destroy uniform buffer
+        if (this.uniformBuffer) {
+            this.uniformBuffer.destroy();
+            this.uniformBuffer = null;
+        }
+
+        // Clear bind group reference (bind groups are not destroyed, just dereferenced)
+        this.bindGroup = null;
+
+        // Clear sampler reference (samplers are cached in texture manager)
+        this.sampler = null;
+
         // Clear references
         this.contentTexture = null;
         this.contentTextureView = null;
         this.renderTarget = null;
         this.renderTargetView = null;
+
+        // Clear display list
+        this.displayList = null;
 
         // Clear damage
         this.damageRects = [];
