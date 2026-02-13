@@ -1408,8 +1408,88 @@ export class WebGPUCompositorLayer {
     }
 
     // ========================================================================
+    // Configuration Updates
+    // ========================================================================
+
+    /**
+     * Update layer configuration dynamically
+     *
+     * Allows updating mutable configuration properties at runtime.
+     * Some properties (id, type) cannot be changed after construction.
+     *
+     * @param config - Partial configuration to merge with current config
+     */
+    updateConfig(config: Partial<LayerConfig>): void {
+        if (this.state === LayerState.DESTROYED) {
+            throw new CompositorLayerError("Cannot update config of destroyed layer");
+        }
+
+        // Update mutable properties
+        if (config.x !== undefined) {
+            (this.config as LayerConfig).x = config.x;
+        }
+        if (config.y !== undefined) {
+            (this.config as LayerConfig).y = config.y;
+        }
+        if (config.zIndex !== undefined) {
+            (this.config as LayerConfig).zIndex = config.zIndex;
+        }
+        if (config.opacity !== undefined) {
+            const opacity = Math.max(0, Math.min(1, config.opacity));
+            (this.config as LayerConfig).opacity = opacity;
+        }
+        if (config.blendMode !== undefined) {
+            (this.config as LayerConfig).blendMode = config.blendMode;
+        }
+        if (config.visible !== undefined) {
+            this.visible = config.visible;
+            (this.config as LayerConfig).visible = config.visible;
+        }
+        if (config.clipToBounds !== undefined) {
+            (this.config as LayerConfig).clipToBounds = config.clipToBounds;
+        }
+        if (config.backgroundColor !== undefined) {
+            (this.config as LayerConfig).backgroundColor = config.backgroundColor;
+            // Clear texture with new background color
+            if (this.contentTextureView && config.backgroundColor) {
+                this.clearContentTexture(config.backgroundColor);
+            }
+        }
+        if (config.transform !== undefined) {
+            this.setTransform(config.transform);
+        }
+        if (config.parentId !== undefined) {
+            this.parentId = config.parentId || null;
+            (this.config as LayerConfig).parentId = config.parentId;
+        }
+
+        // Handle size changes
+        if (config.width !== undefined || config.height !== undefined) {
+            const newWidth = config.width ?? this.config.width;
+            const newHeight = config.height ?? this.config.height;
+            this.resize(newWidth, newHeight);
+        }
+
+        // Mark as dirty to trigger re-render
+        this.markFullDamage();
+
+        // Update uniform buffer with new values
+        this.updateUniformBuffer();
+    }
+
+    // ========================================================================
     // Cleanup
     // ========================================================================
+
+    /**
+     * Dispose layer and cleanup resources
+     *
+     * Alias for destroy() to match common disposal patterns.
+     * Prefer using this method for consistency with other WebGPU APIs.
+     */
+    dispose(): void {
+        this.destroy();
+    }
 
     /**
      * Destroy layer and cleanup resources
