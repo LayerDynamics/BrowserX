@@ -9,7 +9,7 @@
  * @module webgpu/utils/FrameworkHelpers
  */
 
-import { WebGPUX, type DeviceConfig } from "@webgpu_x";
+import { WebGPUX, type DeviceConfig } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 

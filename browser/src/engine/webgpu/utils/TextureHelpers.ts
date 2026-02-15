@@ -8,7 +8,7 @@
  * @module webgpu/utils/TextureHelpers
  */
 
-import { WebGPUX, type MipSize, type MipSize3D } from "@webgpu_x";
+import { WebGPUX, type MipSize, type MipSize3D } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 

@@ -13,8 +13,7 @@ import { ExecutionStepType } from "../../planner/mod.ts";
 
 /**
  * Test Suite: Query Engine E2E Integration
- * Note: SELECT with DOM field extraction requires defined DOM attributes.
- * Tests use NAVIGATE TO or SET statements for reliable execution.
+ * Tests complete query pipeline including SELECT with DOM field extraction.
  */
 
 Deno.test({
@@ -328,6 +327,62 @@ Deno.test({
   assertExists(result.metadata.ast);
   assertExists(result.metadata.stepsExecuted);
   assertExists(result.metadata.estimatedCost);
+
+  await engine.shutdown();
+});
+
+// ============================================================================
+// SELECT Query Tests - Verify full field extraction pipeline
+// ============================================================================
+
+Deno.test({
+  name: "E2E: SELECT title FROM URL extracts page title",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const engine = new QueryEngine();
+  await engine.initialize({});
+
+  const result = await engine.execute(
+    'SELECT title FROM "https://example.com"',
+    { timeout: 15000 },
+  );
+
+  assertExists(result);
+  assertExists(result.data);
+
+  // Parse JSON result
+  const parsed = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
+  const rows = Array.isArray(parsed) ? parsed : parsed.rows || parsed.data || [parsed];
+
+  assertEquals(rows.length > 0, true, "Should return at least one row");
+  assertEquals(rows[0].title, "Example Domain", "Should extract page title");
+
+  await engine.shutdown();
+});
+
+Deno.test({
+  name: "E2E: SELECT title, url FROM URL extracts multiple fields",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const engine = new QueryEngine();
+  await engine.initialize({});
+
+  const result = await engine.execute(
+    'SELECT title, url FROM "https://example.com"',
+    { timeout: 15000 },
+  );
+
+  assertExists(result);
+  assertExists(result.data);
+
+  const parsed = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
+  const rows = Array.isArray(parsed) ? parsed : parsed.rows || parsed.data || [parsed];
+
+  assertEquals(rows.length > 0, true, "Should return at least one row");
+  assertExists(rows[0].title, "Should have title field");
+  assertExists(rows[0].url, "Should have url field");
 
   await engine.shutdown();
 });

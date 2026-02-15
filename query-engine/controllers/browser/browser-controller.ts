@@ -20,18 +20,42 @@ import {
 } from "../../executor/expression-evaluator.ts";
 
 /**
+ * Query DOM options
+ */
+export interface QueryDOMOptions {
+  signal?: AbortSignal;
+}
+
+/**
+ * Click options
+ */
+export interface ClickOptions {
+  signal?: AbortSignal;
+}
+
+/**
+ * Evaluate options
+ */
+export interface EvaluateOptions {
+  signal?: AbortSignal;
+}
+
+/**
  * Browser page interface
+ * Aligned with browser/src/api/BrowserPage.ts implementation
  */
 export interface BrowserPage {
   navigate(url: URLString, options?: NavigateOptions): Promise<void>;
-  query(selector: string, type?: "css" | "xpath"): Promise<DOMElement[]>;
-  click(selector: string, type?: "css" | "xpath"): Promise<void>;
+  query(selector: string, type?: "css" | "xpath", options?: QueryDOMOptions): Promise<DOMElement[]>;
+  click(selector: string, type?: "css" | "xpath", options?: ClickOptions): Promise<void>;
   type(selector: string, text: string, options?: TypeOptions): Promise<void>;
   wait(options: WaitOptions): Promise<void>;
   screenshot(options?: ScreenshotOptions): Promise<Uint8Array>;
   pdf(options?: PDFOptions): Promise<Uint8Array>;
-  evaluate(script: string, args?: unknown[]): Promise<unknown>;
+  evaluate(script: string, args?: unknown[], options?: EvaluateOptions): Promise<unknown>;
   close(): Promise<void>;
+  getCurrentURL(): string | undefined;
+  getMetadata?(): Promise<Record<string, unknown>>;
 }
 
 /**
@@ -52,6 +76,7 @@ export interface DOMElement {
 export interface NavigateOptions {
   waitFor?: "load" | "domcontentloaded" | "networkidle" | string;
   timeout?: DurationMs;
+  signal?: AbortSignal;
 }
 
 /**
@@ -60,6 +85,7 @@ export interface NavigateOptions {
 export interface TypeOptions {
   clear?: boolean;
   delay?: DurationMs;
+  signal?: AbortSignal;
 }
 
 /**
@@ -72,6 +98,7 @@ export interface WaitOptions {
   selectorType?: "css" | "xpath";
   condition?: string;
   timeout?: DurationMs;
+  signal?: AbortSignal;
 }
 
 /**
@@ -82,20 +109,25 @@ export interface ScreenshotOptions {
   selector?: string;
   format?: "png" | "jpeg";
   quality?: number;
+  signal?: AbortSignal;
 }
 
 /**
  * PDF options
  */
 export interface PDFOptions {
-  format?: "A4" | "Letter";
-  landscape?: boolean;
+  format?: "A4" | "Letter" | "Legal" | "A3";
+  orientation?: "portrait" | "landscape";
+  landscape?: boolean; // deprecated - use orientation instead
   margin?: {
     top?: number;
     right?: number;
     bottom?: number;
     left?: number;
   };
+  scale?: number;
+  printBackground?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -104,6 +136,13 @@ export interface PDFOptions {
 export interface BrowserEngine {
   newPage(): Promise<BrowserPage>;
   close(): Promise<void>;
+}
+
+/**
+ * Execution options with signal support
+ */
+export interface ExecuteOptions {
+  signal?: AbortSignal;
 }
 
 /**
@@ -118,19 +157,33 @@ export class BrowserController {
   }
 
   /**
+   * Check if signal is aborted and throw if so
+   */
+  private checkAbort(options?: ExecuteOptions): void {
+    if (options?.signal?.aborted) {
+      throw options.signal.reason || new Error("Operation aborted");
+    }
+  }
+
+  /**
    * Execute navigation step
    */
-  async executeNavigate(step: NavigateStep): Promise<unknown> {
+  async executeNavigate(step: NavigateStep, options?: ExecuteOptions): Promise<unknown> {
+    this.checkAbort(options);
+
     if (!this.currentPage) {
       this.currentPage = await this.createPage();
     }
 
-    const options: NavigateOptions = {
+    const navigateOptions: NavigateOptions = {
       waitFor: step.options?.waitFor || "load",
       timeout: step.options?.timeout || 30000,
+      signal: options?.signal,
     };
 
-    await this.currentPage.navigate(step.url, options);
+    await this.currentPage.navigate(step.url, navigateOptions);
+
+    this.checkAbort(options);
 
     // If screenshot requested
     if (step.options?.screenshot) {
@@ -144,7 +197,9 @@ export class BrowserController {
   /**
    * Execute DOM query step
    */
-  async executeDOMQuery(step: DOMQueryStep): Promise<unknown> {
+  async executeDOMQuery(step: DOMQueryStep, options?: ExecuteOptions): Promise<unknown> {
+    this.checkAbort(options);
+
     if (!this.currentPage) {
       throw new Error("No page available for DOM query");
     }
@@ -152,10 +207,17 @@ export class BrowserController {
     // Query elements
     const elements = await this.currentPage.query(step.selector, step.selectorType);
 
+    this.checkAbort(options);
+
     // Extract fields from elements
-    const results = [];
+    const results: Record<string, unknown>[] = [];
+
+    // Get page metadata once before the loop
+    const metadata = await this.currentPage.getMetadata?.() ?? {};
 
     for (const element of elements) {
+      this.checkAbort(options);
+
       const extracted: Record<string, unknown> = {};
 
       // Create evaluation context with element data
@@ -172,8 +234,12 @@ export class BrowserController {
         }
       }
 
+      // Merge page metadata (lower priority) with element data (higher priority)
       const evalContext: EvaluationContext = {
-        variables: new Map(Object.entries(elementData)),
+        variables: new Map([
+          ...Object.entries(metadata),      // page-level: title, description, url
+          ...Object.entries(elementData),   // element-level: text, attributes (overrides)
+        ]),
         functions: new Map(),
       };
 
@@ -194,12 +260,16 @@ export class BrowserController {
   /**
    * Execute click step
    */
-  async executeClick(step: ClickStep): Promise<void> {
+  async executeClick(step: ClickStep, options?: ExecuteOptions): Promise<void> {
+    this.checkAbort(options);
+
     if (!this.currentPage) {
       throw new Error("No page available for click");
     }
 
     await this.currentPage.click(step.selector, step.selectorType);
+
+    this.checkAbort(options);
 
     if (step.waitForNavigation) {
       await this.currentPage.wait({
@@ -212,78 +282,89 @@ export class BrowserController {
   /**
    * Execute type step
    */
-  async executeType(step: TypeStep): Promise<void> {
+  async executeType(step: TypeStep, options?: ExecuteOptions): Promise<void> {
+    this.checkAbort(options);
+
     if (!this.currentPage) {
       throw new Error("No page available for typing");
     }
 
-    const options: TypeOptions = {
+    const typeOptions: TypeOptions = {
       clear: step.clear,
       delay: step.delay,
     };
 
-    await this.currentPage.type(step.selector, step.text, options);
+    await this.currentPage.type(step.selector, step.text, typeOptions);
   }
 
   /**
    * Execute wait step
    */
-  async executeWait(step: WaitStep): Promise<void> {
+  async executeWait(step: WaitStep, options?: ExecuteOptions): Promise<void> {
+    this.checkAbort(options);
+
     if (!this.currentPage) {
       throw new Error("No page available for wait");
     }
 
-    const options: WaitOptions = {
+    const waitOptions: WaitOptions = {
       type: step.waitType,
       duration: step.duration,
       selector: step.selector,
       selectorType: "css",
       condition: step.condition,
       timeout: 30000,
+      signal: options?.signal,
     };
 
-    await this.currentPage.wait(options);
+    await this.currentPage.wait(waitOptions);
   }
 
   /**
    * Execute screenshot step
    */
-  async executeScreenshot(step: ScreenshotStep): Promise<Uint8Array> {
+  async executeScreenshot(step: ScreenshotStep, options?: ExecuteOptions): Promise<Uint8Array> {
+    this.checkAbort(options);
+
     if (!this.currentPage) {
       throw new Error("No page available for screenshot");
     }
 
-    const options: ScreenshotOptions = {
+    const screenshotOptions: ScreenshotOptions = {
       fullPage: step.fullPage,
       selector: step.selector,
       format: step.format,
       quality: step.quality,
     };
 
-    return await this.currentPage.screenshot(options);
+    return await this.currentPage.screenshot(screenshotOptions);
   }
 
   /**
    * Execute PDF step
    */
-  async executePDF(step: PDFStep): Promise<Uint8Array> {
+  async executePDF(step: PDFStep, options?: ExecuteOptions): Promise<Uint8Array> {
+    this.checkAbort(options);
+
     if (!this.currentPage) {
       throw new Error("No page available for PDF generation");
     }
 
-    const options: PDFOptions = {
+    const pdfOptions: PDFOptions = {
       format: step.format,
       landscape: step.landscape,
       margin: step.margin,
     };
 
-    return await this.currentPage.pdf(options);
+    return await this.currentPage.pdf(pdfOptions);
   }
 
   /**
    * Execute JavaScript evaluation step
    */
-  async executeEvaluateJS(step: EvaluateJSStep): Promise<unknown> {
+  async executeEvaluateJS(step: EvaluateJSStep, options?: ExecuteOptions): Promise<unknown> {
+    this.checkAbort(options);
+
     if (!this.currentPage) {
       throw new Error("No page available for JavaScript evaluation");
     }

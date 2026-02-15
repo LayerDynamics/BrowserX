@@ -4,6 +4,7 @@
  */
 
 import { assertEquals, assertExists, assert, assertThrows } from "@std/assert";
+import { DataType } from "../../schema/types.ts";
 
 // Import string functions
 import {
@@ -117,7 +118,7 @@ Deno.test({
     assertEquals(UPPER.signature.category, FunctionCategory.STRING);
     assertEquals(UPPER.signature.minArgs, 1);
     assertEquals(UPPER.signature.maxArgs, 1);
-    assertEquals(UPPER.signature.returnType, "string");
+    assertEquals(UPPER.signature.returnType, DataType.STRING);
     assertEquals(UPPER.signature.isAsync, false);
   },
 });
@@ -309,7 +310,7 @@ Deno.test({
   fn() {
     assertEquals(ABS.signature.name, "ABS");
     assertEquals(ABS.signature.category, FunctionCategory.MATH);
-    assertEquals(ABS.signature.returnType, "number");
+    assertEquals(ABS.signature.returnType, DataType.NUMBER);
   },
 });
 
@@ -722,7 +723,7 @@ Deno.test({
     assertEquals(NOW.signature.name, "NOW");
     assertEquals(NOW.signature.minArgs, 0);
     assertEquals(NOW.signature.maxArgs, 0);
-    assertEquals(NOW.signature.returnType, "number");
+    assertEquals(NOW.signature.returnType, DataType.NUMBER);
     assertEquals(NOW.signature.isAsync, false);
   },
 });
@@ -777,7 +778,7 @@ Deno.test({
     assertEquals(TEXT.signature.category, FunctionCategory.DOM);
     assertEquals(TEXT.signature.minArgs, 1);
     assertEquals(TEXT.signature.maxArgs, 1);
-    assertEquals(TEXT.signature.returnType, "string");
+    assertEquals(TEXT.signature.returnType, DataType.STRING);
     assertEquals(TEXT.signature.isAsync, true);
     assertExists(TEXT.signature.description);
     assertExists(TEXT.signature.examples);
@@ -791,7 +792,7 @@ Deno.test({
     assertEquals(HTML.signature.category, FunctionCategory.DOM);
     assertEquals(HTML.signature.minArgs, 1);
     assertEquals(HTML.signature.maxArgs, 1);
-    assertEquals(HTML.signature.returnType, "string");
+    assertEquals(HTML.signature.returnType, DataType.STRING);
     assertEquals(HTML.signature.isAsync, true);
   },
 });
@@ -803,7 +804,7 @@ Deno.test({
     assertEquals(ATTR.signature.category, FunctionCategory.DOM);
     assertEquals(ATTR.signature.minArgs, 2);
     assertEquals(ATTR.signature.maxArgs, 2);
-    assertEquals(ATTR.signature.returnType, "string");
+    assertEquals(ATTR.signature.returnType, DataType.STRING);
     assertEquals(ATTR.signature.isAsync, true);
   },
 });
@@ -815,7 +816,7 @@ Deno.test({
     assertEquals(COUNT.signature.category, FunctionCategory.DOM);
     assertEquals(COUNT.signature.minArgs, 1);
     assertEquals(COUNT.signature.maxArgs, 1);
-    assertEquals(COUNT.signature.returnType, "number");
+    assertEquals(COUNT.signature.returnType, DataType.NUMBER);
     assertEquals(COUNT.signature.isAsync, true);
   },
 });
@@ -827,7 +828,7 @@ Deno.test({
     assertEquals(EXISTS.signature.category, FunctionCategory.DOM);
     assertEquals(EXISTS.signature.minArgs, 1);
     assertEquals(EXISTS.signature.maxArgs, 1);
-    assertEquals(EXISTS.signature.returnType, "boolean");
+    assertEquals(EXISTS.signature.returnType, DataType.BOOLEAN);
     assertEquals(EXISTS.signature.isAsync, true);
   },
 });
@@ -960,7 +961,7 @@ Deno.test({
     assertEquals(SCREENSHOT.signature.category, FunctionCategory.UTILITY);
     assertEquals(SCREENSHOT.signature.minArgs, 0);
     assertEquals(SCREENSHOT.signature.maxArgs, 1);
-    assertEquals(SCREENSHOT.signature.returnType, "buffer");
+    assertEquals(SCREENSHOT.signature.returnType, DataType.BUFFER);
     assertEquals(SCREENSHOT.signature.isAsync, true);
   },
 });
@@ -975,7 +976,7 @@ Deno.test({
     assertEquals(PDF.signature.category, FunctionCategory.UTILITY);
     assertEquals(PDF.signature.minArgs, 0);
     assertEquals(PDF.signature.maxArgs, 1);
-    assertEquals(PDF.signature.returnType, "buffer");
+    assertEquals(PDF.signature.returnType, DataType.BUFFER);
     assertEquals(PDF.signature.isAsync, true);
   },
 });

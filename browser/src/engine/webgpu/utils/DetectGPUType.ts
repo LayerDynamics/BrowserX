@@ -7,7 +7,7 @@
  * @module utils
  */
 
-import { WebGPUX, GPUVendor } from "@webgpu_x";
+import { WebGPUX, GPUVendor } from "@browserx/webgpu_x";
 
 // ============================================================================
 // Lazy Initialization

@@ -9,7 +9,7 @@
  * @module webgpu/utils/TensorHelpers
  */
 
-import { WebGPUX, TensorDType, TensorAccess, type TensorMeta } from "@webgpu_x";
+import { WebGPUX, TensorDType, TensorAccess, type TensorMeta } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 

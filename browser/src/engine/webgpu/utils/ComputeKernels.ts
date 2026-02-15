@@ -9,7 +9,7 @@
  * @module webgpu/utils/ComputeKernels
  */
 
-import { WebGPUX, KernelOperation } from "@webgpu_x";
+import { WebGPUX, KernelOperation } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 

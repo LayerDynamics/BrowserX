@@ -51,7 +51,8 @@ Deno.test("QueryExecutionState - all values are unique", () => {
 });
 
 Deno.test("QueryExecutionState - can be used in switch statements", () => {
-  const state = QueryExecutionState.EXECUTING;
+  function getState(): QueryExecutionState { return QueryExecutionState.EXECUTING; }
+  const state = getState();
   let result = "";
 
   switch (state) {
@@ -242,7 +243,8 @@ Deno.test("OutputFormat - STREAM is valid", () => {
 });
 
 Deno.test("OutputFormat - can be used in switch", () => {
-  const format: OutputFormat = "JSON";
+  function getFormat(): OutputFormat { return "JSON"; }
+  const format = getFormat();
   let result = "";
 
   switch (format) {

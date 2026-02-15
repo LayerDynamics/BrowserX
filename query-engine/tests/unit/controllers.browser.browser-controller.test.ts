@@ -97,6 +97,7 @@ function createMockBrowserPage(options: {
     pdf: async (_opts?: PDFOptions) => pdfResult,
     evaluate: async (_script: string, _args?: unknown[]) => evaluateResult,
     close: async () => {},
+    getCurrentURL: () => undefined,
   };
 }
 
@@ -1209,6 +1210,7 @@ Deno.test("BrowserController - complex workflow: navigate, query, click, type", 
     pdf: async () => new Uint8Array(),
     evaluate: async () => undefined,
     close: async () => {},
+    getCurrentURL: () => undefined,
   };
 
   const mockEngine = createMockBrowserEngine(mockPage);

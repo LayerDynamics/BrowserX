@@ -10,6 +10,7 @@ import { QueryOptimizer } from "../optimizer/mod.ts";
 import { ExecutionPlanner } from "../planner/mod.ts";
 import { QueryExecutor } from "../executor/mod.ts";
 import { ResultFormatter } from "../formatter/formatter.ts";
+import { type FunctionRegistry, globalRegistry } from "../schema/registry.ts";
 import {
   OutputFormat,
   QueryExecutionState,
@@ -20,6 +21,8 @@ import {
 } from "../types/mod.ts";
 import { ProxyController, ProxyConfig } from "../controllers/proxy/proxy-controller.ts";
 import { Runtime } from "../../proxy-engine/core/runtime/mod.ts";
+import { BrowserController } from "../controllers/browser/browser-controller.ts";
+import { BrowserEngine } from "../../browser/src/api/mod.ts";
 
 /**
  * Query Engine configuration
@@ -155,6 +158,26 @@ export interface IQueryEngine {
    * Get engine metrics
    */
   getMetrics(): QueryEngineMetrics;
+
+  /**
+   * Get all tracked queries
+   */
+  getQueries(): Map<QueryID, QueryStatus>;
+
+  /**
+   * Check if engine is initialized
+   */
+  isInitialized(): boolean;
+
+  /**
+   * Get the proxy controller (if proxy is enabled)
+   */
+  getProxyController(): ProxyController | undefined;
+
+  /**
+   * Get the proxy runtime (if proxy is enabled)
+   */
+  getRuntime(): Runtime | undefined;
 }
 
 /**
@@ -197,6 +220,7 @@ export class QueryEngine implements IQueryEngine {
   private metrics: QueryEngineMetrics;
   private runtime?: Runtime;
   private proxyController?: ProxyController;
+  private browserController?: BrowserController;
 
   constructor(config: QueryEngineConfig = {}) {
     this.config = config;
@@ -317,10 +341,32 @@ export class QueryEngine implements IQueryEngine {
 
     const queryId = this.generateQueryId();
     const startTime = performance.now();
+    const timeout = options.timeout ?? 30000;
 
     // Create abort controller for cancellation
     const abortController = new AbortController();
     this.abortControllers.set(queryId, abortController);
+
+    // If an external signal is provided (e.g., from MCP withTimeout), link it to our controller
+    // When the external signal aborts, we abort our internal controller
+    let externalAbortHandler: (() => void) | undefined;
+    if (options.signal) {
+      externalAbortHandler = () => {
+        abortController.abort(options.signal?.reason || new Error("Query aborted by external signal"));
+      };
+      options.signal.addEventListener("abort", externalAbortHandler);
+
+      // Check if already aborted
+      if (options.signal.aborted) {
+        abortController.abort(options.signal.reason || new Error("Query aborted by external signal"));
+      }
+    }
+
+    // Only set up internal timeout if no external signal is provided
+    // When MCP provides a signal, it handles timeout externally
+    const timeoutId = options.signal ? undefined : setTimeout(() => {
+      abortController.abort(new Error(`Query timed out after ${timeout}ms`));
+    }, timeout);
 
     try {
       // Update metrics
@@ -400,8 +446,12 @@ export class QueryEngine implements IQueryEngine {
 
       // 6. Execution - Execute the plan
       const executionStart = performance.now();
-      const executor = new QueryExecutor(undefined, this.proxyController);
-      const executionResult = await executor.execute(plan);
+      if (!this.browserController) {
+        const browserEngine = new BrowserEngine();
+        this.browserController = new BrowserController(browserEngine);
+      }
+      const executor = new QueryExecutor(this.browserController, this.proxyController);
+      const executionResult = await executor.execute(plan, { signal: abortController.signal });
       const executionTime = performance.now() - executionStart;
 
       // Check for execution errors
@@ -459,7 +509,16 @@ export class QueryEngine implements IQueryEngine {
 
       throw error;
     } finally {
-      // Cleanup abort controller
+      // Cleanup timeout and abort controller
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+
+      // Remove external signal listener if we added one
+      if (options.signal && externalAbortHandler) {
+        options.signal.removeEventListener("abort", externalAbortHandler);
+      }
+
       this.abortControllers.delete(queryId);
     }
   }
@@ -598,6 +657,12 @@ export class QueryEngine implements IQueryEngine {
     // Clear proxy controller
     this.proxyController = undefined;
 
+    // Close browser controller if it was created
+    if (this.browserController) {
+      await this.browserController.closePage();
+      this.browserController = undefined;
+    }
+
     // Mark as not initialized
     this.initialized = false;
   }
@@ -649,6 +714,13 @@ export class QueryEngine implements IQueryEngine {
    */
   getRuntime(): Runtime | undefined {
     return this.runtime;
+  }
+
+  /**
+   * Get the function registry for registering/unregistering custom functions
+   */
+  getFunctionRegistry(): FunctionRegistry {
+    return globalRegistry;
   }
 
   /**

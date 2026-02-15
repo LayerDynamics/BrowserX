@@ -531,9 +531,10 @@ Deno.test("DataType - can be serialized to JSON", () => {
 });
 
 Deno.test("DataType - can be compared for equality", () => {
-  const type1 = DataType.STRING;
-  const type2 = DataType.STRING;
-  const type3 = DataType.NUMBER;
+  function getType(t: DataType): DataType { return t; }
+  const type1 = getType(DataType.STRING);
+  const type2 = getType(DataType.STRING);
+  const type3 = getType(DataType.NUMBER);
 
   assertEquals(type1 === type2, true);
   assertEquals(type1 === type3, false);

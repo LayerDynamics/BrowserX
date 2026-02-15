@@ -9,7 +9,7 @@
  * @module webgpu/utils/ShaderHelpers
  */
 
-import { WebGPUX, type ShaderCacheStats, type ShaderSource } from "@webgpu_x";
+import { WebGPUX, type ShaderCacheStats, type ShaderSource } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 

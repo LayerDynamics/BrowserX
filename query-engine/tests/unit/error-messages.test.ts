@@ -25,7 +25,7 @@ import {
 // ============================================================================
 
 Deno.test("ExtendedError - basic error with message", () => {
-  const error: ExtendedError = new Error("Test error");
+  const error = new Error("Test error") as ExtendedError;
 
   assertEquals(error.message, "Test error");
   assertExists(error.stack);

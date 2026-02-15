@@ -1,15 +1,18 @@
 {
   "workspace": [
     "./browser",
+    "./dev-tools",
     "./proxy-engine",
     "./query-engine",
     "./mcp-server",
-    "./runtime"
+    "./runtime",
+    "./crates/webgpu_x"
   ],
   "nodeModulesDir": "none",
   "lock": false,
   "imports": {
-    "@std/assert": "jsr:@std/assert@^1.0.16"
+    "@std/assert": "jsr:@std/assert@^1.0.16",
+    "@browserx/webgpu_x": "./crates/webgpu_x/webgpu_x.ts"
   },
   "tasks": {
     "// Browser tasks": "",
@@ -61,6 +64,14 @@
     "runtime:fmt": "cd runtime && deno task fmt",
     "runtime:fmt:check": "cd runtime && deno task fmt:check",
 
+    "// DevTools tasks": "",
+    "devtools:check": "cd dev-tools && deno task check",
+    "devtools:check:watch": "cd dev-tools && deno task check:watch",
+    "devtools:test": "cd dev-tools && deno task test",
+    "devtools:lint": "cd dev-tools && deno task lint",
+    "devtools:fmt": "cd dev-tools && deno task fmt",
+    "devtools:fmt:check": "cd dev-tools && deno task fmt:check",
+
     "// MCP Server tasks": "",
     "mcp:start": "cd mcp-server && deno task start",
     "mcp:start:http": "cd mcp-server && deno task start:http",
@@ -73,14 +84,15 @@
     "mcp:server:restart": "./mcp-server/browserx-mcp restart",
     "mcp:server:status": "./mcp-server/browserx-mcp status",
     "mcp:server:logs": "./mcp-server/browserx-mcp logs",
+    "mcp:install-plugin": "./browserx-claude-plugin/install.sh",
 
     "// Aggregate tasks - run across all workspaces": "",
-    "check:all": "deno task browser:check && deno task proxy:check && deno task query:check && deno task runtime:check && deno task mcp:check",
-    "test:all": "deno task browser:test && deno task proxy:test && deno task query:test && deno task runtime:test",
-    "lint:all": "deno task browser:lint && deno task proxy:lint && deno task query:lint && deno task runtime:lint",
+    "check:all": "deno task browser:check && deno task devtools:check && deno task proxy:check && deno task query:check && deno task runtime:check && deno task mcp:check",
+    "test:all": "deno task browser:test && deno task devtools:test && deno task proxy:test && deno task query:test && deno task runtime:test",
+    "lint:all": "deno task browser:lint && deno task devtools:lint && deno task proxy:lint && deno task query:lint && deno task runtime:lint",
     "lint:fix:all": "cd browser && deno task lint && cd ../proxy-engine && deno task lint && cd ../query-engine && deno task lint:fix && cd ../runtime && deno task lint:fix",
-    "fmt:all": "deno task browser:fmt && deno task proxy:fmt && deno task query:fmt && deno task runtime:fmt",
-    "fmt:check:all": "deno task browser:fmt:check && deno task proxy:fmt:check && deno task query:fmt:check && deno task runtime:fmt:check",
+    "fmt:all": "deno task browser:fmt && deno task devtools:fmt && deno task proxy:fmt && deno task query:fmt && deno task runtime:fmt",
+    "fmt:check:all": "deno task browser:fmt:check && deno task devtools:fmt:check && deno task proxy:fmt:check && deno task query:fmt:check && deno task runtime:fmt:check",
 
     "// Convenience tasks": "",
     "check": "deno task check:all",

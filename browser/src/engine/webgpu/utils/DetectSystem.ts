@@ -7,7 +7,7 @@
  * @module utils
  */
 
-import { WebGPUX, MetalFamily, ROCmArchitecture } from "@webgpu_x";
+import { WebGPUX, MetalFamily, ROCmArchitecture } from "@browserx/webgpu_x";
 
 // ============================================================================
 // Lazy Initialization

@@ -1,5 +1,5 @@
 {
-  "name": "@webgpu_x",
+  "name": "@browserx/webgpu_x",
   "version": "0.1.0",
   "exports": "./webgpu_x.ts",
   "compilerOptions": {

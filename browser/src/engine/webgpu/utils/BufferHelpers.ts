@@ -9,7 +9,7 @@
  * @module webgpu/utils/BufferHelpers
  */
 
-import { WebGPUX, type StagingWrite, type StagingBeltStats } from "@webgpu_x";
+import { WebGPUX, type StagingWrite, type StagingBeltStats } from "@browserx/webgpu_x";
 
 // Lazy singleton
 let webgpuXInstance: WebGPUX | null = null;

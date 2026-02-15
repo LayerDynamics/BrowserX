@@ -257,19 +257,26 @@ export class ExecutionPlanner {
   private generateSelectSteps(stmt: SelectStatement, dependencies: string[]): string {
     const steps: string[] = [...dependencies];
 
-    // If source is a URL, navigate first
+    // If source is a URL, navigate first (unless it's actually a CSS selector)
+    let cssSelectorSource: string | null = null;
     if (stmt.source.type === "URL") {
-      const navStep: NavigateStep = {
-        id: this.generateStepId(),
-        type: ExecutionStepType.NAVIGATE,
-        url: stmt.source.value as string,
-        estimatedCost: 500,
-        dependencies: [...steps],  // Copy to avoid circular reference when steps is mutated
-        cacheable: true,
-        cacheKey: `nav:${stmt.source.value}`,
-      };
-      this.currentSteps.push(navStep);
-      steps.push(navStep.id);
+      const sourceValue = stmt.source.value as string;
+      if (this.isCSSSelector(sourceValue)) {
+        // CSS selector source — skip NAVIGATE, use selector directly in DOM_QUERY
+        cssSelectorSource = sourceValue;
+      } else {
+        const navStep: NavigateStep = {
+          id: this.generateStepId(),
+          type: ExecutionStepType.NAVIGATE,
+          url: sourceValue,
+          estimatedCost: 500,
+          dependencies: [...steps],  // Copy to avoid circular reference when steps is mutated
+          cacheable: true,
+          cacheKey: `nav:${sourceValue}`,
+        };
+        this.currentSteps.push(navStep);
+        steps.push(navStep.id);
+      }
     } else if (stmt.source.type === "SUBQUERY") {
       // Execute subquery first
       const subqueryStepId = this.generateSteps(stmt.source.value as Statement, steps);
@@ -282,7 +289,7 @@ export class ExecutionPlanner {
     const domQueryStep: DOMQueryStep = {
       id: this.generateStepId(),
       type: ExecutionStepType.DOM_QUERY,
-      selector: this.extractSelector(stmt),
+      selector: cssSelectorSource || this.extractSelector(stmt),
       selectorType: "css",
       extractFields: stmt.fields.map((f) => ({
         name: f.alias || f.name,
@@ -925,6 +932,24 @@ export class ExecutionPlanner {
   /**
    * Extract selector from SELECT statement
    */
+  /**
+   * Check if a string looks like a CSS selector rather than a URL
+   */
+  private isCSSSelector(value: string): boolean {
+    // CSS selectors start with ., #, or [
+    if (value.includes("://")) return false;
+    if (value.startsWith(".") || value.startsWith("#") || value.startsWith("[")) return true;
+    // Common HTML tag names (used as selectors)
+    const tagNames = [
+      "div", "span", "p", "a", "ul", "ol", "li", "table", "tr", "td", "th",
+      "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "nav",
+      "header", "footer", "main", "form", "input", "button", "select",
+      "textarea", "img", "body",
+    ];
+    const firstToken = value.split(/[\s>+~]/, 1)[0].toLowerCase();
+    return tagNames.includes(firstToken);
+  }
+
   private extractSelector(stmt: SelectStatement): string {
     // Priority 1: Check if source contains selector hint
     if (stmt.source.type === "URL" && typeof stmt.source.value === "string") {

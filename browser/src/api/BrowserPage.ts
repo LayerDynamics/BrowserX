@@ -15,6 +15,8 @@ import { Browser } from "../main.ts";
 export interface NavigateOptions {
     waitFor?: "load" | "domcontentloaded" | "networkidle" | string;
     timeout?: number;
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal;
 }
 
 /**
@@ -23,6 +25,8 @@ export interface NavigateOptions {
 export interface TypeOptions {
     clear?: boolean;
     delay?: number;
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal;
 }
 
 /**
@@ -35,6 +39,8 @@ export interface WaitOptions {
     selectorType?: "css" | "xpath";
     condition?: string;
     timeout?: number;
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal;
 }
 
 /**
@@ -45,6 +51,8 @@ export interface ScreenshotOptions {
     selector?: string;
     format?: "png" | "jpeg";
     quality?: number;
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal;
 }
 
 /**
@@ -64,6 +72,32 @@ export interface PDFOptions {
     displayHeaderFooter?: boolean;
     headerTemplate?: string;
     footerTemplate?: string;
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal;
+}
+
+/**
+ * Click options
+ */
+export interface ClickOptions {
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal;
+}
+
+/**
+ * Evaluate options
+ */
+export interface EvaluateOptions {
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal;
+}
+
+/**
+ * Query DOM options
+ */
+export interface QueryDOMOptions {
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal;
 }
 
 /**
@@ -131,6 +165,13 @@ export class BrowserPage {
      * Navigate to URL
      */
     async navigate(url: string, options?: NavigateOptions): Promise<void> {
+        const signal = options?.signal;
+
+        // Check if already aborted before starting
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
+
         this.currentURL = url;
         await this.browser.navigate(url);
 
@@ -138,6 +179,11 @@ export class BrowserPage {
         const renderingPipeline = this.browser.getRenderingPipeline();
         if (renderingPipeline.lastRenderResult) {
             this.currentRenderingResult = renderingPipeline.lastRenderResult;
+        }
+
+        // Check if aborted after navigation
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
         }
 
         // Handle waitFor option
@@ -152,22 +198,146 @@ export class BrowserPage {
                 }
             } else if (options.waitFor === "networkidle") {
                 // Wait for network to be idle (simplified: wait a short period for any pending requests)
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // Use abortable delay
+                await new Promise<void>((resolve, reject) => {
+                    if (signal?.aborted) {
+                        reject(new Error(signal.reason?.message || "Operation aborted"));
+                        return;
+                    }
+                    const timeoutId = setTimeout(resolve, 500);
+                    signal?.addEventListener("abort", () => {
+                        clearTimeout(timeoutId);
+                        reject(new Error(signal.reason?.message || "Operation aborted"));
+                    }, { once: true });
+                });
             } else {
                 // Treat as a selector to wait for
                 await this.wait({
                     type: "selector",
                     selector: options.waitFor,
                     timeout,
+                    signal,
                 });
             }
         }
     }
 
     /**
+     * Get page metadata (title, description, url, etc.)
+     * Extracts semantic fields from the DOM that can be referenced by name in queries.
+     */
+    async getMetadata(): Promise<Record<string, unknown>> {
+        const renderingPipeline = this.browser.getRenderingPipeline();
+        const dom = renderingPipeline.lastRenderResult?.dom;
+
+        const metadata: Record<string, unknown> = {
+            url: this.currentURL,
+        };
+
+        if (!dom) return metadata;
+
+        // Extract <title> text
+        const titleEl = this.findRawElement(dom, "title");
+        if (titleEl) {
+            metadata.title = this.getTextContent(titleEl);
+        }
+
+        // Extract <meta> tags
+        // DOM nodes from the HTML parser are SimpleDOMNode objects with attributes as Map
+        const metaTags = this.findAllRawElements(dom, "meta");
+        for (const meta of metaTags) {
+            const attrs = (meta as any).attributes as Map<string, string> | undefined;
+            if (!attrs) continue;
+            const name = attrs.get("name") || attrs.get("property");
+            const content = attrs.get("content");
+            if (name && content) {
+                // Support both name="description" and property="og:title"
+                const key = name.replace(/^og:/, "").replace(/^twitter:/, "");
+                if (!metadata[key]) {
+                    metadata[key] = content;
+                }
+            }
+        }
+
+        // Extract canonical URL
+        const linkTags = this.findAllRawElements(dom, "link");
+        for (const link of linkTags) {
+            const attrs = (link as any).attributes as Map<string, string> | undefined;
+            if (attrs?.get("rel") === "canonical") {
+                metadata.canonical = attrs.get("href");
+            }
+        }
+
+        return metadata;
+    }
+
+    /**
+     * Find first element by tag name in raw DOM tree
+     * Works with SimpleDOMNode objects from the HTML parser
+     */
+    private findRawElement(node: DOMNode, tagName: string): DOMNode | null {
+        if (node.nodeType === 1) {
+            const nodeName = ((node as any).nodeName || (node as any).tagName || "").toLowerCase();
+            if (nodeName === tagName) {
+                return node;
+            }
+        }
+        if (node.childNodes) {
+            for (const child of node.childNodes) {
+                const found = this.findRawElement(child, tagName);
+                if (found) return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Find all elements by tag name in raw DOM tree
+     * Works with SimpleDOMNode objects from the HTML parser
+     */
+    private findAllRawElements(node: DOMNode, tagName: string): DOMNode[] {
+        const results: DOMNode[] = [];
+        if (node.nodeType === 1) {
+            const nodeName = ((node as any).nodeName || (node as any).tagName || "").toLowerCase();
+            if (nodeName === tagName) {
+                results.push(node);
+            }
+        }
+        if (node.childNodes) {
+            for (const child of node.childNodes) {
+                results.push(...this.findAllRawElements(child, tagName));
+            }
+        }
+        return results;
+    }
+
+    /**
+     * Get text content from element and its children
+     */
+    private getTextContent(node: DOMNode): string {
+        let text = "";
+        if (node.nodeType === 3) { // TEXT_NODE
+            text += (node as any).nodeValue || "";
+        }
+        if (node.childNodes) {
+            for (const child of node.childNodes) {
+                text += this.getTextContent(child);
+            }
+        }
+        return text;
+    }
+
+    /**
      * Query elements using CSS selector or XPath
      */
-    async query(selector: string, type: "css" | "xpath" = "css"): Promise<DOMElement[]> {
+    async query(selector: string, type: "css" | "xpath" = "css", options?: QueryDOMOptions): Promise<DOMElement[]> {
+        const signal = options?.signal;
+
+        // Check if already aborted before starting
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
+
         if (!this.currentURL) {
             throw new Error("No page loaded. Call navigate() first.");
         }
@@ -1203,8 +1373,20 @@ export class BrowserPage {
     /**
      * Click an element
      */
-    async click(selector: string, selectorType: "css" | "xpath" = "css"): Promise<void> {
+    async click(selector: string, selectorType: "css" | "xpath" = "css", options?: ClickOptions): Promise<void> {
+        const signal = options?.signal;
+
+        // Check if already aborted before starting
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
+
         const elements = await this.query(selector, selectorType);
+
+        // Check if aborted after query
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
 
         if (elements.length === 0) {
             throw new Error(`No element found for selector: ${selector}`);
@@ -1217,7 +1399,19 @@ export class BrowserPage {
      * Type text into an element
      */
     async type(selector: string, text: string, options?: TypeOptions): Promise<void> {
+        const signal = options?.signal;
+
+        // Check if already aborted before starting
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
+
         const elements = await this.query(selector, "css");
+
+        // Check if aborted after query
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
 
         if (elements.length === 0) {
             throw new Error(`No element found for selector: ${selector}`);
@@ -1229,10 +1423,25 @@ export class BrowserPage {
         }
 
         if (options?.delay) {
-            // Type character by character with delay
+            // Type character by character with delay using abortable delays
             for (const char of text) {
+                // Check abort before each character
+                if (signal?.aborted) {
+                    throw new Error(signal.reason?.message || "Operation aborted");
+                }
                 await elements[0].type(char);
-                await new Promise((resolve) => setTimeout(resolve, options.delay));
+                // Abortable delay
+                await new Promise<void>((resolve, reject) => {
+                    if (signal?.aborted) {
+                        reject(new Error(signal.reason?.message || "Operation aborted"));
+                        return;
+                    }
+                    const timeoutId = setTimeout(resolve, options.delay);
+                    signal?.addEventListener("abort", () => {
+                        clearTimeout(timeoutId);
+                        reject(new Error(signal.reason?.message || "Operation aborted"));
+                    }, { once: true });
+                });
             }
         } else {
             await elements[0].type(text);
@@ -1243,12 +1452,39 @@ export class BrowserPage {
      * Wait for condition
      */
     async wait(options: WaitOptions): Promise<void> {
+        const signal = options.signal;
+
+        // Helper to check if aborted
+        const checkAborted = () => {
+            if (signal?.aborted) {
+                throw new Error(signal.reason?.message || "Operation aborted");
+            }
+        };
+
+        // Helper to create an abortable delay
+        const abortableDelay = (ms: number): Promise<void> => {
+            return new Promise((resolve, reject) => {
+                if (signal?.aborted) {
+                    reject(new Error(signal.reason?.message || "Operation aborted"));
+                    return;
+                }
+
+                const timeoutId = setTimeout(resolve, ms);
+
+                signal?.addEventListener("abort", () => {
+                    clearTimeout(timeoutId);
+                    reject(new Error(signal.reason?.message || "Operation aborted"));
+                }, { once: true });
+            });
+        };
+
         switch (options.type) {
             case "time":
                 if (!options.duration) {
                     throw new Error("Duration required for time wait");
                 }
-                await new Promise((resolve) => setTimeout(resolve, options.duration));
+                checkAborted();
+                await abortableDelay(options.duration);
                 break;
 
             case "selector": {
@@ -1260,11 +1496,12 @@ export class BrowserPage {
                 const startTime = Date.now();
 
                 while (Date.now() - startTime < timeout) {
+                    checkAborted();
                     const elements = await this.query(options.selector, options.selectorType);
                     if (elements.length > 0) {
                         return;
                     }
-                    await new Promise((resolve) => setTimeout(resolve, 100));
+                    await abortableDelay(100);
                 }
 
                 throw new Error(`Timeout waiting for selector: ${options.selector}`);
@@ -1291,6 +1528,7 @@ export class BrowserPage {
                 }
 
                 while (Date.now() - startTime < timeout) {
+                    checkAborted();
                     try {
                         // Evaluate the condition as JavaScript expression
                         const result = scriptExecutor.evaluate(options.condition);
@@ -1303,7 +1541,7 @@ export class BrowserPage {
                         // Condition threw error, keep waiting
                     }
 
-                    await new Promise((resolve) => setTimeout(resolve, polling));
+                    await abortableDelay(polling);
                 }
 
                 throw new Error("Timeout waiting for function condition");
@@ -1318,6 +1556,13 @@ export class BrowserPage {
      * Take screenshot
      */
     async screenshot(options?: ScreenshotOptions): Promise<Uint8Array> {
+        const signal = options?.signal;
+
+        // Check if already aborted before starting
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
+
         // Extract options with defaults
         const selector = options?.selector;
         const fullPage = options?.fullPage ?? false;
@@ -2373,6 +2618,13 @@ export class BrowserPage {
      * Generate PDF
      */
     async pdf(options?: PDFOptions): Promise<Uint8Array> {
+        const signal = options?.signal;
+
+        // Check if already aborted before starting
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
+
         if (!this.currentURL) {
             throw new Error("No page loaded. Call navigate() first.");
         }
@@ -2384,6 +2636,11 @@ export class BrowserPage {
         }
 
         const { displayList, renderTree } = renderingPipeline.lastRenderResult;
+
+        // Check if aborted before heavy PDF generation
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
 
         // Create PDF generator
         const { PDFGenerator } = await import("../engine/rendering/pdf/PDFGenerator.ts");
@@ -2405,7 +2662,14 @@ export class BrowserPage {
     /**
      * Evaluate JavaScript
      */
-    async evaluate(script: string, args?: unknown[]): Promise<unknown> {
+    async evaluate(script: string, args?: unknown[], options?: EvaluateOptions): Promise<unknown> {
+        const signal = options?.signal;
+
+        // Check if already aborted before starting
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
+        }
+
         if (!this.currentURL) {
             throw new Error("No page loaded. Call navigate() first.");
         }
@@ -2419,6 +2683,11 @@ export class BrowserPage {
         const scriptExecutor = renderingPipeline.lastRenderResult.scriptExecutor;
         if (!scriptExecutor) {
             throw new Error("JavaScript is not enabled. Set enableJavaScript: true in BrowserConfig.");
+        }
+
+        // Check if aborted before script execution
+        if (signal?.aborted) {
+            throw new Error(signal.reason?.message || "Operation aborted");
         }
 
         try {

@@ -48,6 +48,14 @@ import { type DependencyGraph, topologicalSort } from "../utils/mod.ts";
 import { BrowserEngine } from "../../browser/src/api/mod.ts";
 
 /**
+ * Execution options
+ */
+export interface ExecutionOptions {
+  /** AbortSignal for cancellation support */
+  signal?: AbortSignal;
+}
+
+/**
  * Execution result
  */
 export interface ExecutionResult {
@@ -73,6 +81,8 @@ export class QueryExecutor {
   private proxyController?: ProxyController;
   private stateManager: StateManager;
   private currentContextManager?: ExecutionContextManager;
+  /** Abort signal for cancellation support */
+  private signal?: AbortSignal;
 
   constructor(
     browserController?: BrowserController,
@@ -87,8 +97,17 @@ export class QueryExecutor {
   /**
    * Execute an execution plan
    */
-  async execute(plan: ExecutionPlan): Promise<ExecutionResult> {
+  async execute(plan: ExecutionPlan, options: ExecutionOptions = {}): Promise<ExecutionResult> {
     const startTime = performance.now();
+    const signal = options.signal;
+
+    // Store signal as instance property for use in step handlers
+    this.signal = signal;
+
+    // Check if already aborted
+    if (signal?.aborted) {
+      throw signal.reason || new Error("Query aborted");
+    }
 
     // Create execution context using StateManager
     this.currentContextManager = this.stateManager.createExecutionContext(plan.id);
@@ -105,6 +124,11 @@ export class QueryExecutor {
 
       // Execute steps in order
       for (const stepId of order) {
+        // Check abort signal before each step
+        if (signal?.aborted) {
+          throw signal.reason || new Error("Query aborted during execution");
+        }
+
         const step = plan.steps.find((s: ExecutionStep) => s.id === stepId);
         if (!step) continue;
 
@@ -193,40 +217,45 @@ export class QueryExecutor {
   ): Promise<StepResult> {
     const startTime = performance.now();
 
+    // Check if aborted before executing step
+    if (this.signal?.aborted) {
+      throw this.signal.reason || new Error("Query aborted during execution");
+    }
+
     try {
       let data: unknown = null;
 
       switch (step.type) {
         case ExecutionStepType.NAVIGATE:
-          data = await this.executeNavigate(step as NavigateStep, context);
+          data = await this.executeNavigate(step as NavigateStep, context, { signal: this.signal });
           break;
 
         case ExecutionStepType.DOM_QUERY:
-          data = await this.executeDOMQuery(step as DOMQueryStep, context);
+          data = await this.executeDOMQuery(step as DOMQueryStep, context, { signal: this.signal });
           break;
 
         case ExecutionStepType.CLICK:
-          data = await this.executeClick(step as ClickStep, context);
+          data = await this.executeClick(step as ClickStep, context, { signal: this.signal });
           break;
 
         case ExecutionStepType.TYPE:
-          data = await this.executeType(step as TypeStep, context);
+          data = await this.executeType(step as TypeStep, context, { signal: this.signal });
           break;
 
         case ExecutionStepType.WAIT:
-          data = await this.executeWait(step as WaitStep, context);
+          data = await this.executeWait(step as WaitStep, context, { signal: this.signal });
           break;
 
         case ExecutionStepType.SCREENSHOT:
-          data = await this.executeScreenshot(step as ScreenshotStep, context);
+          data = await this.executeScreenshot(step as ScreenshotStep, context, { signal: this.signal });
           break;
 
         case ExecutionStepType.PDF:
-          data = await this.executePDF(step as PDFStep, context);
+          data = await this.executePDF(step as PDFStep, context, { signal: this.signal });
           break;
 
         case ExecutionStepType.EVALUATE_JS:
-          data = await this.executeEvaluateJS(step as EvaluateJSStep, context);
+          data = await this.executeEvaluateJS(step as EvaluateJSStep, context, { signal: this.signal });
           break;
 
         case ExecutionStepType.INTERCEPT_REQUEST:
@@ -343,6 +372,7 @@ export class QueryExecutor {
   private async executeNavigate(
     step: NavigateStep,
     context: ExecutionContext,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown> {
     // Use browser controller to execute navigation
     if (!this.browserController) {
@@ -372,7 +402,7 @@ export class QueryExecutor {
     // This is set BEFORE navigation so context is available even if navigation fails
     setCurrentBrowserController(this.browserController);
 
-    const result = await this.browserController.executeNavigate(resolvedStep);
+    const result = await this.browserController.executeNavigate(resolvedStep, options);
 
     return result;
   }
@@ -383,6 +413,7 @@ export class QueryExecutor {
   private async executeDOMQuery(
     step: DOMQueryStep,
     context: ExecutionContext,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown> {
     // Use browser controller to execute DOM query
     if (!this.browserController) {
@@ -392,7 +423,7 @@ export class QueryExecutor {
     }
 
     // Execute the DOM query step which returns extracted data
-    const results = await this.browserController.executeDOMQuery(step);
+    const results = await this.browserController.executeDOMQuery(step, options);
 
     return results;
   }
@@ -648,6 +679,7 @@ export class QueryExecutor {
   private async executeClick(
     step: ClickStep,
     context: ExecutionContext,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown> {
     // Use browser controller to execute click
     if (!this.browserController) {
@@ -655,7 +687,7 @@ export class QueryExecutor {
       this.browserController = new BrowserController(browserEngine);
     }
 
-    await this.browserController.executeClick(step);
+    await this.browserController.executeClick(step, options);
     return { clicked: true, selector: step.selector };
   }
 
@@ -665,6 +697,7 @@ export class QueryExecutor {
   private async executeType(
     step: TypeStep,
     context: ExecutionContext,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown> {
     // Use browser controller to execute type
     if (!this.browserController) {
@@ -672,7 +705,7 @@ export class QueryExecutor {
       this.browserController = new BrowserController(browserEngine);
     }
 
-    await this.browserController.executeType(step);
+    await this.browserController.executeType(step, options);
     return { typed: true, selector: step.selector, text: step.text };
   }
 
@@ -682,6 +715,7 @@ export class QueryExecutor {
   private async executeWait(
     step: WaitStep,
     context: ExecutionContext,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown> {
     // Use browser controller to execute wait
     if (!this.browserController) {
@@ -689,7 +723,7 @@ export class QueryExecutor {
       this.browserController = new BrowserController(browserEngine);
     }
 
-    await this.browserController.executeWait(step);
+    await this.browserController.executeWait(step, options);
     return { waited: true, waitType: step.waitType };
   }
 
@@ -699,6 +733,7 @@ export class QueryExecutor {
   private async executeScreenshot(
     step: ScreenshotStep,
     context: ExecutionContext,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown> {
     // Use browser controller to execute screenshot
     if (!this.browserController) {
@@ -706,7 +741,7 @@ export class QueryExecutor {
       this.browserController = new BrowserController(browserEngine);
     }
 
-    const screenshot = await this.browserController.executeScreenshot(step);
+    const screenshot = await this.browserController.executeScreenshot(step, options);
     return screenshot;
   }
 
@@ -716,6 +751,7 @@ export class QueryExecutor {
   private async executePDF(
     step: PDFStep,
     context: ExecutionContext,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown> {
     // Use browser controller to execute PDF generation
     if (!this.browserController) {
@@ -723,7 +759,7 @@ export class QueryExecutor {
       this.browserController = new BrowserController(browserEngine);
     }
 
-    const pdf = await this.browserController.executePDF(step);
+    const pdf = await this.browserController.executePDF(step, options);
     return pdf;
   }
 
@@ -733,6 +769,7 @@ export class QueryExecutor {
   private async executeEvaluateJS(
     step: EvaluateJSStep,
     context: ExecutionContext,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown> {
     // Use browser controller to execute JavaScript
     if (!this.browserController) {
@@ -740,7 +777,7 @@ export class QueryExecutor {
       this.browserController = new BrowserController(browserEngine);
     }
 
-    const result = await this.browserController.executeEvaluateJS(step);
+    const result = await this.browserController.executeEvaluateJS(step, options);
     return result;
   }
 

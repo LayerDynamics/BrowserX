@@ -406,7 +406,8 @@ Deno.test("ByteBuffer - from string encoding", () => {
 // ============================================================================
 
 Deno.test("DataType can be used in switch statements", () => {
-  const dt = DataType.STRING;
+  function getDt(): DataType { return DataType.STRING; }
+  const dt = getDt();
   let result = "";
 
   switch (dt) {
