@@ -250,79 +250,86 @@ export class StateManager {
   }
 
   /**
-   * Deep clone a Map
+   * Deep clone a Map, handling circular references
    */
   private deepClone(source: Map<string, unknown>): Map<string, unknown> {
+    const cache = new WeakMap<object, unknown>();
     const result = new Map<string, unknown>();
 
     for (const [key, value] of source) {
-      result.set(key, this.deepCloneValue(value));
+      result.set(key, this.deepCloneValue(value, cache));
     }
 
     return result;
   }
 
   /**
-   * Deep clone a value (handles objects, arrays, primitives)
+   * Deep clone a value (handles objects, arrays, primitives, and circular references)
    */
-  private deepCloneValue(value: unknown): unknown {
-    // Handle null and undefined
-    if (value === null || value === undefined) {
+  private deepCloneValue(value: unknown, cache: WeakMap<object, unknown>): unknown {
+    // Handle primitives, null, and undefined
+    if (value === null || typeof value !== 'object') {
       return value;
     }
 
-    // Handle primitives
-    if (typeof value !== 'object') {
-      return value;
+    // Handle circular references
+    if (cache.has(value)) {
+      return cache.get(value);
     }
 
     // Handle Date
     if (value instanceof Date) {
-      return new Date(value.getTime());
+      const cloned = new Date(value.getTime());
+      cache.set(value, cloned);
+      return cloned;
     }
 
     // Handle RegExp
     if (value instanceof RegExp) {
-      return new RegExp(value.source, value.flags);
+      const cloned = new RegExp(value.source, value.flags);
+      cache.set(value, cloned);
+      return cloned;
     }
 
     // Handle Map
     if (value instanceof Map) {
-      const map = new Map();
+      const cloned = new Map();
+      cache.set(value, cloned);
       for (const [k, v] of value) {
-        map.set(k, this.deepCloneValue(v));
+        cloned.set(k, this.deepCloneValue(v, cache));
       }
-      return map;
+      return cloned;
     }
 
     // Handle Set
     if (value instanceof Set) {
-      const set = new Set();
+      const cloned = new Set();
+      cache.set(value, cloned);
       for (const item of value) {
-        set.add(this.deepCloneValue(item));
+        cloned.add(this.deepCloneValue(item, cache));
       }
-      return set;
+      return cloned;
     }
 
     // Handle Array
     if (Array.isArray(value)) {
-      return value.map(item => this.deepCloneValue(item));
-    }
-
-    // Handle plain objects by recursively cloning enumerable properties
-    // Note: circular references are not supported and will result in a stack overflow
-    try {
-      const cloned: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        // Skip symbol properties
-        if (typeof k !== 'symbol') {
-          cloned[k] = this.deepCloneValue(v);
-        }
+      const cloned: unknown[] = [];
+      cache.set(value, cloned);
+      for (let i = 0; i < value.length; i++) {
+        cloned[i] = this.deepCloneValue(value[i], cache);
       }
       return cloned;
-    } catch {
-      // If cloning fails, return the original value
-      return value;
     }
+
+    // Handle plain objects
+    const cloned: Record<string, unknown> = {};
+    cache.set(value, cloned);
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      // Skip symbol properties
+      if (typeof k !== 'symbol') {
+        cloned[k] = this.deepCloneValue(v, cache);
+      }
+    }
+    return cloned;
   }
 }

@@ -776,3 +776,73 @@ Deno.test("StateManager - getSnapshots returns all snapshots", () => {
   assertEquals(remaining[0].id, id1);
   assertEquals(remaining[1].id, id3);
 });
+
+Deno.test("StateManager - handles circular references in objects", () => {
+  const stateManager = new StateManager();
+
+  // Create object with circular reference
+  const circular: Record<string, unknown> = { name: "test" };
+  circular.self = circular;
+
+  // Should not throw stack overflow
+  stateManager.set("circular", circular);
+  const snapshot = stateManager.createSnapshot();
+
+  // Verify snapshot was created successfully
+  assertExists(snapshot);
+
+  // Modify original and restore from snapshot
+  stateManager.set("circular", { name: "modified" });
+  stateManager.restoreSnapshot(snapshot);
+
+  const restored = stateManager.get("circular") as Record<string, unknown>;
+  assertEquals(restored.name, "test");
+  // Circular reference should be preserved
+  assertExists(restored.self);
+  assertEquals(restored.self, restored);
+});
+
+Deno.test("StateManager - handles circular references in arrays", () => {
+  const stateManager = new StateManager();
+
+  // Create array with circular reference
+  const circularArray: unknown[] = [1, 2, 3];
+  circularArray.push(circularArray);
+
+  stateManager.set("circularArray", circularArray);
+
+  // Should not throw during snapshot
+  const snapshot = stateManager.createSnapshot();
+  assertExists(snapshot);
+
+  // Verify restoration works
+  stateManager.restoreSnapshot(snapshot);
+  const restored = stateManager.get("circularArray") as unknown[];
+  assertEquals(restored.length, 4);
+  assertEquals(restored[0], 1);
+  assertEquals(restored[3], restored);
+});
+
+Deno.test("StateManager - handles nested circular references", () => {
+  const stateManager = new StateManager();
+
+  // Create complex circular structure
+  const parent: Record<string, unknown> = { name: "parent" };
+  const child: Record<string, unknown> = { name: "child", parent };
+  parent.child = child;
+
+  stateManager.set("family", parent);
+
+  // Create snapshot and transaction with circular data
+  const snapshot = stateManager.createSnapshot();
+  stateManager.beginTransaction();
+  stateManager.set("family", { name: "modified" });
+  stateManager.rollbackTransaction();
+
+  // Should restore circular structure correctly
+  const restored = stateManager.get("family") as Record<string, unknown>;
+  assertEquals(restored.name, "parent");
+  const restoredChild = restored.child as Record<string, unknown>;
+  assertEquals(restoredChild.name, "child");
+  assertEquals(restoredChild.parent, restored);
+});
