@@ -1,0 +1,36 @@
+/* Main Playground Container */
+.playground {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  color: #cccccc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Split View Layout */
+.playground-content {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #3d3d3d;
+  overflow: hidden;
+}
+
+/* Editor and Preview Panels */
+.editor-panel,
+.preview-panel {
+  background: #1e1e1e;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Responsive: Stack vertically on mobile */
+@media (max-width: 768px) {
+  .playground-content {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+}
