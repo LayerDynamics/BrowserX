@@ -3,8 +3,9 @@
  * Comprehensive tests for HTTPCacheManager
  */
 
-import { assertEquals, assertExists, assert } from "@std/assert";
+import { assertEquals, assertExists, assert, assertNotEquals } from "@std/assert";
 import { CacheManager, type CacheConfig } from "../../../core/cache/cache_manager.ts";
+import { deriveKey } from "../../../core/cache/encryption/aes.ts";
 
 // ============================================================================
 // Helper Functions
@@ -852,5 +853,162 @@ Deno.test({
 
     assertEquals(cache.getCache().size, 0);
     assertEquals(cache.getCacheSize(), 0);
+  },
+});
+
+// ============================================================================
+// Encryption Tests
+// ============================================================================
+
+Deno.test({
+  name: "CacheManager - encryption disabled by default",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const cache = new CacheManager(createTestConfig());
+    const key = "GET:https://example.com";
+    const response = createTestResponse("Plaintext data", {
+      "cache-control": "max-age=3600",
+    });
+
+    await cache.store(key, response);
+    const entry = cache.getCache().get(key)!;
+
+    // Body should be plaintext (not encrypted)
+    assertEquals(new TextDecoder().decode(entry.response.body), "Plaintext data");
+    cache.destroy();
+  },
+});
+
+Deno.test({
+  name: "CacheManager - encrypts data when encryption enabled",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const encryptionKey = await deriveKey("test-password", new Uint8Array(16).fill(1));
+    const cache = new CacheManager(createTestConfig({
+      encryption: {
+        enabled: true,
+        key: encryptionKey,
+      },
+    }));
+
+    const key = "GET:https://example.com";
+    const response = createTestResponse("Secret data", {
+      "cache-control": "max-age=3600",
+    });
+
+    await cache.store(key, response);
+    const entry = cache.getCache().get(key)!;
+
+    // Body should be encrypted (not plaintext)
+    const bodyText = new TextDecoder().decode(entry.response.body);
+    assertNotEquals(bodyText, "Secret data");
+
+    cache.destroy();
+  },
+});
+
+Deno.test({
+  name: "CacheManager - decrypts data on retrieval",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const encryptionKey = await deriveKey("test-password", new Uint8Array(16).fill(1));
+    const cache = new CacheManager(createTestConfig({
+      encryption: {
+        enabled: true,
+        key: encryptionKey,
+      },
+    }));
+
+    const key = "GET:https://example.com";
+    const response = createTestResponse("Secret data", {
+      "cache-control": "max-age=3600",
+    });
+
+    await cache.store(key, response);
+    const entry = await cache.get(key);
+
+    assertExists(entry);
+    // Should decrypt transparently
+    assertEquals(new TextDecoder().decode(entry.response.body), "Secret data");
+
+    cache.destroy();
+  },
+});
+
+Deno.test({
+  name: "CacheManager - stores IV with encrypted entry",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const encryptionKey = await deriveKey("test-password", new Uint8Array(16).fill(1));
+    const cache = new CacheManager(createTestConfig({
+      encryption: {
+        enabled: true,
+        key: encryptionKey,
+      },
+    }));
+
+    const key = "GET:https://example.com";
+    const response = createTestResponse("Secret data", {
+      "cache-control": "max-age=3600",
+    });
+
+    await cache.store(key, response);
+    const entry = cache.getCache().get(key)!;
+
+    // IV should be stored
+    assertExists(entry.encryptionIV);
+    assertEquals(entry.encryptionIV.length, 12); // GCM standard
+
+    cache.destroy();
+  },
+});
+
+Deno.test({
+  name: "CacheManager - returns null on decryption error",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const encryptionKey1 = await deriveKey("password1", new Uint8Array(16).fill(1));
+    const encryptionKey2 = await deriveKey("password2", new Uint8Array(16).fill(2));
+
+    const cache1 = new CacheManager(createTestConfig({
+      encryption: {
+        enabled: true,
+        key: encryptionKey1,
+      },
+    }));
+
+    const key = "GET:https://example.com";
+    const response = createTestResponse("Secret data", {
+      "cache-control": "max-age=3600",
+    });
+
+    await cache1.store(key, response);
+    cache1.destroy();
+
+    // Try to decrypt with wrong key
+    const cache2 = new CacheManager(createTestConfig({
+      encryption: {
+        enabled: true,
+        key: encryptionKey2,
+      },
+    }));
+
+    // Manually copy encrypted entry from cache1 to cache2
+    const entry = cache1.getCache().get(key);
+    if (entry) {
+      cache2.getCache().set(key, entry);
+    }
+
+    const result = await cache2.get(key);
+
+    // Should return null on decryption failure (fail-safe)
+    assertEquals(result, null);
+
+    cache2.destroy();
   },
 });
