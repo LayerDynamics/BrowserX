@@ -21,6 +21,8 @@ import type { BoundingBox } from "../paint/DisplayList.ts";
 import { LayerTree, type PaintLayer } from "../paint/PaintLayer.ts";
 import { CompositorLayer, CompositorLayerManager } from "./CompositorLayer.ts";
 import { type FrameTiming, VSync, type VSyncStats } from "./VSync.ts";
+import { RenderToPixels } from "../paint/RenderToPixels.ts";
+import type { RenderObject } from "../rendering/RenderObject.ts";
 
 /**
  * Compositor statistics
@@ -75,6 +77,12 @@ export class CompositorThread {
     private layerTree: LayerTree | null = null;
     private headlessMode: boolean = false;
 
+    // CPU rendering support
+    private renderToPixels: RenderToPixels | null = null;
+    private lastRenderObject: RenderObject | null = null;
+    private cpuRenderMode: boolean = false; // true when using Canvas 2D instead of WebGL
+    private cpuCanvas: HTMLCanvasElement | null = null; // Canvas 2D rendering target
+
     constructor(config?: Partial<CompositorConfig>) {
         this.config = {
             enableVSync: true,
@@ -96,10 +104,24 @@ export class CompositorThread {
     }
 
     /**
+     * Set the render tree for CPU rendering
+     * Must be called before composite() when in CPU mode
+     */
+    setRenderTree(renderObject: RenderObject): void {
+        this.lastRenderObject = renderObject;
+    }
+
+    /**
+     * Check if compositor is using CPU rendering mode
+     */
+    isCPUMode(): boolean {
+        return this.cpuRenderMode;
+    }
+
+    /**
      * Initialize compositor with canvas
      *
-     * If WebGL context is not available, enters headless mode where
-     * compositing operations are no-ops and getPixels() returns blank data.
+     * If WebGL context is not available, enters CPU rendering mode using Canvas 2D.
      * This enables operation in environments without GPU support (Deno, tests).
      */
     initialize(canvas: HTMLCanvasElement): void {
@@ -116,13 +138,20 @@ export class CompositorThread {
         });
 
         if (!gl) {
-            // Enter headless mode - no GPU rendering available
-            // This is expected in Deno runtime or headless environments
+            // Enter CPU rendering mode - no GPU rendering available
+            // Use Canvas 2D software rendering instead of WebGL
             this.headlessMode = true;
+            this.cpuRenderMode = true;
+            this.renderToPixels = new RenderToPixels();
+            this.cpuCanvas = this.canvas;
+
+            console.log("[CompositorThread] Using CPU rendering mode (Canvas 2D)");
             return;
         }
 
         this.gl = gl;
+
+        console.log("[CompositorThread] Using GPU rendering mode (WebGL)");
 
         // Initialize layer manager with WebGL context
         this.layerManager.initialize(gl);
@@ -372,13 +401,42 @@ export class CompositorThread {
      * Composite layers synchronously
      * Used for non-vsync rendering
      *
-     * In headless mode, this is a no-op since there's no GPU to composite to.
+     * In CPU mode, uses RenderToPixels to paint via Canvas 2D.
+     * In GPU mode, uses WebGL compositing.
      */
     composite(): void {
-        // In headless mode, compositing is a no-op
-        if (this.headlessMode) {
+        if (!this.canvas) {
+            throw new Error("[CompositorThread] composite() called before initialization");
+        }
+
+        // CPU rendering mode - use RenderToPixels
+        if (this.cpuRenderMode) {
+            if (!this.renderToPixels) {
+                throw new Error("[CompositorThread] CPU mode but RenderToPixels not initialized");
+            }
+
+            if (!this.lastRenderObject) {
+                throw new Error("[CompositorThread] CPU mode but no render tree set - call setRenderTree() before composite()");
+            }
+
+            // Paint render tree to Canvas 2D - let errors propagate
+            const paintResult = this.renderToPixels.paint(
+                this.lastRenderObject,
+                this.canvas.width as Pixels,
+                this.canvas.height as Pixels,
+                false // full repaint
+            );
+
+            // Store result canvas for getPixels() extraction
+            this.cpuCanvas = paintResult.canvas;
+
             this.frameCount++;
             return;
+        }
+
+        // GPU rendering mode - existing WebGL compositing logic
+        if (!this.gl) {
+            throw new Error("[CompositorThread] WebGL context not available and CPU mode not enabled");
         }
 
         if (!this.isRunning) {
@@ -533,28 +591,39 @@ export class CompositorThread {
     /**
      * Get pixels from the current composite
      *
-     * In headless mode, returns white pixels (blank canvas).
+     * In CPU mode, extracts pixels from Canvas 2D context.
+     * In GPU mode, extracts pixels from WebGL context.
      */
     async getPixels(): Promise<Uint8ClampedArray> {
         if (!this.canvas) {
-            throw new Error("Compositor not initialized");
+            throw new Error("[CompositorThread] Compositor not initialized");
         }
 
         const width = this.canvas.width;
         const height = this.canvas.height;
-        const pixels = new Uint8ClampedArray(width * height * 4);
 
-        // In headless mode, return white pixels (RGBA: 255, 255, 255, 255)
-        if (this.headlessMode || !this.gl) {
-            for (let i = 0; i < pixels.length; i += 4) {
-                pixels[i] = 255;     // R
-                pixels[i + 1] = 255; // G
-                pixels[i + 2] = 255; // B
-                pixels[i + 3] = 255; // A
+        // CPU rendering mode - extract pixels from Canvas 2D
+        if (this.cpuRenderMode) {
+            if (!this.cpuCanvas) {
+                throw new Error("[CompositorThread] CPU mode but no canvas available - call composite() first");
             }
-            return pixels;
+
+            const context = this.cpuCanvas.getContext("2d");
+            if (!context) {
+                throw new Error("[CompositorThread] Failed to get 2D context from CPU canvas");
+            }
+
+            // Extract pixels - let errors propagate
+            const imageData = context.getImageData(0, 0, width, height);
+            return imageData.data;
         }
 
+        // GPU rendering mode - existing WebGL pixel extraction
+        if (!this.gl) {
+            throw new Error("[CompositorThread] WebGL context not available and CPU mode not enabled");
+        }
+
+        const pixels = new Uint8ClampedArray(width * height * 4);
         this.gl.readPixels(0, 0, width, height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, pixels);
 
         return pixels;
@@ -566,6 +635,15 @@ export class CompositorThread {
     async destroy(): Promise<void> {
         this.stop();
 
+        // Dispose CPU rendering resources
+        if (this.renderToPixels) {
+            this.renderToPixels.dispose();
+            this.renderToPixels = null;
+        }
+        this.cpuCanvas = null;
+        this.lastRenderObject = null;
+
+        // Dispose GPU rendering resources
         if (this.shaderProgram && this.gl) {
             this.gl.deleteProgram(this.shaderProgram.program);
             this.gl.deleteShader(this.shaderProgram.vertexShader);

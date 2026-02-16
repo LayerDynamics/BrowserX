@@ -428,6 +428,12 @@ export class RenderingPipeline {
             }
             timing.paintRecording = Date.now() - paintStart;
 
+            // 7.5. Pass render tree to compositor for CPU rendering
+            // CPU mode needs the render tree to paint via Canvas 2D
+            if (this.compositor.isCPUMode()) {
+                this.compositor.setRenderTree(rootRenderObject);
+            }
+
             // 8. Composite → Render to pixels
             const compositeStart = Date.now();
             this.compositor.composite();

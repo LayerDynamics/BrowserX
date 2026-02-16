@@ -627,10 +627,76 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
     if (tagName.toLowerCase() === "canvas") {
         element.width = 300;
         element.height = 150;
+
+        // Actual pixel buffer for software rendering
+        let pixelBuffer: Uint8ClampedArray | null = null;
+
+        const ensurePixelBuffer = () => {
+            if (!pixelBuffer || pixelBuffer.length !== element.width * element.height * 4) {
+                pixelBuffer = new Uint8ClampedArray(element.width * element.height * 4);
+                // Initialize to white
+                for (let i = 0; i < pixelBuffer.length; i += 4) {
+                    pixelBuffer[i] = 255;     // R
+                    pixelBuffer[i + 1] = 255; // G
+                    pixelBuffer[i + 2] = 255; // B
+                    pixelBuffer[i + 3] = 255; // A
+                }
+            }
+            return pixelBuffer;
+        };
+
+        const parseColor = (color: string): [number, number, number, number] => {
+            // Parse hex colors like "#RGB", "#RRGGBB", "#RRGGBBAA"
+            if (color.startsWith("#")) {
+                const hex = color.slice(1);
+                if (hex.length === 3) {
+                    // #RGB
+                    const r = parseInt(hex[0] + hex[0], 16);
+                    const g = parseInt(hex[1] + hex[1], 16);
+                    const b = parseInt(hex[2] + hex[2], 16);
+                    return [r, g, b, 255];
+                } else if (hex.length === 6) {
+                    // #RRGGBB
+                    const r = parseInt(hex.slice(0, 2), 16);
+                    const g = parseInt(hex.slice(2, 4), 16);
+                    const b = parseInt(hex.slice(4, 6), 16);
+                    return [r, g, b, 255];
+                } else if (hex.length === 8) {
+                    // #RRGGBBAA
+                    const r = parseInt(hex.slice(0, 2), 16);
+                    const g = parseInt(hex.slice(2, 4), 16);
+                    const b = parseInt(hex.slice(4, 6), 16);
+                    const a = parseInt(hex.slice(6, 8), 16);
+                    return [r, g, b, a];
+                }
+            }
+            // Parse rgb() and rgba()
+            const rgbaMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+            if (rgbaMatch) {
+                const r = parseInt(rgbaMatch[1]);
+                const g = parseInt(rgbaMatch[2]);
+                const b = parseInt(rgbaMatch[3]);
+                const a = rgbaMatch[4] ? Math.round(parseFloat(rgbaMatch[4]) * 255) : 255;
+                return [r, g, b, a];
+            }
+            // Named colors - basic set
+            const namedColors: Record<string, [number, number, number, number]> = {
+                "red": [255, 0, 0, 255],
+                "green": [0, 128, 0, 255],
+                "blue": [0, 0, 255, 255],
+                "white": [255, 255, 255, 255],
+                "black": [0, 0, 0, 255],
+                "yellow": [255, 255, 0, 255],
+                "cyan": [0, 255, 255, 255],
+                "magenta": [255, 0, 255, 255],
+            };
+            return namedColors[color.toLowerCase()] || [0, 0, 0, 255];
+        };
+
         element.getContext = (contextId: string) => {
             if (contextId === "2d") {
-                // Return minimal 2D context stub
-                return {
+                // Return functional 2D context with software rendering
+                const context = {
                     canvas: element,
                     fillStyle: "#000",
                     strokeStyle: "#000",
@@ -644,9 +710,75 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
                     shadowBlur: 0,
                     shadowColor: "rgba(0,0,0,0)",
                     globalCompositeOperation: "source-over",
-                    fillRect: () => {},
-                    strokeRect: () => {},
-                    clearRect: () => {},
+
+                    fillRect: function(x: number, y: number, width: number, height: number) {
+                        const pixels = ensurePixelBuffer();
+                        const [r, g, b, a] = parseColor(this.fillStyle as string);
+                        const canvasWidth = element.width;
+                        const canvasHeight = element.height;
+
+                        // Clamp to canvas bounds
+                        const x1 = Math.max(0, Math.floor(x));
+                        const y1 = Math.max(0, Math.floor(y));
+                        const x2 = Math.min(canvasWidth, Math.ceil(x + width));
+                        const y2 = Math.min(canvasHeight, Math.ceil(y + height));
+
+                        for (let py = y1; py < y2; py++) {
+                            for (let px = x1; px < x2; px++) {
+                                const offset = (py * canvasWidth + px) * 4;
+                                pixels[offset] = r;
+                                pixels[offset + 1] = g;
+                                pixels[offset + 2] = b;
+                                pixels[offset + 3] = a;
+                            }
+                        }
+                    },
+
+                    strokeRect: function(x: number, y: number, width: number, height: number) {
+                        const lineWidth = Math.max(1, Math.floor(this.lineWidth));
+                        // Draw stroke as four filled rectangles
+                        this.fillStyle = this.strokeStyle;
+                        // Top
+                        this.fillRect(x, y, width, lineWidth);
+                        // Bottom
+                        this.fillRect(x, y + height - lineWidth, width, lineWidth);
+                        // Left
+                        this.fillRect(x, y, lineWidth, height);
+                        // Right
+                        this.fillRect(x + width - lineWidth, y, lineWidth, height);
+                    },
+
+                    clearRect: function(x: number, y: number, width: number, height: number) {
+                        const pixels = ensurePixelBuffer();
+                        const canvasWidth = element.width;
+                        const canvasHeight = element.height;
+
+                        // Clamp to canvas bounds
+                        const x1 = Math.max(0, Math.floor(x));
+                        const y1 = Math.max(0, Math.floor(y));
+                        const x2 = Math.min(canvasWidth, Math.ceil(x + width));
+                        const y2 = Math.min(canvasHeight, Math.ceil(y + height));
+
+                        for (let py = y1; py < y2; py++) {
+                            for (let px = x1; px < x2; px++) {
+                                const offset = (py * canvasWidth + px) * 4;
+                                pixels[offset] = 0;
+                                pixels[offset + 1] = 0;
+                                pixels[offset + 2] = 0;
+                                pixels[offset + 3] = 0;
+                            }
+                        }
+                    },
+
+                    getImageData: function(x: number, y: number, width: number, height: number) {
+                        const pixels = ensurePixelBuffer();
+                        return {
+                            width: element.width,
+                            height: element.height,
+                            data: pixels,
+                        };
+                    },
+
                     beginPath: () => {},
                     closePath: () => {},
                     moveTo: () => {},
@@ -672,9 +804,10 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
                     measureText: () => ({ width: 0 }),
                     drawImage: () => {},
                     createImageData: () => ({ width: 0, height: 0, data: new Uint8ClampedArray() }),
-                    getImageData: () => ({ width: 0, height: 0, data: new Uint8ClampedArray() }),
                     putImageData: () => {},
-                } as unknown as CanvasRenderingContext2D;
+                };
+
+                return context as unknown as CanvasRenderingContext2D;
             }
             return null;
         };
