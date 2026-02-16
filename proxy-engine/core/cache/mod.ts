@@ -5,5 +5,5 @@
  */
 
 export * from "./cache_manager.ts";
-export * from "./encrpytion/mod.ts";
+export * from "./encryption/mod.ts";
 export * from "./kv/mod.ts";

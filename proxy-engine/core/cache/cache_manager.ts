@@ -1,5 +1,7 @@
 // cache_manager.ts - Complete HTTP cache implementation
 
+import { encrypt, decrypt } from "./encryption/aes.ts";
+
 interface CacheEntry {
   response: {
     status: number;
@@ -10,6 +12,7 @@ interface CacheEntry {
   etag?: string;
   lastModified?: string;
   maxAge: number; // Seconds
+  encryptionIV?: Uint8Array; // IV for encrypted entries
 }
 
 interface CacheConfig {
@@ -17,6 +20,10 @@ interface CacheConfig {
   defaultTTL: number; // Default time-to-live in seconds
   enableDiskCache: boolean;
   diskCachePath?: string;
+  encryption?: {
+    enabled: boolean;
+    key: CryptoKey;
+  };
 }
 
 class HTTPCacheManager {
@@ -131,19 +138,35 @@ class HTTPCacheManager {
     const cacheControl = response.headers["cache-control"] || "";
     const maxAge = this.parseMaxAge(cacheControl);
 
+    // Encrypt body if encryption enabled
+    let body = response.body;
+    let encryptionIV: Uint8Array | undefined;
+
+    if (this.config.encryption?.enabled && this.config.encryption.key) {
+      try {
+        const encrypted = await encrypt(this.config.encryption.key, response.body);
+        body = encrypted.ciphertext;
+        encryptionIV = encrypted.iv as Uint8Array;
+      } catch (error) {
+        console.error(`[CACHE ENCRYPTION ERROR] ${cacheKey}:`, error);
+        body = response.body; // Fall back to plaintext
+      }
+    }
+
     const entry: CacheEntry = {
       response: {
         status: response.status,
         headers: { ...response.headers },
-        body: response.body,
+        body: body,
       },
       timestamp: Date.now(),
       etag: response.headers["etag"],
       lastModified: response.headers["last-modified"],
       maxAge: maxAge,
+      encryptionIV: encryptionIV,
     };
 
-    const entrySize = response.body.length;
+    const entrySize = body.length;
 
     // Check if we need to evict entries
     const maxBytes = this.config.maxMemoryMB * 1024 * 1024;
@@ -189,7 +212,25 @@ class HTTPCacheManager {
     // Update Age header
     entry.response.headers["age"] = Math.floor(age).toString();
 
-    return entry;
+    // Decrypt body if encrypted
+    let body = entry.response.body;
+    if (entry.encryptionIV && this.config.encryption?.enabled && this.config.encryption.key) {
+      try {
+        body = await decrypt(this.config.encryption.key, entry.response.body, entry.encryptionIV);
+      } catch (error) {
+        console.error(`[CACHE DECRYPTION ERROR] ${cacheKey}:`, error);
+        this.stats.misses++;
+        return null; // Fail-safe: wrong key returns null
+      }
+    }
+
+    return {
+      ...entry,
+      response: {
+        ...entry.response,
+        body: body,
+      },
+    };
   }
 
   /**

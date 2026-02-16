@@ -7,3 +7,4 @@
 export * from "./sha.ts";
 export * from "./salt.ts";
 export * from "./hash.ts";
+export * from "./aes.ts";

@@ -1,6 +1,6 @@
 // key.ts - Cache key generation utilities
 
-import { sha256 } from "../encrpytion/sha.ts";
+import { sha256 } from "../encryption/sha.ts";
 
 /**
  * Generate cache key from HTTP request
