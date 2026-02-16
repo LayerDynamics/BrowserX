@@ -150,7 +150,8 @@ function validateQueryBasic(query: string): ValidationError[] {
 }
 
 // Mark this route as server-rendered (not statically prerendered)
-export const prerender = false;
+// Note: Commented out for static builds. Uncomment when deploying with an adapter.
+// export const prerender = false;
 
 export const POST: APIRoute = async ({ request }) => {
   try {

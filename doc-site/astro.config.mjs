@@ -6,7 +6,8 @@ import react from '@astrojs/react';
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://browserx.dev',
-	output: 'server', // Enable server-side rendering for API routes
+	// Note: API routes require server/hybrid mode with an adapter (e.g., @astrojs/vercel)
+	// For static build, API routes are stubbed with mock responses
 	integrations: [
 		react(),
 		starlight({
