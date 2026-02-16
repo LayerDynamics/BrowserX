@@ -161,3 +161,4 @@ perf.data.old
 *.prof
 devdocs
 CLAUDE.md
+.worktrees/
