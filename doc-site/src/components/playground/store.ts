@@ -241,9 +241,10 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
     set({ editorMode: mode });
   },
 
-  executeQuery: async (_query: string) => {
+  executeQuery: async (query: string) => {
     // Create execution ID
     const executionId = `exec-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    const startTime = Date.now();
 
     // Set active execution
     set({
@@ -254,13 +255,72 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
     });
 
     try {
-      // TODO: Replace with actual API call when API route is implemented
-      // For now, just simulate execution with a timeout
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Call execute API
+      const response = await fetch('/api/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query,
+          options: {
+            timeout: 30000,
+            captureScreenshots: true,
+            captureConsole: true,
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        // Handle error response
+        throw new Error(data.error?.message || 'Query execution failed');
+      }
+
+      // Extract results from API response
+      const duration = Date.now() - startTime;
+
+      // Add to history
+      get().addToHistory({
+        id: executionId,
+        query,
+        timestamp: startTime,
+        status: 'success',
+        duration,
+      });
+
+      // Set results
+      if (data.results) {
+        // Transform API response to match store's QueryResult format
+        const results: QueryResult = {
+          columns: Array.isArray(data.results.data) && data.results.data.length > 0
+            ? Object.keys(data.results.data[0])
+            : [],
+          rows: Array.isArray(data.results.data) ? data.results.data : [],
+          timing: {
+            total: data.results.timing?.totalTime ?? duration,
+            network: data.results.timing?.executionTime,
+            parsing: data.results.timing?.parserTime,
+            extraction: data.results.timing?.formattingTime,
+          },
+        };
+        get().setResults(results);
+      }
 
       // Clear active execution on success
       set({ activeExecution: null });
     } catch (error) {
+      // Add error to history
+      const duration = Date.now() - startTime;
+      get().addToHistory({
+        id: executionId,
+        query,
+        timestamp: startTime,
+        status: 'error',
+        duration,
+      });
+
       // Clear active execution on error
       set({ activeExecution: null });
       throw error;

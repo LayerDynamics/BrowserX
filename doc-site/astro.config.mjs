@@ -6,6 +6,7 @@ import react from '@astrojs/react';
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://browserx.dev',
+	output: 'server', // Enable server-side rendering for API routes
 	integrations: [
 		react(),
 		starlight({
