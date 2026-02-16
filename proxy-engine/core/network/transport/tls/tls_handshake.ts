@@ -5,7 +5,7 @@
  * with full cryptographic operations using Web Crypto API
  */
 
-import { sha256HmacBytes, sha256Bytes } from "../../../cache/encrpytion/sha.ts";
+import { sha256HmacBytes, sha256Bytes } from "../../../cache/encryption/sha.ts";
 
 /**
  * TLS version
