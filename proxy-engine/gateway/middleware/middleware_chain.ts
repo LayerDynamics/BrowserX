@@ -154,6 +154,26 @@ export class MiddlewareChain {
   }
 
   /**
+   * Remove request middleware by name
+   */
+  removeRequestMiddleware(name: string): boolean {
+    const index = this.requestMiddleware.findIndex(m => m.middleware.name === name);
+    if (index === -1) return false;
+    this.requestMiddleware.splice(index, 1);
+    return true;
+  }
+
+  /**
+   * Remove response middleware by name
+   */
+  removeResponseMiddleware(name: string): boolean {
+    const index = this.responseMiddleware.findIndex(m => m.middleware.name === name);
+    if (index === -1) return false;
+    this.responseMiddleware.splice(index, 1);
+    return true;
+  }
+
+  /**
    * Enable middleware by name
    */
   enableMiddleware(name: string, isRequest = true): boolean {

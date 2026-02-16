@@ -8,8 +8,10 @@
 import type { ByteBuffer, Duration } from "../../../types/identifiers.ts";
 import type { Certificate, Socket } from "../../../types/network.ts";
 import { TLSHandshakeState, TLSVersion } from "../../../types/network.ts";
-import { validateCertificate } from "./Certificate.ts";
+import { validateCertificate, loadSystemCAs } from "./Certificate.ts";
 import * as SessionKeysUtil from "./SessionKeys.ts";
+// @deno-types="npm:@noble/ciphers@1.2.1/chacha"
+import { chacha20poly1305 } from "npm:@noble/ciphers@1.2.1/chacha";
 
 /**
  * Cipher suite (TLS 1.3)
@@ -111,6 +113,12 @@ export class TLSConnection {
         if (!this.config.serverName) {
             this.config.serverName = host;
         }
+
+        // Auto-load system CA certificates if verification is enabled but no CAs provided
+        if (this.config.verifyPeerCertificate && this.config.trustedCAs.length === 0) {
+            this.config.trustedCAs = await loadSystemCAs();
+        }
+
         await this.handshake();
     }
 
@@ -673,17 +681,21 @@ export class TLSConnection {
             publicKey: serverECDHPublicKey,
         });
 
-        // Compute master secret using TLS 1.2 PRF
+        // Determine cipher suite name for key derivation and PRF hash selection
+        const cipherSuite = serverHello.cipherSuite as number;
+        const cipherSuiteName = getCipherSuiteNameFromCode(cipherSuite);
+
+        // Set negotiated cipher suite for computeTranscriptHash() to use correct hash algorithm
+        this.negotiatedCipherSuite = cipherSuite;
+
+        // Compute master secret using TLS 1.2 PRF (hash algorithm depends on cipher suite)
         const tls12MasterSecret = await SessionKeysUtil.computeMasterSecret(
             sharedSecret,
             this.clientRandom,
             this.serverRandom,
             "1.2",
+            cipherSuiteName,
         );
-
-        // Determine cipher suite name for key derivation
-        const cipherSuite = serverHello.cipherSuite as number;
-        const cipherSuiteName = getCipherSuiteNameFromCode(cipherSuite);
 
         // Derive session keys using TLS 1.2 PRF key expansion
         this.sessionKeys = await SessionKeysUtil.deriveSessionKeys(
@@ -705,11 +717,14 @@ export class TLSConnection {
         const ccsRecord = createTLSRecord(TLSRecordType.CHANGE_CIPHER_SPEC, changeCipherSpec);
         await this.socket.write(serializeTLSRecord(ccsRecord));
 
+        // Reset sequence counter after ChangeCipherSpec (per RFC 5246 §6.1)
+        this.clientSequenceNumber = 0;
+
         // Send client Finished (encrypted with TLS 1.2 record protection)
         // Compute verify_data = PRF(master_secret, "client finished", Hash(handshake_messages))[0..11]
         const transcriptHash = await this.computeTranscriptHash();
         const clientFinishedLabel = new TextEncoder().encode("client finished");
-        const clientVerifyData = await tls12PRF(tls12MasterSecret, clientFinishedLabel, transcriptHash, 12);
+        const clientVerifyData = await tls12PRF(tls12MasterSecret, clientFinishedLabel, transcriptHash, 12, cipherSuiteName);
 
         const clientFinishedMsg: TLSHandshakeMessage = {
             type: "Finished",
@@ -846,8 +861,6 @@ export class TLSConnection {
         aad[10] = 0x03;
         aadView.setUint16(11, plaintextLength);
 
-        this.serverRecordSeq++;
-
         // Decrypt with AES-GCM
         try {
             const cryptoKey = await crypto.subtle.importKey(
@@ -857,9 +870,11 @@ export class TLSConnection {
                 { name: "AES-GCM", iv: nonce, tagLength: 128, additionalData: aad },
                 cryptoKey, ciphertext,
             ));
+            // Only increment sequence counter AFTER successful decryption
+            this.serverRecordSeq++;
             return plaintext;
         } catch (error) {
-            throw new TLSError(`Decryption failed: ${(error as Error).message || "authentication tag verification failed"}`);
+            throw new TLSError(`TLS 1.2 decryption failed: ${(error as Error).message || "authentication tag verification failed"}`);
         }
     }
 
@@ -988,13 +1003,21 @@ export class TLSConnection {
             aad[4] = record.length & 0xFF;
 
             // Decrypt record using application traffic keys and sequence counter
-            const plaintext = await decrypt(
-                record.data,
-                this.sessionKeys!.serverWriteKey,
-                this.sessionKeys!.serverWriteIV,
-                this.serverRecordSeq++,
-                aad as ByteBuffer,
-            );
+            let plaintext: ByteBuffer;
+            try {
+                plaintext = await decrypt(
+                    record.data,
+                    this.sessionKeys!.serverWriteKey,
+                    this.sessionKeys!.serverWriteIV,
+                    this.serverRecordSeq,
+                    aad as ByteBuffer,
+                    this.negotiatedCipherSuite,
+                );
+                // Only increment sequence counter AFTER successful decryption
+                this.serverRecordSeq++;
+            } catch (error) {
+                throw new TLSError(`TLS 1.3 record decryption failed: ${(error as Error).message || "authentication tag verification failed"}`);
+            }
 
             // TLS 1.3: Inner plaintext has content type at the end
             // Format: [data][content_type][padding zeros]
@@ -1071,6 +1094,7 @@ export class TLSConnection {
             this.sessionKeys!.clientWriteIV,
             this.clientSequenceNumber++,
             aad as ByteBuffer,
+            this.negotiatedCipherSuite,
         );
 
         // Create TLS record
@@ -1246,6 +1270,7 @@ export class TLSConnection {
                 this.sessionKeys.clientWriteIV,
                 this.clientSequenceNumber++,
                 aad as ByteBuffer,
+                this.negotiatedCipherSuite,
             );
 
             // Create APPLICATION_DATA record containing encrypted handshake
@@ -1421,13 +1446,21 @@ export class TLSConnection {
         aad[3] = (recordLength >> 8) & 0xFF;
         aad[4] = recordLength & 0xFF;
 
-        const result = await decrypt(
-            ciphertext,
-            this.sessionKeys.serverWriteKey,
-            this.sessionKeys.serverWriteIV,
-            this.serverRecordSeq++,
-            aad as ByteBuffer,
-        );
+        let result: ByteBuffer;
+        try {
+            result = await decrypt(
+                ciphertext,
+                this.sessionKeys.serverWriteKey,
+                this.sessionKeys.serverWriteIV,
+                this.serverRecordSeq,
+                aad as ByteBuffer,
+                this.negotiatedCipherSuite,
+            );
+            // Only increment sequence counter AFTER successful decryption
+            this.serverRecordSeq++;
+        } catch (error) {
+            throw new TLSError(`TLS 1.3 handshake record decryption failed: ${(error as Error).message || "authentication tag verification failed"}`);
+        }
         return result;
     }
 
@@ -1972,12 +2005,39 @@ async function computeECDHESharedSecret(
 }
 
 /**
- * Encrypt data using AES-GCM
+ * Check if a cipher suite uses ChaCha20-Poly1305
+ */
+function isChaCha20CipherSuite(cipherSuite: number): boolean {
+    return cipherSuite === CipherSuite.TLS_CHACHA20_POLY1305_SHA256 ||
+           cipherSuite === CipherSuite.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 ||
+           cipherSuite === CipherSuite.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256;
+}
+
+/**
+ * Construct nonce for TLS: IV XOR sequence number (padded to 12 bytes)
+ */
+function constructNonce(iv: ByteBuffer, sequenceNumber: number): Uint8Array<ArrayBuffer> {
+    // Create a new ArrayBuffer and copy IV into it (ensures proper ArrayBuffer type)
+    const nonceBuffer = new ArrayBuffer(iv.length);
+    const nonce = new Uint8Array(nonceBuffer);
+    nonce.set(iv);
+
+    const seqView = new DataView(new ArrayBuffer(8));
+    seqView.setBigUint64(0, BigInt(sequenceNumber));
+    for (let i = 0; i < 8; i++) {
+        nonce[nonce.length - 8 + i] ^= seqView.getUint8(i);
+    }
+    return nonce;
+}
+
+/**
+ * Encrypt data using AES-GCM or ChaCha20-Poly1305 based on cipher suite
  * @param plaintext - The data to encrypt
  * @param key - The encryption key
  * @param iv - The base IV/nonce
  * @param sequenceNumber - Record sequence number for nonce XOR
  * @param additionalData - Additional authenticated data (AAD) - TLS 1.3 record header
+ * @param cipherSuite - The negotiated cipher suite (optional, defaults to AES-GCM)
  */
 async function encrypt(
     plaintext: ByteBuffer,
@@ -1985,8 +2045,21 @@ async function encrypt(
     iv: ByteBuffer,
     sequenceNumber: number,
     additionalData?: ByteBuffer,
+    cipherSuite?: number,
 ): Promise<ByteBuffer> {
-    // Import key
+    // Construct nonce: IV XOR sequence number
+    const nonce = constructNonce(iv, sequenceNumber);
+
+    // Use ChaCha20-Poly1305 if cipher suite requires it
+    if (cipherSuite && isChaCha20CipherSuite(cipherSuite)) {
+        // ChaCha20-Poly1305 encryption using @noble/ciphers
+        const chacha = chacha20poly1305(key, nonce, additionalData);
+        const result = chacha.encrypt(plaintext);
+        // Return as ByteBuffer (copy to ensure ArrayBuffer backing)
+        return new Uint8Array(result) as ByteBuffer;
+    }
+
+    // Default: AES-GCM encryption using Web Crypto API
     const cryptoKey = await crypto.subtle.importKey(
         "raw",
         key,
@@ -1995,24 +2068,16 @@ async function encrypt(
         ["encrypt"],
     );
 
-    // Construct nonce: IV XOR sequence number
-    const nonce = new Uint8Array(iv);
-    const seqView = new DataView(new ArrayBuffer(8));
-    seqView.setBigUint64(0, BigInt(sequenceNumber));
-    for (let i = 0; i < 8; i++) {
-        nonce[nonce.length - 8 + i] ^= seqView.getUint8(i);
-    }
-
     // Build encryption parameters
     const params: AesGcmParams = {
         name: "AES-GCM",
-        iv: nonce,
+        iv: nonce as Uint8Array<ArrayBuffer>,
         tagLength: 128,
     };
 
     // Add AAD if provided (required for TLS 1.3)
     if (additionalData) {
-        params.additionalData = additionalData;
+        params.additionalData = additionalData as Uint8Array<ArrayBuffer>;
     }
 
     // Encrypt
@@ -2026,12 +2091,13 @@ async function encrypt(
 }
 
 /**
- * Decrypt data using AES-GCM
+ * Decrypt data using AES-GCM or ChaCha20-Poly1305 based on cipher suite
  * @param ciphertext - The ciphertext (includes 16-byte auth tag)
  * @param key - The decryption key
  * @param iv - The base IV/nonce
  * @param sequenceNumber - Record sequence number for nonce XOR
  * @param additionalData - Additional authenticated data (AAD) - TLS 1.3 record header
+ * @param cipherSuite - The negotiated cipher suite (optional, defaults to AES-GCM)
  */
 async function decrypt(
     ciphertext: ByteBuffer,
@@ -2039,8 +2105,21 @@ async function decrypt(
     iv: ByteBuffer,
     sequenceNumber: number,
     additionalData?: ByteBuffer,
+    cipherSuite?: number,
 ): Promise<ByteBuffer> {
-    // Import key
+    // Construct nonce: IV XOR sequence number
+    const nonce = constructNonce(iv, sequenceNumber);
+
+    // Use ChaCha20-Poly1305 if cipher suite requires it
+    if (cipherSuite && isChaCha20CipherSuite(cipherSuite)) {
+        // ChaCha20-Poly1305 decryption using @noble/ciphers
+        const chacha = chacha20poly1305(key, nonce, additionalData);
+        const result = chacha.decrypt(ciphertext);
+        // Return as ByteBuffer (copy to ensure ArrayBuffer backing)
+        return new Uint8Array(result) as ByteBuffer;
+    }
+
+    // Default: AES-GCM decryption using Web Crypto API
     const cryptoKey = await crypto.subtle.importKey(
         "raw",
         key,
@@ -2049,24 +2128,16 @@ async function decrypt(
         ["decrypt"],
     );
 
-    // Construct nonce: IV XOR (sequence number padded to IV length)
-    const nonce = new Uint8Array(iv);
-    const seqView = new DataView(new ArrayBuffer(8));
-    seqView.setBigUint64(0, BigInt(sequenceNumber));
-    for (let i = 0; i < 8; i++) {
-        nonce[nonce.length - 8 + i] ^= seqView.getUint8(i);
-    }
-
     // Build decryption parameters
     const params: AesGcmParams = {
         name: "AES-GCM",
-        iv: nonce,
+        iv: nonce as Uint8Array<ArrayBuffer>,
         tagLength: 128,
     };
 
     // Add AAD if provided (required for TLS 1.3)
     if (additionalData) {
-        params.additionalData = additionalData;
+        params.additionalData = additionalData as Uint8Array<ArrayBuffer>;
     }
 
     // Decrypt
@@ -3610,16 +3681,22 @@ function getCipherSuiteNameFromCode(code: number): string {
 }
 
 /**
- * TLS 1.2 PRF (Pseudo-Random Function) using HMAC-SHA256
- * PRF(secret, label, seed) = P_SHA256(secret, label + seed)
+ * TLS 1.2 PRF (Pseudo-Random Function) with configurable hash
+ * PRF(secret, label, seed) = P_<hash>(secret, label + seed)
+ * @param cipherSuiteName - Optional cipher suite name to determine hash algorithm
  */
 async function tls12PRF(
     secret: ByteBuffer,
     label: ByteBuffer,
     seed: ByteBuffer,
     length: number,
+    cipherSuiteName?: string,
 ): Promise<ByteBuffer> {
     const labelAndSeed = concat(label, seed);
+    // SHA384 cipher suites use P_SHA384, others use P_SHA256
+    if (cipherSuiteName && cipherSuiteName.includes("SHA384")) {
+        return await pSHA384_local(secret, labelAndSeed, length);
+    }
     return await pSHA256_local(secret, labelAndSeed, length);
 }
 
@@ -3648,11 +3725,46 @@ async function pSHA256_local(
 }
 
 /**
+ * P_SHA384 expansion function (local implementation for SHA384 cipher suites)
+ */
+async function pSHA384_local(
+    secret: ByteBuffer,
+    seed: ByteBuffer,
+    length: number,
+): Promise<ByteBuffer> {
+    const result = new Uint8Array(length);
+    let offset = 0;
+    let a = seed; // A(0) = seed
+
+    while (offset < length) {
+        // A(i) = HMAC(secret, A(i-1))
+        a = await hmacSHA384_local(secret, a);
+        // HMAC(secret, A(i) + seed)
+        const output = await hmacSHA384_local(secret, concat(a, seed));
+        const toCopy = Math.min(output.byteLength, length - offset);
+        result.set(output.slice(0, toCopy), offset);
+        offset += toCopy;
+    }
+    return result;
+}
+
+/**
  * HMAC-SHA256 (local implementation)
  */
 async function hmacSHA256_local(key: ByteBuffer, data: ByteBuffer): Promise<ByteBuffer> {
     const cryptoKey = await crypto.subtle.importKey(
         "raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const sig = await crypto.subtle.sign("HMAC", cryptoKey, data);
+    return new Uint8Array(sig);
+}
+
+/**
+ * HMAC-SHA384 (local implementation)
+ */
+async function hmacSHA384_local(key: ByteBuffer, data: ByteBuffer): Promise<ByteBuffer> {
+    const cryptoKey = await crypto.subtle.importKey(
+        "raw", key, { name: "HMAC", hash: "SHA-384" }, false, ["sign"]
     );
     const sig = await crypto.subtle.sign("HMAC", cryptoKey, data);
     return new Uint8Array(sig);

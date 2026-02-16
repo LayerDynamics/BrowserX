@@ -30,6 +30,7 @@ export interface RequestOptions {
     followRedirects?: boolean;
     maxRedirects?: number;
     cache?: boolean | "force-cache" | "no-cache" | "no-store";
+    signal?: AbortSignal;
 }
 
 /**
@@ -120,11 +121,18 @@ export class RequestPipeline {
      * Make HTTP request
      */
     async request(url: string | URL, options: RequestOptions = {}): Promise<RequestResult> {
+        // Check if already aborted
+        if (options.signal?.aborted) {
+            throw options.signal.reason || new RequestPipelineError("Request aborted", "aborted");
+        }
+
         const startTime = Date.now();
         const timeout = options.timeout ?? 30000; // Default 30 second timeout
 
         // Wrap the request in a timeout
         const requestPromise = this.doRequest(url, options, startTime);
+
+        const racers: Promise<RequestResult | never>[] = [requestPromise];
 
         if (timeout > 0) {
             const timeoutPromise = new Promise<never>((_, reject) => {
@@ -135,10 +143,20 @@ export class RequestPipeline {
                     ));
                 }, timeout);
             });
-            return Promise.race([requestPromise, timeoutPromise]);
+            racers.push(timeoutPromise);
         }
 
-        return requestPromise;
+        // Add abort signal to the race if provided
+        if (options.signal) {
+            const abortPromise = new Promise<never>((_, reject) => {
+                options.signal!.addEventListener("abort", () => {
+                    reject(options.signal!.reason || new RequestPipelineError("Request aborted", "aborted"));
+                }, { once: true });
+            });
+            racers.push(abortPromise);
+        }
+
+        return Promise.race(racers);
     }
 
     /**
@@ -148,6 +166,11 @@ export class RequestPipeline {
         const timing: Partial<RequestTiming> = {};
 
         try {
+            // Check if aborted
+            if (options.signal?.aborted) {
+                throw options.signal.reason || new RequestPipelineError("Request aborted", "aborted");
+            }
+
             // Parse URL
             const parsedUrl = typeof url === "string" ? new URL(url) : url;
             const isSecure = parsedUrl.protocol === "https:";
@@ -180,6 +203,11 @@ export class RequestPipeline {
                 }
             }
 
+            // Check if aborted before DNS resolution
+            if (options.signal?.aborted) {
+                throw options.signal.reason || new RequestPipelineError("Request aborted", "aborted");
+            }
+
             // 1. DNS Resolution
             const dnsStart = Date.now();
             const addresses = await this.resolveDNS(parsedUrl.hostname);
@@ -193,6 +221,11 @@ export class RequestPipeline {
             }
 
             const targetIP = addresses[0]; // Use first resolved IP
+
+            // Check if aborted before connection acquire
+            if (options.signal?.aborted) {
+                throw options.signal.reason || new RequestPipelineError("Request aborted", "aborted");
+            }
 
             // 2. Connection Pool (acquire connection)
             // Pass hostname for TLS SNI - must be hostname, not IP address
@@ -229,8 +262,15 @@ export class RequestPipeline {
 
             // Read until response is complete
             while (true) {
+                // Check if aborted in read loop
+                if (options.signal?.aborted) {
+                    // Close the connection on abort
+                    await connection.socket.close();
+                    throw options.signal.reason || new RequestPipelineError("Request aborted", "aborted");
+                }
+
                 const chunk = new Uint8Array(16384); // 16KB chunks
-                const bytesRead = await connection.socket.read(chunk);
+                const bytesRead = await connection.socket.read(chunk, { signal: options.signal });
 
                 if (totalBytes === 0) {
                     timing.firstByte = Date.now() - respStart;

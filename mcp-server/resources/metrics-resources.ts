@@ -19,7 +19,21 @@ export function registerMetricsResources(
     "metrics://query-engine",
     async (uri) => {
       try {
-        const metrics = context.queryEngine.getMetrics();
+        // Only return metrics if query engine is already initialized
+        if (!context.serviceInitializer.isQueryEngineReady()) {
+          return {
+            contents: [
+              {
+                uri: uri.href,
+                mimeType: "application/json",
+                text: JSON.stringify({ initialized: false, message: "Query engine not yet initialized" }, null, 2),
+              },
+            ],
+          };
+        }
+
+        const queryEngine = await context.getQueryEngine();
+        const metrics = queryEngine.getMetrics();
 
         return {
           contents: [
@@ -50,7 +64,21 @@ export function registerMetricsResources(
     "metrics://browser-pool",
     async (uri) => {
       try {
-        const stats = context.sessionManager.getPoolStats();
+        // Only return metrics if session manager is already initialized
+        if (!context.serviceInitializer.isSessionManagerReady()) {
+          return {
+            contents: [
+              {
+                uri: uri.href,
+                mimeType: "application/json",
+                text: JSON.stringify({ initialized: false, message: "Session manager not yet initialized" }, null, 2),
+              },
+            ],
+          };
+        }
+
+        const sessionManager = await context.getSessionManager();
+        const stats = sessionManager.getPoolStats();
 
         return {
           contents: [
@@ -81,14 +109,27 @@ export function registerMetricsResources(
     "metrics://server",
     async (uri) => {
       try {
+        // Get session stats only if session manager is ready
+        let maxSessions = context.config.maxSessions ?? 10;
+        let activeSessions = 0;
+
+        if (context.serviceInitializer.isSessionManagerReady()) {
+          const sessionManager = await context.getSessionManager();
+          const poolStats = sessionManager.getPoolStats();
+          maxSessions = poolStats.maxSessions;
+          activeSessions = poolStats.activeSessions;
+        }
+
         const info = {
           name: context.config.name,
           version: context.config.version,
           permissions: context.permissionGuard.getPermissionSetName(),
           grantedPermissions: context.permissionGuard.getGrantedPermissions(),
-          maxSessions: context.sessionManager.getPoolStats().maxSessions,
-          activeSessions: context.sessionManager.getPoolStats().activeSessions,
-          queryEngineInitialized: context.queryEngine.isInitialized(),
+          maxSessions,
+          activeSessions,
+          queryEngineInitialized: context.serviceInitializer.isQueryEngineReady(),
+          sessionManagerInitialized: context.serviceInitializer.isSessionManagerReady(),
+          runtimeInitialized: context.serviceInitializer.isRuntimeReady(),
         };
 
         return {

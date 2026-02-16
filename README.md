@@ -17,6 +17,9 @@ All modules and crates are designed to work together as an integrated system:
 - **Browser Engine** - Complete rendering pipeline: HTML/CSS parsing, layout, JavaScript execution, DOM manipulation
 - **Proxy Engine** - Programmable traffic routing: middleware, load balancing, caching, request/response transformation
 - **Query Engine** - SQL-like interface: query browser state, DOM tree, network activity, and proxy metrics
+- **Runtime** - Unified orchestration layer integrating all engines with plugin architecture
+- **MCP Server** - Model Context Protocol server for AI-driven browser automation
+- **DevTools** - Chrome DevTools Protocol (CDP) implementation with 14 debugging domains
 
 **Rust Crates (via FFI):**
 
@@ -88,9 +91,21 @@ Understanding the Layers:
 
 ```ascii
 ┌─────────────────────────────────────┐
-│      Query Engine (WIP)             │  SQL-like queryable interface
+│      MCP Server                     │  Model Context Protocol API
+│  - AI tool integration              │  for LLM-driven browser control
+│  - stdio/HTTP transports            │  Screenshot & activity persistence
+└─────────────────────────────────────┘
+                 ↓
+┌─────────────────────────────────────┐
+│      Query Engine                   │  SQL-like queryable interface
 │  "SELECT * FROM browser             │  for humans and AI/ML
 │   WHERE url LIKE '%.example.com'"   │
+└─────────────────────────────────────┘
+                 ↓
+┌─────────────────────────────────────┐
+│      Runtime                        │  Unified orchestration layer
+│  - Integrates browser, proxy, query │  Plugin architecture, lifecycle
+│  - Plugin system with disposables   │  management, composable workflows
 └─────────────────────────────────────┘
                  ↓
 ┌─────────────────────────────────────┐
@@ -106,6 +121,7 @@ Understanding the Layers:
 │  - JavaScript execution (V8)        │  from DNS to pixels
 │  - Layout & Rendering               │
 │  - Network stack (TCP/TLS/HTTP)     │
+│  - WebGPU rendering (Deno native)   │
 └─────────────────────────────────────┘
                  ↓
       ┌──────────┴──────────┐
@@ -118,7 +134,7 @@ Understanding the Layers:
 └──────────────────┘  └──────────────────┘
 ```
 
-**Data Flow**: User requests flow down through the query engine → proxy engine → browser engine. The browser engine can then output to:
+**Data Flow**: User requests flow down through the MCP server → query engine → runtime → proxy engine → browser engine. The browser engine can then output to:
 
 - **Pixpane** for visual rendering (windows, UI, display)
 - **webgpu_x** for GPU compute workloads (ML, custom shaders, tensor operations)
@@ -144,10 +160,28 @@ BrowserX/
 │   │   └── cache/          # Cache manager with eviction policies
 │   └── gateway/            # Request/response routing and middleware
 │
-├── query-engine/            # Query Engine (TypeScript/Deno) - WIP
+├── query-engine/            # Query Engine (TypeScript/Deno)
 │   ├── parser/             # SQL-like query parser
 │   ├── executor/           # Query execution engine
 │   └── adapters/           # Adapters for browser/proxy backends
+│
+├── runtime/                 # Runtime (TypeScript/Deno)
+│   ├── src/
+│   │   ├── config/         # Runtime configuration
+│   │   ├── plugins/        # Plugin system (manager, loader, registry)
+│   │   └── types.ts        # Runtime type definitions
+│   └── tests/              # Runtime and plugin tests
+│
+├── mcp-server/              # MCP Server (TypeScript/Deno)
+│   ├── server/             # MCP server setup, transports (stdio/HTTP)
+│   ├── tools/              # Tool implementations (browser, query, proxy)
+│   ├── resources/          # Resource providers (page, metrics)
+│   ├── activity/           # Activity tracking and persistence
+│   └── session/            # Browser session management
+│
+├── dev-tools/               # DevTools Protocol (TypeScript/Deno)
+│   ├── src/domains/        # CDP domains (DOM, CSS, Network, etc.)
+│   └── tests/              # 847+ tests across 24 test files
 │
 ├── crates/
 │   ├── pixpane/            # Native windowing layer (Rust)
@@ -171,11 +205,13 @@ BrowserX/
 │   ├── wgpu/               # wgpu graphics library (for reference)
 │   └── [other references]  # Additional libraries for research
 │
-└── docs/
+└── resource/devdocs/        # Architecture documentation
     ├── Browser.md          # Complete browser architecture (30k+ tokens)
     ├── ProxyEngine.md      # Complete proxy architecture (57k+ tokens)
     ├── QueryEngine.md      # Query engine design
-    └── CLAUDE.md           # AI assistant guidance (for development)
+    ├── WEBGPU_RENDERING.md # WebGPU rendering architecture
+    ├── WEBGPU_FIXES.md     # Deno WebGPU workarounds
+    └── 01-19*.md           # 19 detailed browser subsystem documents
 ```
 
 ## 🚀 Getting Started
@@ -254,13 +290,68 @@ deno run --allow-all gen_bindings.ts
 deno run --allow-ffi --unstable-ffi tests/test.ts
 ```
 
+#### MCP Server (AI Integration)
+
+```bash
+# Start MCP server with stdio transport (for Claude Desktop)
+deno task mcp:start
+
+# Start with HTTP transport (for custom integrations)
+deno task mcp:start:http
+
+# Type check
+deno task mcp:check
+```
+
+**Claude Desktop Integration** - Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "browserx": {
+      "command": "deno",
+      "args": ["task", "mcp:start"],
+      "cwd": "/path/to/BrowserX"
+    }
+  }
+}
+```
+
+#### Runtime
+
+```bash
+# Type check
+deno task runtime:check
+
+# Run tests (includes plugin system tests)
+deno task runtime:test
+```
+
+## 📁 Data Persistence
+
+BrowserX automatically saves screenshots and activity data for debugging and analysis:
+
+```text
+.browserx/usage_data/
+├── screenshots/          # Saved screenshots organized by date
+│   └── YYYY-MM-DD/
+│       └── {timestamp}_{id}.png
+├── logs/                 # Daily activity logs in JSONL format
+│   └── YYYY-MM-DD.jsonl
+└── metadata/             # Session metadata
+    └── {sessionId}.json
+```
+
+The `browser_screenshot` MCP tool returns both the image data AND the saved file path, enabling AI agents to reference previously captured screenshots.
+
 ## 📚 Documentation
 
 ### Architecture Guides
 
-- **[Browser.md](./Browser.md)** - Complete browser architecture: multi-process model, page load sequence, rendering pipeline, network stack
-- **[ProxyEngine.md](./ProxyEngine.md)** - Proxy architecture: layered design, connection pooling, caching, middleware
-- **[QueryEngine.md](./QueryEngine.md)** - Query engine design and composability model
+- **[Browser.md](./resource/devdocs/Browser.md)** - Complete browser architecture: multi-process model, page load sequence, rendering pipeline, network stack
+- **[ProxyEngine.md](./resource/devdocs/ProxyEngine.md)** - Proxy architecture: layered design, connection pooling, caching, middleware
+- **[QueryEngine.md](./resource/devdocs/QueryEngine.md)** - Query engine design and composability model
+- **[WEBGPU_RENDERING.md](./resource/devdocs/WEBGPU_RENDERING.md)** - WebGPU rendering architecture for Deno
 - **[browser/docs/](./browser/docs/)** - 19 detailed technical documents covering every browser subsystem
 
 ### Component Documentation
@@ -268,6 +359,8 @@ deno run --allow-ffi --unstable-ffi tests/test.ts
 - **[browser/README.md](./browser/README.md)** - Browser engine API and usage
 - **[proxy-engine/README.md](./proxy-engine/README.md)** - Proxy engine configuration and middleware
 - **[query-engine/README.md](./query-engine/README.md)** - Query syntax and execution
+- **[runtime/README.md](./runtime/README.md)** - Runtime lifecycle, configuration, plugin system
+- **[mcp-server/README.md](./mcp-server/README.md)** - MCP server tools, resources, AI integration
 - **[crates/pixpane/README.md](./crates/pixpane/README.md)** - FFI bindings and window management
 - **[crates/webgpu_x/README.md](./crates/webgpu_x/README.md)** - GPU compute, kernels, and tensor operations
 
@@ -331,6 +424,7 @@ cd crates/webgpu_x && cargo test
 - CSS parser: Selector matching, specificity calculation, cascade resolution
 - JavaScript engine: V8 isolate management, execution contexts, heap management
 - Storage types: Interfaces for localStorage, sessionStorage, IndexedDB, cookies, quota management
+- WebGPU rendering: Offscreen rendering via Deno's native WebGPU, GPU readback, WGSL compositor shaders
 
 **Proxy Engine** :
 
@@ -376,6 +470,35 @@ cd crates/webgpu_x && cargo test
 - GPU infrastructure: Device management, queue handling, buffer operations
 - FFI bindings: Comprehensive Deno integration for GPU compute
 - Shader support: WGSL type mapping, storage qualifiers
+- GPU readback: Texture-to-CPU data transfer for screenshot capture
+- Bind group creation: Resource binding for render pipelines
+- Command encoding: Render pass commands and queue submission
+
+**Runtime** :
+
+- Unified orchestration: Integrates browser, proxy, and query engines
+- Plugin system: PluginManager with topological sort activation, reverse deactivation
+- Plugin lifecycle: All contributions return Disposable for automatic cleanup
+- Plugin registry: Discovery, validation, and loading of plugins
+- Configuration: RuntimeConfig with plugin enablement (opt-in by default)
+
+**MCP Server** :
+
+- Model Context Protocol: Full MCP SDK integration (v1.12.0)
+- Browser tools: `browser_navigate`, `browser_screenshot`, `browser_click`, `browser_type`, `browser_evaluate`
+- Query tools: `browserx_query`, `browserx_query_async`, `browserx_query_explain`
+- Proxy tools: `proxy_cache_get`, `proxy_cache_set`, `proxy_add_interceptor`
+- Transports: stdio (default for Claude Desktop), HTTP on port 9847
+- Activity tracking: Persistent file-based logging of screenshots and activities
+- Data persistence: Screenshots saved to `.browserx/usage_data/screenshots/`, activity logs in JSONL format
+- Lazy initialization: Fast startup (<100ms) with services initialized on first use
+
+**DevTools** :
+
+- Chrome DevTools Protocol: 14 debugging domains implemented
+- Domains: Runtime, Debugger, DOM, CSS, Network, Storage, Console, Page, Emulation, Overlay, Security, Rendering, Performance, Memory
+- Event system: EventBus for cross-domain pub/sub communication
+- Test coverage: 847+ tests across 24 test files
 
 ### 🚧 In Progress
 
@@ -403,7 +526,7 @@ cd crates/webgpu_x && cargo test
 
 **Integration:**
 
-- End-to-end data flow: Query Engine → Proxy Engine → Browser Engine → Pixpane
+- End-to-end data flow: MCP Server → Query Engine → Runtime → Proxy Engine → Browser Engine
 - Cross-layer communication: Event propagation, state synchronization
 - Performance optimization: Pipeline parallelization, caching strategies
 

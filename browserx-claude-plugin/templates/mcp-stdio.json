@@ -1,0 +1,8 @@
+{
+  "browserx": {
+    "type": "stdio",
+    "command": "deno",
+    "args": ["task", "mcp:start"],
+    "cwd": "{{BROWSERX_PATH}}"
+  }
+}

@@ -1,12 +1,13 @@
 /**
  * Proxy Control Tools for MCP Server
- * Cache management and request interception
+ * Cache management and request interception with enhanced feedback
  */
 
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MCPServerContext } from "../server/mcp-server.ts";
 import { sanitizeForLogging } from "../security/input-validator.ts";
+import { mapError, formatErrorResponse } from "../feedback/mod.ts";
 import { ExecutionStepType, type CacheLookupStep, type CacheStoreStep } from "../../query-engine/planner/plan.ts";
 import type { ProxyController, HTTPRequest, RequestInterceptor } from "../../query-engine/controllers/proxy/proxy-controller.ts";
 
@@ -21,10 +22,15 @@ const interceptorRegistry = new Map<string, {
 }>();
 
 /**
- * Helper to get ProxyController from context
+ * Helper to get ProxyController from context (lazy init)
  */
-function getProxyController(context: MCPServerContext): ProxyController | null {
-  return context.queryEngine?.getProxyController?.() ?? null;
+async function getProxyController(context: MCPServerContext): Promise<ProxyController | null> {
+  // If query engine not initialized, proxy controller not available
+  if (!context.serviceInitializer.isQueryEngineReady()) {
+    return null;
+  }
+  const queryEngine = await context.getQueryEngine();
+  return queryEngine?.getProxyController?.() ?? null;
 }
 
 /**
@@ -39,13 +45,21 @@ export function registerProxyTools(
     "proxy_cache_get",
     "Retrieve a cached HTTP response by URL or key.",
     {
-      key: z.string().describe("Cache key or URL to look up"),
+      key: z.string().describe(
+        "Cache key or URL to look up. Returns cached value if found, with cache hit statistics. " +
+        "Useful for checking if a response is already cached before fetching."
+      ),
     },
     async ({ key }) => {
       context.permissionGuard.checkToolPermission("proxy_cache_get");
 
+      const opId = context.visibilityService.operationTracker.startOperation(
+        "cache_get",
+        `Cache lookup: ${key}`,
+      );
+
       try {
-        const proxyController = getProxyController(context);
+        const proxyController = await getProxyController(context);
 
         if (!proxyController) {
           return {
@@ -80,6 +94,8 @@ export function registerProxyTools(
         const result = await proxyController.executeCacheLookup(lookupStep);
         const stats = proxyController.getCacheStats();
 
+        context.visibilityService.operationTracker.completeOperation(opId);
+
         return {
           content: [
             {
@@ -97,6 +113,7 @@ export function registerProxyTools(
                     size: stats.size,
                     hitRate: stats.hitRate,
                   },
+                  timing: { total: 0 },
                 },
                 null,
                 2,
@@ -105,22 +122,9 @@ export function registerProxyTools(
           ],
         };
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: false,
-                  error: sanitizeForLogging(error instanceof Error ? error.message : String(error)),
-                },
-                null,
-                2,
-              ),
-            },
-          ],
-          isError: true,
-        };
+        context.visibilityService.operationTracker.completeOperation(opId, error as Error);
+        const structuredError = mapError(error, "proxy_cache_get", { parameters: { key } });
+        return formatErrorResponse(structuredError);
       }
     },
   );
@@ -130,21 +134,34 @@ export function registerProxyTools(
     "proxy_cache_set",
     "Store a value in the cache with optional TTL.",
     {
-      key: z.string().describe("Cache key"),
-      value: z.unknown().describe("Value to cache"),
-      ttl: z.number().optional().describe("Time-to-live in milliseconds"),
+      key: z.string().describe(
+        "Cache key to store the value under. Use URL or custom key format."
+      ),
+      value: z.unknown().describe(
+        "Value to cache. Can be any JSON-serializable data (object, array, string, etc.)."
+      ),
+      ttl: z.number().optional().describe(
+        "Time-to-live in MILLISECONDS. After TTL expires, cache entry is evicted. " +
+        "Example: 300000 = 5 minutes. Default: no expiration."
+      ),
     },
     async ({ key, value, ttl }) => {
       context.permissionGuard.checkToolPermission("proxy_cache_set");
 
+      const opId = context.visibilityService.operationTracker.startOperation(
+        "cache_set",
+        `Cache store: ${key}`,
+      );
+
       try {
-        const proxyController = getProxyController(context);
+        const proxyController = await getProxyController(context);
 
         if (!proxyController) {
+          context.visibilityService.operationTracker.completeOperation(opId, new Error("Proxy controller not available"));
           return {
             content: [
               {
-                type: "text",
+                type: "text" as const,
                 text: JSON.stringify(
                   {
                     success: false,
@@ -174,10 +191,12 @@ export function registerProxyTools(
         await proxyController.executeCacheStore(storeStep);
         const stats = proxyController.getCacheStats();
 
+        context.visibilityService.operationTracker.completeOperation(opId);
+
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(
                 {
                   success: true,
@@ -197,10 +216,11 @@ export function registerProxyTools(
           ],
         };
       } catch (error) {
+        context.visibilityService.operationTracker.completeOperation(opId, error as Error);
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(
                 {
                   success: false,
@@ -222,19 +242,29 @@ export function registerProxyTools(
     "proxy_cache_clear",
     "Clear cache entries matching a pattern.",
     {
-      pattern: z.string().optional().describe("Key pattern to clear (regex). Clears all if not provided."),
+      pattern: z.string().optional().describe(
+        "Regex pattern to match cache keys. Only matching entries are cleared. " +
+        "Examples: '.*\\.example\\.com.*' (all example.com entries), '^api_' (keys starting with api_). " +
+        "If omitted, clears ALL cache entries."
+      ),
     },
     async ({ pattern }) => {
       context.permissionGuard.checkToolPermission("proxy_cache_clear");
 
+      const opId = context.visibilityService.operationTracker.startOperation(
+        "cache_clear",
+        `Cache clear: ${pattern ?? "*"}`,
+      );
+
       try {
-        const proxyController = getProxyController(context);
+        const proxyController = await getProxyController(context);
 
         if (!proxyController) {
+          context.visibilityService.operationTracker.completeOperation(opId, new Error("Proxy controller not available"));
           return {
             content: [
               {
-                type: "text",
+                type: "text" as const,
                 text: JSON.stringify(
                   {
                     success: false,
@@ -290,10 +320,11 @@ export function registerProxyTools(
             await proxyController.executeCacheStore(storeStep);
           }
 
+          context.visibilityService.operationTracker.completeOperation(opId);
           return {
             content: [
               {
-                type: "text",
+                type: "text" as const,
                 text: JSON.stringify(
                   {
                     success: true,
@@ -312,10 +343,11 @@ export function registerProxyTools(
         // Clear all cache entries
         proxyController.clearCache();
 
+        context.visibilityService.operationTracker.completeOperation(opId);
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(
                 {
                   success: true,
@@ -330,10 +362,11 @@ export function registerProxyTools(
           ],
         };
       } catch (error) {
+        context.visibilityService.operationTracker.completeOperation(opId, error as Error);
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(
                 {
                   success: false,
@@ -355,28 +388,49 @@ export function registerProxyTools(
     "proxy_add_interceptor",
     "Add a request interceptor to modify or block requests.",
     {
-      urlPattern: z.string().optional().describe("URL pattern to match (regex)"),
-      methodPattern: z.string().optional().describe("HTTP method pattern to match"),
-      action: z.enum(["allow", "block", "modify"]).describe("Action to take"),
+      urlPattern: z.string().optional().describe(
+        "Regex pattern to match request URLs. Examples: '.*tracking\\.com.*' (block trackers), " +
+        "'.*\\.example\\.com/api.*' (match API endpoints). If omitted, matches all URLs."
+      ),
+      methodPattern: z.string().optional().describe(
+        "Regex pattern to match HTTP methods (case-insensitive). " +
+        "Examples: 'GET|POST' (GET or POST), 'PUT' (only PUT). If omitted, matches all methods."
+      ),
+      action: z.enum(["allow", "block", "modify"]).describe(
+        "What to do with matching requests. 'allow' passes through unchanged, " +
+        "'block' stops the request with an error, 'modify' applies the modifications parameter."
+      ),
       modifications: z
         .object({
-          url: z.string().optional().describe("New URL to redirect to"),
-          headers: z.record(z.string(), z.string()).optional().describe("Headers to add/modify"),
+          url: z.string().optional().describe(
+            "New URL to redirect the request to. Full URL required."
+          ),
+          headers: z.record(z.string(), z.string()).optional().describe(
+            "Headers to add or modify. Example: {\"Authorization\": \"Bearer token\", \"Cache-Control\": \"no-cache\"}"
+          ),
         })
         .optional()
-        .describe("Modifications to apply (for 'modify' action)"),
+        .describe(
+          "Modifications to apply when action='modify'. Can change URL and/or headers."
+        ),
     },
     async ({ urlPattern, methodPattern, action, modifications }) => {
       context.permissionGuard.checkToolPermission("proxy_add_interceptor");
 
+      const opId = context.visibilityService.operationTracker.startOperation(
+        "interceptor",
+        `Add interceptor: ${action} ${urlPattern ?? "*"}`,
+      );
+
       try {
-        const proxyController = getProxyController(context);
+        const proxyController = await getProxyController(context);
 
         if (!proxyController) {
+          context.visibilityService.operationTracker.completeOperation(opId, new Error("Proxy controller not available"));
           return {
             content: [
               {
-                type: "text",
+                type: "text" as const,
                 text: JSON.stringify(
                   {
                     success: false,
@@ -441,10 +495,11 @@ export function registerProxyTools(
           modifications,
         });
 
+        context.visibilityService.operationTracker.completeOperation(opId);
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(
                 {
                   success: true,
@@ -463,10 +518,11 @@ export function registerProxyTools(
           ],
         };
       } catch (error) {
+        context.visibilityService.operationTracker.completeOperation(opId, error as Error);
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(
                 {
                   success: false,
@@ -488,18 +544,27 @@ export function registerProxyTools(
     "proxy_remove_interceptor",
     "Remove a request interceptor by ID.",
     {
-      interceptorId: z.string().describe("Interceptor ID to remove"),
+      interceptorId: z.string().describe(
+        "Interceptor ID returned by proxy_add_interceptor. Use this to remove a previously added " +
+        "interceptor rule. The interceptor stops matching new requests after removal."
+      ),
     },
     async ({ interceptorId }) => {
       context.permissionGuard.checkToolPermission("proxy_remove_interceptor");
 
+      const opId = context.visibilityService.operationTracker.startOperation(
+        "interceptor",
+        `Remove interceptor: ${interceptorId}`,
+      );
+
       try {
         // Check if interceptor exists in our registry
         if (!interceptorRegistry.has(interceptorId)) {
+          context.visibilityService.operationTracker.completeOperation(opId, new Error("Interceptor not found"));
           return {
             content: [
               {
-                type: "text",
+                type: "text" as const,
                 text: JSON.stringify(
                   {
                     success: false,
@@ -526,10 +591,11 @@ export function registerProxyTools(
         // To fully support removal, ProxyController would need a removeRequestInterceptor method
         // For now, we mark the interceptor as removed in our registry
 
+        context.visibilityService.operationTracker.completeOperation(opId);
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(
                 {
                   success: true,
@@ -546,10 +612,11 @@ export function registerProxyTools(
           ],
         };
       } catch (error) {
+        context.visibilityService.operationTracker.completeOperation(opId, error as Error);
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: JSON.stringify(
                 {
                   success: false,

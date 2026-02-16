@@ -57,6 +57,9 @@ interface ShaderProgram {
 /**
  * CompositorThread
  * Coordinates GPU rendering and layer compositing
+ *
+ * Supports headless mode for environments without GPU/WebGL (e.g., Deno, tests).
+ * In headless mode, compositing operations are no-ops and getPixels() returns blank data.
  */
 export class CompositorThread {
     private canvas: HTMLCanvasElement | null = null;
@@ -70,6 +73,7 @@ export class CompositorThread {
     private lastCompositeTime: number = 0;
     private lastUploadTime: number = 0;
     private layerTree: LayerTree | null = null;
+    private headlessMode: boolean = false;
 
     constructor(config?: Partial<CompositorConfig>) {
         this.config = {
@@ -85,12 +89,23 @@ export class CompositorThread {
     }
 
     /**
+     * Check if compositor is running in headless mode (no GPU)
+     */
+    isHeadless(): boolean {
+        return this.headlessMode;
+    }
+
+    /**
      * Initialize compositor with canvas
+     *
+     * If WebGL context is not available, enters headless mode where
+     * compositing operations are no-ops and getPixels() returns blank data.
+     * This enables operation in environments without GPU support (Deno, tests).
      */
     initialize(canvas: HTMLCanvasElement): void {
         this.canvas = canvas;
 
-        // Get WebGL context
+        // Try to get WebGL context
         const gl = canvas.getContext("webgl", {
             alpha: true,
             antialias: true,
@@ -101,12 +116,15 @@ export class CompositorThread {
         });
 
         if (!gl) {
-            throw new Error("Failed to get WebGL context");
+            // Enter headless mode - no GPU rendering available
+            // This is expected in Deno runtime or headless environments
+            this.headlessMode = true;
+            return;
         }
 
         this.gl = gl;
 
-        // Initialize layer manager
+        // Initialize layer manager with WebGL context
         this.layerManager.initialize(gl);
 
         // Set up WebGL state
@@ -223,6 +241,8 @@ export class CompositorThread {
 
     /**
      * Start compositor loop
+     *
+     * In headless mode, this is a no-op since there's no frame loop needed.
      */
     start(): void {
         if (this.isRunning) {
@@ -231,6 +251,11 @@ export class CompositorThread {
 
         this.isRunning = true;
         this.frameCount = 0;
+
+        // In headless mode, no frame loop needed
+        if (this.headlessMode) {
+            return;
+        }
 
         if (this.config.enableVSync) {
             // Start vsync loop
@@ -322,9 +347,16 @@ export class CompositorThread {
     /**
      * Update layer tree
      * Creates compositor layers from paint layers
+     *
+     * In headless mode, stores the layer tree but doesn't create GPU resources.
      */
     updateLayerTree(layerTree: LayerTree): void {
         this.layerTree = layerTree;
+
+        // In headless mode, just store the tree but don't create GPU resources
+        if (this.headlessMode) {
+            return;
+        }
 
         // Clear existing layers
         this.layerManager.disposeAll();
@@ -339,8 +371,16 @@ export class CompositorThread {
     /**
      * Composite layers synchronously
      * Used for non-vsync rendering
+     *
+     * In headless mode, this is a no-op since there's no GPU to composite to.
      */
     composite(): void {
+        // In headless mode, compositing is a no-op
+        if (this.headlessMode) {
+            this.frameCount++;
+            return;
+        }
+
         if (!this.isRunning) {
             // Manual composite
             const timing: FrameTiming = {
@@ -358,12 +398,17 @@ export class CompositorThread {
      * Resize compositor
      */
     resize(width: number, height: number): void {
-        if (!this.canvas || !this.gl) {
+        if (!this.canvas) {
             return;
         }
 
         this.canvas.width = width;
         this.canvas.height = height;
+
+        // In headless mode, just update canvas dimensions
+        if (this.headlessMode || !this.gl) {
+            return;
+        }
 
         this.gl.viewport(0, 0, width, height);
 
@@ -378,13 +423,17 @@ export class CompositorThread {
      * Get statistics
      */
     getStats(): CompositorStats {
+        // In headless mode, layer manager may not be initialized with GL
+        const layerCount = this.headlessMode ? 0 : this.layerManager.getAllLayers().length;
+        const textureMemory = this.headlessMode ? 0 : this.layerManager.getTotalTextureMemory();
+
         return {
             frameCount: this.frameCount,
             averageFPS: this.vsync.getAverageFPS(),
             compositeTime: this.lastCompositeTime,
             uploadTime: this.lastUploadTime,
-            layerCount: this.layerManager.getAllLayers().length,
-            textureMemory: this.layerManager.getTotalTextureMemory(),
+            layerCount,
+            textureMemory,
             vsyncStats: this.vsync.getStats(),
         };
     }
@@ -483,15 +532,28 @@ export class CompositorThread {
 
     /**
      * Get pixels from the current composite
+     *
+     * In headless mode, returns white pixels (blank canvas).
      */
     async getPixels(): Promise<Uint8ClampedArray> {
-        if (!this.gl || !this.canvas) {
+        if (!this.canvas) {
             throw new Error("Compositor not initialized");
         }
 
         const width = this.canvas.width;
         const height = this.canvas.height;
         const pixels = new Uint8ClampedArray(width * height * 4);
+
+        // In headless mode, return white pixels (RGBA: 255, 255, 255, 255)
+        if (this.headlessMode || !this.gl) {
+            for (let i = 0; i < pixels.length; i += 4) {
+                pixels[i] = 255;     // R
+                pixels[i + 1] = 255; // G
+                pixels[i + 2] = 255; // B
+                pixels[i + 3] = 255; // A
+            }
+            return pixels;
+        }
 
         this.gl.readPixels(0, 0, width, height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, pixels);
 

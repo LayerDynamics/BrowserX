@@ -5,6 +5,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { calculateEffectiveTimeout } from "../../timeout/mod.ts";
 
 /**
  * HTTP server configuration
@@ -178,12 +179,21 @@ export async function startHttpServer(
 
           session.lastActivity = Date.now();
 
-          // Wait for response with timeout
+          // Determine timeout based on tool tier (for tools/call requests)
+          let requestTimeout = 30000; // Default fallback
+          if (body.method === "tools/call" && body.params?.name) {
+            const toolName = body.params.name as string;
+            const userTimeout = body.params.arguments?.timeout as number | undefined;
+            const timeoutInfo = calculateEffectiveTimeout(toolName, userTimeout);
+            requestTimeout = timeoutInfo.timeout;
+          }
+
+          // Wait for response with tier-appropriate timeout
           const responsePromise = new Promise<unknown>((resolve, reject) => {
             const timeoutId = setTimeout(() => {
               session!.pendingRequests.delete(body.id);
-              reject(new Error("Request timeout"));
-            }, 30000);
+              reject(new Error(`Request timeout after ${requestTimeout}ms`));
+            }, requestTimeout);
 
             // Register this request as pending
             session!.pendingRequests.set(body.id, {

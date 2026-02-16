@@ -1,0 +1,52 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.ns", "deno.unstable", "esnext"],
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": false,
+    "noFallthroughCasesInSwitch": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "experimentalDecorators": false
+  },
+  "lint": {
+    "include": ["."],
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": ["no-explicit-any", "no-unused-vars"]
+    }
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 4,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  },
+  "tasks": {
+    "check": "deno check mod.ts",
+    "check:watch": "deno check --watch mod.ts",
+    "test": "deno test --allow-all --parallel",
+    "lint": "deno lint",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check"
+  },
+  "test": {
+    "include": ["tests/**/*.ts"]
+  },
+  "exclude": [
+    "node_modules",
+    ".git"
+  ],
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.16"
+  }
+}

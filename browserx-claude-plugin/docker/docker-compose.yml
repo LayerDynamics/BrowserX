@@ -1,0 +1,18 @@
+services:
+  browserx-mcp:
+    build:
+      context: ../..
+      dockerfile: browserx-claude-plugin/docker/Dockerfile
+    ports:
+      - "9847:9847"
+    environment:
+      - MCP_TRANSPORT=http
+      - MCP_PORT=9847
+      - MCP_MAX_SESSIONS=10
+      - MCP_PERMISSIONS=AUTOMATION
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9847/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

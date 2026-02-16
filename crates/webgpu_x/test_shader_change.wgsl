@@ -1,0 +1,1 @@
+@compute @workgroup_size(128) fn main() {}

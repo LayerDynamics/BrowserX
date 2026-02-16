@@ -49,6 +49,27 @@ export interface SocketOptions {
 }
 
 /**
+ * Read options with optional abort signal
+ */
+export interface ReadOptions {
+    signal?: AbortSignal;
+}
+
+/**
+ * Write options with optional abort signal
+ */
+export interface WriteOptions {
+    signal?: AbortSignal;
+}
+
+/**
+ * Connect options with optional abort signal
+ */
+export interface ConnectOptions extends SocketOptions {
+    signal?: AbortSignal;
+}
+
+/**
  * Socket implementation using OS NetworkStack
  */
 export class SocketImpl implements Socket {
@@ -99,15 +120,26 @@ export class SocketImpl implements Socket {
 
     /**
      * Connect to remote host
+     *
+     * Deno's socket APIs don't support AbortSignal natively.
+     * We use Promise.race as a workaround to enable cancellation.
      */
-    async connect(host: string, port: Port, options?: SocketOptions): Promise<void> {
+    async connect(host: string, port: Port, options?: ConnectOptions): Promise<void> {
+        // Check if already aborted
+        if (options?.signal?.aborted) {
+            throw options.signal.reason || new SocketError("Connect aborted");
+        }
+
         if (this._state !== SocketStateEnum.CLOSED) {
             throw new Error(`Cannot connect from state ${this._state}`);
         }
 
-        // Store options if provided
+        // Store socket options if provided (excluding signal)
         if (options) {
-            this._options = { ...this._options, ...options };
+            const { signal: _signal, ...socketOptions } = options;
+            if (Object.keys(socketOptions).length > 0) {
+                this._options = { ...this._options, ...socketOptions };
+            }
         }
 
         this._state = SocketStateEnum.OPENING;
@@ -117,8 +149,21 @@ export class SocketImpl implements Socket {
             const socketTypeStr = this.socketType === SocketType.STREAM ? "tcp" : "udp";
             this.osSocket = this.networkStack.createSocket(this.addressFamily, socketTypeStr);
 
-            // Connect to remote host
-            await this.networkStack.connect(this.osSocket, host, port);
+            // Connect to remote host with optional abort
+            const connectPromise = this.networkStack.connect(this.osSocket, host, port);
+
+            if (options?.signal) {
+                await Promise.race([
+                    connectPromise,
+                    new Promise<never>((_, reject) => {
+                        options.signal!.addEventListener("abort", () => {
+                            reject(options.signal!.reason || new SocketError("Connect aborted"));
+                        }, { once: true });
+                    }),
+                ]);
+            } else {
+                await connectPromise;
+            }
 
             // Update state and addresses
             this._state = SocketStateEnum.OPEN;
@@ -140,6 +185,11 @@ export class SocketImpl implements Socket {
                 this.setOptions(this._options);
             }
         } catch (error) {
+            // Don't set error state for abort errors
+            if (error instanceof SocketError && error.message === "Connect aborted") {
+                this._state = SocketStateEnum.CLOSED;
+                throw error;
+            }
             this._state = SocketStateEnum.ERROR;
             SocketStatsUtil.recordError(this._stats);
             throw new SocketError(`Connection failed: ${(error as Error).message}`, error as Error);
@@ -148,8 +198,16 @@ export class SocketImpl implements Socket {
 
     /**
      * Read data from socket
+     *
+     * Deno's socket APIs don't support AbortSignal natively.
+     * We use Promise.race as a workaround to enable cancellation.
      */
-    async read(buffer: ByteBuffer): Promise<number | null> {
+    async read(buffer: ByteBuffer, options?: ReadOptions): Promise<number | null> {
+        // Check if already aborted
+        if (options?.signal?.aborted) {
+            throw options.signal.reason || new SocketError("Read aborted");
+        }
+
         if (this._state !== SocketStateEnum.OPEN) {
             throw new Error(`Cannot read from socket in state ${this._state}`);
         }
@@ -159,7 +217,29 @@ export class SocketImpl implements Socket {
         }
 
         try {
-            const bytesRead = await this.networkStack.read(this.osSocket, buffer);
+            const readPromise = this.networkStack.read(this.osSocket, buffer);
+
+            // If signal provided, race with abort
+            if (options?.signal) {
+                const bytesRead = await Promise.race([
+                    readPromise,
+                    new Promise<never>((_, reject) => {
+                        options.signal!.addEventListener("abort", () => {
+                            reject(options.signal!.reason || new SocketError("Read aborted"));
+                        }, { once: true });
+                    }),
+                ]);
+
+                // EOF indicated by null
+                if (bytesRead === null) {
+                    return null;
+                }
+
+                SocketStatsUtil.recordReadOperation(this._stats, bytesRead);
+                return bytesRead;
+            }
+
+            const bytesRead = await readPromise;
 
             // EOF indicated by null
             if (bytesRead === null) {
@@ -169,6 +249,10 @@ export class SocketImpl implements Socket {
             SocketStatsUtil.recordReadOperation(this._stats, bytesRead);
             return bytesRead;
         } catch (error) {
+            // Don't set error state for abort errors
+            if (error instanceof SocketError && error.message === "Read aborted") {
+                throw error;
+            }
             this._state = SocketStateEnum.ERROR;
             SocketStatsUtil.recordError(this._stats);
             throw new SocketError(`Read failed: ${(error as Error).message}`, error as Error);
@@ -177,8 +261,16 @@ export class SocketImpl implements Socket {
 
     /**
      * Write data to socket
+     *
+     * Deno's socket APIs don't support AbortSignal natively.
+     * We use Promise.race as a workaround to enable cancellation.
      */
-    async write(data: ByteBuffer): Promise<number> {
+    async write(data: ByteBuffer, options?: WriteOptions): Promise<number> {
+        // Check if already aborted
+        if (options?.signal?.aborted) {
+            throw options.signal.reason || new SocketError("Write aborted");
+        }
+
         if (this._state !== SocketStateEnum.OPEN) {
             throw new Error(`Cannot write to socket in state ${this._state}`);
         }
@@ -188,10 +280,31 @@ export class SocketImpl implements Socket {
         }
 
         try {
-            const bytesWritten = await this.networkStack.write(this.osSocket, data);
+            const writePromise = this.networkStack.write(this.osSocket, data);
+
+            // If signal provided, race with abort
+            if (options?.signal) {
+                const bytesWritten = await Promise.race([
+                    writePromise,
+                    new Promise<never>((_, reject) => {
+                        options.signal!.addEventListener("abort", () => {
+                            reject(options.signal!.reason || new SocketError("Write aborted"));
+                        }, { once: true });
+                    }),
+                ]);
+
+                SocketStatsUtil.recordWriteOperation(this._stats, bytesWritten);
+                return bytesWritten;
+            }
+
+            const bytesWritten = await writePromise;
             SocketStatsUtil.recordWriteOperation(this._stats, bytesWritten);
             return bytesWritten;
         } catch (error) {
+            // Don't set error state for abort errors
+            if (error instanceof SocketError && error.message === "Write aborted") {
+                throw error;
+            }
             this._state = SocketStateEnum.ERROR;
             SocketStatsUtil.recordError(this._stats);
             throw new SocketError(`Write failed: ${(error as Error).message}`, error as Error);

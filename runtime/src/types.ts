@@ -25,7 +25,10 @@ export type ComponentId =
   | "event-coordinator"
   | "resource-manager"
   | "metrics-collector"
-  | "browser-pool";
+  | "browser-pool"
+  | "plugin-manager"
+  | "session-manager"
+  | (string & Record<never, never>); // Allow plugin-contributed component IDs (e.g., "plugin:analytics:health")
 
 /**
  * State of an individual component
@@ -55,7 +58,15 @@ export type RuntimeEvent =
   | { type: "shutdown_complete"; duration: number }
   | { type: "health_check"; status: HealthStatus; details: HealthCheckResult }
   | { type: "event_loop_started"; loopType: "proxy" | "browser"; id?: string }
-  | { type: "event_loop_stopped"; loopType: "proxy" | "browser"; id?: string };
+  | { type: "event_loop_stopped"; loopType: "proxy" | "browser"; id?: string }
+  | { type: "plugin_activating"; pluginId: string }
+  | { type: "plugin_activated"; pluginId: string }
+  | { type: "plugin_deactivating"; pluginId: string }
+  | { type: "plugin_deactivated"; pluginId: string }
+  | { type: "plugin_error"; pluginId: string; error: Error }
+  | { type: "session_created"; sessionId: string; instanceId: string }
+  | { type: "session_closed"; sessionId: string; instanceId: string; reason: string }
+  | { type: "session_expired"; sessionId: string; instanceId: string };
 
 /**
  * Runtime event listener callback

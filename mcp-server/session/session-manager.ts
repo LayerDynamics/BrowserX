@@ -1,10 +1,16 @@
 /**
  * Session Manager for browser session pooling
  * Manages browser instances and their lifecycle
+ *
+ * When a BrowserPool is provided (via Runtime integration), instances are
+ * acquired from and released back to the pool instead of being created/destroyed
+ * directly. This enables unified lifecycle management, health checking, and metrics
+ * through the Runtime.
  */
 
 import { BrowserEngine, BrowserPage } from "@browserx/browser";
 import { Permission } from "@browserx/query-engine";
+import type { BrowserPool, BrowserInstance, RuntimeEvent } from "@browserx/runtime";
 
 /**
  * Browser session state
@@ -12,6 +18,7 @@ import { Permission } from "@browserx/query-engine";
 export interface BrowserSession {
   readonly id: string;
   readonly browserEngine: BrowserEngine;
+  readonly poolInstanceId?: string;
   readonly createdAt: number;
   lastUsedAt: number;
   readonly permissions: Permission[];
@@ -42,16 +49,29 @@ export interface SessionManagerConfig {
   maxSessions?: number;
   sessionTimeout?: number; // in milliseconds
   defaultViewport?: { width: number; height: number };
+  /** BrowserPool from Runtime for unified instance lifecycle */
+  browserPool?: BrowserPool;
+  /** Event emitter for forwarding session events through Runtime */
+  eventEmitter?: (event: RuntimeEvent) => void;
 }
 
 /**
  * Manages browser sessions with pooling and lifecycle management
+ *
+ * When browserPool is provided, delegates browser instance lifecycle to the pool:
+ * - createSession() acquires an instance via pool.acquire()
+ * - closeSession() releases the instance via pool.release()
+ * - The pool handles idle timeout, max lifetime, and cleanup
+ *
+ * When browserPool is absent (legacy mode), creates BrowserEngine instances directly.
  */
 export class SessionManager {
   private sessions: Map<string, BrowserSession> = new Map();
   private readonly maxSessions: number;
   private readonly sessionTimeout: number;
   private readonly defaultViewport: { width: number; height: number };
+  private readonly browserPool?: BrowserPool;
+  private readonly eventEmitter?: (event: RuntimeEvent) => void;
   private cleanupInterval: number | null = null;
   private totalCreated = 0;
   private totalClosed = 0;
@@ -60,8 +80,10 @@ export class SessionManager {
     this.maxSessions = config.maxSessions ?? 10;
     this.sessionTimeout = config.sessionTimeout ?? 30 * 60 * 1000; // 30 minutes
     this.defaultViewport = config.defaultViewport ?? { width: 1280, height: 720 };
+    this.browserPool = config.browserPool;
+    this.eventEmitter = config.eventEmitter;
 
-    // Start cleanup interval
+    // Start cleanup interval for session-level idle timeout
     this.startCleanupInterval();
   }
 
@@ -82,15 +104,45 @@ export class SessionManager {
 
     const sessionId = this.generateSessionId();
 
-    // Create browser engine
-    const browserEngine = new BrowserEngine({
-      width: this.defaultViewport.width,
-      height: this.defaultViewport.height,
-    });
+    let browserEngine: BrowserEngine;
+    let poolInstanceId: string | undefined;
+
+    if (this.browserPool) {
+      // Integrated path: acquire from BrowserPool
+      let instance: BrowserInstance;
+      try {
+        instance = await this.browserPool.acquire({ timeout: 30000 });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes("pool exhausted")) {
+          throw new Error(
+            `Cannot create session: all browser pool slots are in use. ` +
+            `Close an existing session first.`
+          );
+        }
+        throw error;
+      }
+
+      poolInstanceId = instance.id;
+
+      if (!instance.browserEngine) {
+        this.browserPool.release(instance.id);
+        throw new Error("Pool returned instance without browser engine");
+      }
+
+      browserEngine = instance.browserEngine as BrowserEngine;
+    } else {
+      // Legacy path: create BrowserEngine directly
+      browserEngine = new BrowserEngine({
+        width: this.defaultViewport.width,
+        height: this.defaultViewport.height,
+      });
+    }
 
     const session: BrowserSession = {
       id: sessionId,
       browserEngine,
+      poolInstanceId,
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       permissions,
@@ -98,6 +150,15 @@ export class SessionManager {
 
     this.sessions.set(sessionId, session);
     this.totalCreated++;
+
+    // Emit session_created event
+    if (this.eventEmitter && poolInstanceId) {
+      this.eventEmitter({
+        type: "session_created",
+        sessionId,
+        instanceId: poolInstanceId,
+      });
+    }
 
     return sessionId;
   }
@@ -142,15 +203,40 @@ export class SessionManager {
         session.currentPage = undefined;
       }
 
-      // Then close browser engine and release resources
-      try {
-        await session.browserEngine.close();
-      } catch (error) {
-        console.error(`Error closing browser engine for session ${sessionId}:`, error);
+      if (this.browserPool && session.poolInstanceId) {
+        // Integrated path: release instance back to pool
+        try {
+          this.browserPool.release(session.poolInstanceId);
+        } catch (error) {
+          console.error(`Error releasing pool instance for session ${sessionId}:`, error);
+          // If release fails (e.g., instance already closed), try explicit close
+          try {
+            await this.browserPool.closeInstance(session.poolInstanceId, "session_close_error");
+          } catch {
+            // Ignore secondary errors
+          }
+        }
+      } else {
+        // Legacy path: close browser engine directly
+        try {
+          await session.browserEngine.close();
+        } catch (error) {
+          console.error(`Error closing browser engine for session ${sessionId}:`, error);
+        }
       }
 
       this.sessions.delete(sessionId);
       this.totalClosed++;
+
+      // Emit session_closed event
+      if (this.eventEmitter && session.poolInstanceId) {
+        this.eventEmitter({
+          type: "session_closed",
+          sessionId,
+          instanceId: session.poolInstanceId,
+          reason: "manual",
+        });
+      }
     }
   }
 
@@ -233,6 +319,10 @@ export class SessionManager {
 
   /**
    * Shutdown the session manager
+   *
+   * Closes all sessions (releasing pool instances) but does NOT stop the
+   * BrowserPool itself — the Runtime handles pool shutdown in its own
+   * shutdown sequence, which runs after SessionManager.shutdown().
    */
   async shutdown(): Promise<void> {
     // Stop cleanup interval
@@ -241,12 +331,12 @@ export class SessionManager {
       this.cleanupInterval = null;
     }
 
-    // Close all sessions
+    // Close all sessions (releases instances back to pool)
     await this.closeAll();
   }
 
   /**
-   * Cleanup idle sessions
+   * Cleanup idle sessions that have exceeded the session timeout
    */
   private async cleanupIdleSessions(): Promise<void> {
     const now = Date.now();
@@ -259,6 +349,17 @@ export class SessionManager {
     }
 
     for (const sessionId of idleSessions) {
+      const session = this.sessions.get(sessionId);
+
+      // Emit session_expired event for idle timeout cleanup
+      if (this.eventEmitter && session?.poolInstanceId) {
+        this.eventEmitter({
+          type: "session_expired",
+          sessionId,
+          instanceId: session.poolInstanceId,
+        });
+      }
+
       await this.closeSession(sessionId);
     }
   }

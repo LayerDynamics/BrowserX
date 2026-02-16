@@ -2,6 +2,8 @@
 
 Model Context Protocol (MCP) server that exposes BrowserX capabilities to LLMs like Claude, enabling AI-driven browser automation, web scraping, and proxy control.
 
+**For AI Agents**: See [docs/AGENT_GUIDE.md](./docs/AGENT_GUIDE.md) for tool selection, session management, and error recovery. See [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for step-by-step workflow examples.
+
 ## Quick Start
 
 ```bash
@@ -69,13 +71,66 @@ deno run --allow-all mod.ts --http --port=9847
 
 ## Resources
 
-- `page://current` - Current page state and DOM
-- `metrics://runtime` - Runtime performance metrics
-- `metrics://cache` - Cache statistics
+MCP resources provide passive state retrieval (read-only). Use **tools** for actions.
+
+### Page Resources
+
+Access current page state for active browser sessions:
+
+| Resource URI | Description | Returns |
+|-------------|-------------|---------|
+| `page://{sessionId}/content` | Full page HTML | HTML string |
+| `page://{sessionId}/screenshot` | Current viewport screenshot | Base64 PNG image |
+| `page://{sessionId}/title` | Document title | String |
+| `page://{sessionId}/url` | Current URL | String |
+
+**Usage**: Replace `{sessionId}` with the session ID from `browser_navigate`.
+
+### Metrics Resources
+
+Monitor server and engine performance:
+
+| Resource URI | Description | Returns |
+|-------------|-------------|---------|
+| `metrics://query-engine` | Query execution stats | Query count, avg time, cache stats |
+| `metrics://browser-pool` | Browser session pool | Active sessions, available capacity |
+| `metrics://runtime` | Runtime performance | Memory usage, uptime, request rate |
+| `metrics://cache` | Cache statistics | Entries, hit rate, size |
+
+### Visibility Resources
+
+Server dashboard and operation tracking:
+
+| Resource URI | Description | Returns |
+|-------------|-------------|---------|
+| `visibility://dashboard` | Server health dashboard | Status, active operations, errors |
+| `visibility://operations` | Running operations | Active tool calls, progress |
+
+### When to Use Resources vs Tools
+
+| Use Resources when... | Use Tools when... |
+|-----------------------|-------------------|
+| Checking current state | Performing actions |
+| Monitoring metrics | Navigating or interacting |
+| Passive observation | Modifying state |
+| Getting screenshots without navigation | Taking fresh screenshots |
 
 ## Prompts
 
-- `automation_workflow` - Pre-built automation workflow templates
+Pre-built workflow templates for common automation tasks:
+
+| Prompt | Use When | Inputs |
+|--------|----------|--------|
+| `extract-data` | Scraping data from a page | `url`, `dataDescription` |
+| `fill-form` | Automating form submission | `url`, `formFields` (JSON) |
+| `monitor-page` | Detecting page changes | `url`, `selector`, `description` |
+| `screenshot-with-context` | Capturing page with metadata | `url` |
+| `multi-step-workflow` | Executing step sequences | `steps` (JSON array) |
+| `query-builder` | Building BrowserX queries | `task`, `url` (optional) |
+
+**Example**: Use `extract-data` prompt with:
+- `url`: "https://shop.example.com/products"
+- `dataDescription`: "product names, prices, and image URLs"
 
 ## Permission Levels
 
@@ -128,6 +183,57 @@ deno task mcp:dev
 deno task mcp:compile
 ```
 
+## Data Persistence
+
+Screenshots and activity data are automatically saved to persistent storage:
+
+```text
+.browserx/usage_data/
+├── screenshots/          # Saved screenshots organized by date
+│   └── YYYY-MM-DD/
+│       └── {timestamp}_{id}.png
+├── logs/                 # Daily activity logs in JSONL format
+│   └── YYYY-MM-DD.jsonl
+└── metadata/             # Session metadata
+    └── {sessionId}.json
+```
+
+### What Gets Saved
+
+| Activity | Location | Format |
+|----------|----------|--------|
+| Screenshots | `screenshots/YYYY-MM-DD/` | PNG files |
+| Navigation | `logs/YYYY-MM-DD.jsonl` | JSON lines |
+| Clicks | `logs/YYYY-MM-DD.jsonl` | JSON lines |
+| Queries | `logs/YYYY-MM-DD.jsonl` | JSON lines |
+| Errors | `logs/YYYY-MM-DD.jsonl` | JSON lines |
+| Session info | `metadata/{sessionId}.json` | JSON |
+
+### Screenshot Response
+
+The `browser_screenshot` tool returns both the image data AND the saved file path:
+
+```json
+{
+  "sessionId": "session-123",
+  "format": "png",
+  "size": 45678,
+  "filePath": ".browserx/usage_data/screenshots/2024-01-15/1705312345_abc123.png",
+  "_image": {
+    "data": "base64...",
+    "mimeType": "image/png"
+  }
+}
+```
+
+### Disabling Persistence
+
+Activity tracking can be disabled via the ActivityTracker:
+
+```typescript
+context.activityTracker.setEnabled(false);
+```
+
 ## Architecture
 
 ```text
@@ -142,5 +248,8 @@ MCP Server
 ├── resources/       # Resource providers
 ├── prompts/         # Prompt templates
 ├── security/        # Permission guard, input validation
+├── activity/        # Activity tracking and persistence
+│   ├── ActivityTracker.ts  # File-based persistence
+│   └── activity-logger.ts  # Console logging
 └── session/         # Browser session management
 ```

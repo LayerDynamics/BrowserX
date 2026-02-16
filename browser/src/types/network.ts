@@ -83,6 +83,20 @@ export interface Certificate {
 }
 
 /**
+ * Socket read options with optional abort signal
+ */
+export interface SocketReadOptions {
+    signal?: AbortSignal;
+}
+
+/**
+ * Socket write options with optional abort signal
+ */
+export interface SocketWriteOptions {
+    signal?: AbortSignal;
+}
+
+/**
  * Socket
  */
 export interface Socket {
@@ -101,13 +115,17 @@ export interface Socket {
 
     /**
      * Read from socket
+     * @param buffer - Buffer to read data into
+     * @param options - Optional read options with abort signal
      */
-    read(buffer: ByteBuffer): Promise<number | null>;
+    read(buffer: ByteBuffer, options?: SocketReadOptions): Promise<number | null>;
 
     /**
      * Write to socket
+     * @param data - Data to write
+     * @param options - Optional write options with abort signal
      */
-    write(data: ByteBuffer): Promise<number>;
+    write(data: ByteBuffer, options?: SocketWriteOptions): Promise<number>;
 
     /**
      * Close socket

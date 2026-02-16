@@ -22,6 +22,11 @@ export type {
   SignalConfig,
 } from "./RuntimeConfig.ts";
 
+export type {
+  PluginConfig,
+  PluginEntry,
+} from "../plugins/types.ts";
+
 export { assertValidConfig, validateConfig } from "./ConfigValidator.ts";
 
 export type { ValidationError, ValidationResult } from "./ConfigValidator.ts";

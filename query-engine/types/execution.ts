@@ -92,6 +92,8 @@ export interface QueryMetadata {
  */
 export interface QueryOptions {
   timeout?: DurationMs;
+  /** External AbortSignal for cancellation support (e.g., from MCP withTimeout) */
+  signal?: AbortSignal;
   permissions?: Permission[];
   format?: OutputFormat;
   stream?: boolean;

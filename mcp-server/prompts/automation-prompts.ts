@@ -13,7 +13,13 @@ export function registerPrompts(server: McpServer): void {
   // Extract structured data from a webpage
   server.prompt(
     "extract-data",
-    "Extract structured data from a webpage using BrowserX queries",
+    `Extract structured data from a webpage using BrowserX queries.
+
+USE WHEN: Scraping specific data points from a known URL structure.
+DO NOT USE: When you need to interact with the page (click, type, scroll) - use browser_* tools directly.
+
+INPUTS: url (page to scrape), dataDescription (what data to extract)
+OUTPUT: Structured JSON with extracted data`,
     {
       url: z.string().describe("URL to scrape"),
       dataDescription: z.string().describe("Description of what data to extract"),
@@ -46,7 +52,13 @@ Steps:
   // Fill out a web form
   server.prompt(
     "fill-form",
-    "Fill out a web form with provided data",
+    `Fill out a web form with provided data.
+
+USE WHEN: Automating form submission with known field selectors and values.
+DO NOT USE: When you need to discover form fields first - use browser_query_dom to inspect the form.
+
+INPUTS: url (page with form), formFields (JSON mapping selectors to values)
+OUTPUT: Confirmation of submission result`,
     {
       url: z.string().describe("URL of the page with the form"),
       formFields: z.string().describe("JSON object mapping field selectors to values"),
@@ -79,7 +91,13 @@ Steps:
   // Monitor page for changes
   server.prompt(
     "monitor-page",
-    "Monitor a webpage for content changes",
+    `Monitor a webpage for content changes.
+
+USE WHEN: Detecting when page content changes (price updates, availability, new posts).
+DO NOT USE: For real-time monitoring - this is polling-based, not event-driven.
+
+INPUTS: url (page to monitor), selector (element to watch), description (what changes to detect)
+OUTPUT: Report of changes detected during monitoring period`,
     {
       url: z.string().describe("URL to monitor"),
       selector: z.string().describe("CSS selector of element to monitor"),
@@ -118,7 +136,13 @@ Steps:
   // Take annotated screenshot
   server.prompt(
     "screenshot-with-context",
-    "Take a screenshot and provide context about the page",
+    `Take a screenshot and provide context about the page.
+
+USE WHEN: Capturing a page with semantic understanding of its content and structure.
+DO NOT USE: When you only need the screenshot itself - use browser_screenshot directly.
+
+INPUTS: url (page to capture)
+OUTPUT: Screenshot image + summary of page content, navigation, and interactive elements`,
     {
       url: z.string().describe("URL to screenshot"),
     },
@@ -151,7 +175,13 @@ Steps:
   // Multi-step workflow
   server.prompt(
     "multi-step-workflow",
-    "Execute a multi-step browser automation workflow",
+    `Execute a multi-step browser automation workflow.
+
+USE WHEN: Running a predefined sequence of browser actions (navigate, click, type, screenshot).
+DO NOT USE: When you need conditional logic or error recovery - build the workflow step-by-step instead.
+
+INPUTS: steps (JSON array of step configurations with action type and parameters)
+OUTPUT: Summary of all completed steps and their results`,
     {
       steps: z.string().describe("JSON array of steps to execute"),
     },
@@ -189,7 +219,13 @@ Return a summary of all completed steps and their results.`,
   // Query builder assistant
   server.prompt(
     "query-builder",
-    "Help build a BrowserX query for a specific task",
+    `Help build a BrowserX query for a specific task.
+
+USE WHEN: You need to construct a BrowserX SQL-like query but aren't sure of the syntax.
+DO NOT USE: For simple extractions - use browserx_query directly with basic SELECT statements.
+
+INPUTS: task (description of what to accomplish), url (optional target URL)
+OUTPUT: Recommended query with explanation and expected output format`,
     {
       task: z.string().describe("Description of what you want to accomplish"),
       url: z.string().optional().describe("Optional URL context"),

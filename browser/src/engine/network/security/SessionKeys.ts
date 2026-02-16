@@ -45,9 +45,12 @@ export async function deriveSessionKeys(
     const totalLength = (keyLength * 2) + (ivLength * 2) + (macLength * 2);
 
     // PRF(master_secret, "key expansion", server_random + client_random)
+    // Use correct hash algorithm based on cipher suite
     const label = new TextEncoder().encode("key expansion");
     const seed = concat(serverRandom, clientRandom);
-    const keyMaterial = await prf(masterSecret, label, seed, totalLength);
+    const hashAlgorithm = getPRFHashForCipherSuite(cipherSuite);
+
+    const keyMaterial = await prfWithHash(masterSecret, label, seed, totalLength, hashAlgorithm);
 
     // Split key material into individual keys
     let offset = 0;
@@ -80,6 +83,7 @@ export async function deriveSessionKeys(
  * @param clientRandom - Client random bytes
  * @param serverRandom - Server random bytes
  * @param tlsVersion - TLS version (1.2, 1.3, etc.)
+ * @param cipherSuite - Cipher suite name (for selecting PRF hash algorithm)
  * @returns Master secret (48 bytes)
  *
  * TLS 1.2: PRF(pre_master_secret, "master secret", ClientHello.random + ServerHello.random)[0..47]
@@ -89,6 +93,7 @@ export async function computeMasterSecret(
     clientRandom: ByteBuffer,
     serverRandom: ByteBuffer,
     tlsVersion: string,
+    cipherSuite?: string,
 ): Promise<ByteBuffer> {
     if (tlsVersion === "1.3") {
         // TLS 1.3 uses HKDF instead
@@ -98,7 +103,10 @@ export async function computeMasterSecret(
     // TLS 1.2 and below: PRF(pre_master_secret, "master secret", client_random + server_random)
     const label = new TextEncoder().encode("master secret");
     const seed = concat(clientRandom, serverRandom);
-    const masterSecret = await prf(preMasterSecret, label, seed, 48);
+
+    // Select hash algorithm based on cipher suite (SHA384 cipher suites use P_SHA384)
+    const hashAlgorithm = cipherSuite ? getPRFHashForCipherSuite(cipherSuite) : "SHA-256";
+    const masterSecret = await prfWithHash(preMasterSecret, label, seed, 48, hashAlgorithm);
 
     return masterSecret;
 }
@@ -114,15 +122,33 @@ export interface CipherSuiteInfo {
 
 /**
  * Get cipher suite info from cipher suite code
+ * Supports both TLS 1.3 and TLS 1.2 cipher suites
  */
 export function getCipherSuiteInfo(cipherSuite: number): CipherSuiteInfo {
     switch (cipherSuite) {
+        // TLS 1.3 cipher suites
         case 0x1301: // TLS_AES_128_GCM_SHA256
             return { hashAlgorithm: "SHA-256", hashLength: 32, keyLength: 16 };
         case 0x1302: // TLS_AES_256_GCM_SHA384
             return { hashAlgorithm: "SHA-384", hashLength: 48, keyLength: 32 };
         case 0x1303: // TLS_CHACHA20_POLY1305_SHA256
             return { hashAlgorithm: "SHA-256", hashLength: 32, keyLength: 32 };
+
+        // TLS 1.2 cipher suites with SHA-256
+        case 0xc02b: // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        case 0xc02f: // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+            return { hashAlgorithm: "SHA-256", hashLength: 32, keyLength: 16 };
+
+        // TLS 1.2 cipher suites with SHA-384
+        case 0xc02c: // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        case 0xc030: // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+            return { hashAlgorithm: "SHA-384", hashLength: 48, keyLength: 32 };
+
+        // TLS 1.2 ChaCha20-Poly1305 cipher suites (use SHA-256)
+        case 0xcca9: // TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+        case 0xcca8: // TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+            return { hashAlgorithm: "SHA-256", hashLength: 32, keyLength: 32 };
+
         default:
             // Default to AES-128-GCM-SHA256
             return { hashAlgorithm: "SHA-256", hashLength: 32, keyLength: 16 };
@@ -405,6 +431,77 @@ async function pSHA256(
     }
 
     return result;
+}
+
+/**
+ * P_SHA384 expansion function (for SHA384 cipher suites)
+ * Same algorithm as P_SHA256 but with SHA-384 HMAC
+ */
+async function pSHA384(
+    secret: ByteBuffer,
+    seed: ByteBuffer,
+    length: number,
+): Promise<ByteBuffer> {
+    const result = new Uint8Array(length);
+    let offset = 0;
+    let a = seed; // A(0) = seed
+
+    while (offset < length) {
+        // A(i) = HMAC(secret, A(i-1))
+        a = await hmacSHA384(secret, a);
+
+        // HMAC(secret, A(i) + seed)
+        const output = await hmacSHA384(secret, concat(a, seed));
+
+        const toCopy = Math.min(output.byteLength, length - offset);
+        result.set(output.slice(0, toCopy), offset);
+        offset += toCopy;
+    }
+
+    return result;
+}
+
+/**
+ * HMAC-SHA384
+ */
+async function hmacSHA384(key: ByteBuffer, data: ByteBuffer): Promise<ByteBuffer> {
+    const cryptoKey = await crypto.subtle.importKey(
+        "raw",
+        key,
+        { name: "HMAC", hash: "SHA-384" },
+        false,
+        ["sign"],
+    );
+    const signature = await crypto.subtle.sign("HMAC", cryptoKey, data);
+    return new Uint8Array(signature);
+}
+
+/**
+ * Get PRF hash algorithm based on cipher suite
+ * TLS 1.2 cipher suites ending in SHA384 use P_SHA384, others use P_SHA256
+ */
+function getPRFHashForCipherSuite(cipherSuite: string): "SHA-256" | "SHA-384" {
+    if (cipherSuite.includes("SHA384")) {
+        return "SHA-384";
+    }
+    return "SHA-256";
+}
+
+/**
+ * TLS 1.2 PRF with configurable hash algorithm
+ */
+async function prfWithHash(
+    secret: ByteBuffer,
+    label: ByteBuffer,
+    seed: ByteBuffer,
+    length: number,
+    hashAlgorithm: "SHA-256" | "SHA-384",
+): Promise<ByteBuffer> {
+    const labelAndSeed = concat(label, seed);
+    if (hashAlgorithm === "SHA-384") {
+        return await pSHA384(secret, labelAndSeed, length);
+    }
+    return await pSHA256(secret, labelAndSeed, length);
 }
 
 /**

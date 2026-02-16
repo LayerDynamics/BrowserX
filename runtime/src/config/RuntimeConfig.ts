@@ -6,6 +6,7 @@
  */
 
 import type { Environment, LogLevel } from "../types.ts";
+import type { PluginConfig } from "../plugins/types.ts";
 
 /**
  * Browser pool configuration
@@ -295,6 +296,11 @@ export interface BrowserXRuntimeConfig {
    * Metrics configuration
    */
   metrics: MetricsConfig;
+
+  /**
+   * Plugin system configuration
+   */
+  plugins: PluginConfig;
 }
 
 /**
@@ -361,6 +367,13 @@ export function createDefaultConfig(): BrowserXRuntimeConfig {
       enabled: false,
       healthCheckInterval: 30000,
       exportFormat: "prometheus",
+    },
+
+    plugins: {
+      enabled: false,
+      pluginDirs: [],
+      plugins: [],
+      activationTimeout: 10000,
     },
   };
 }
@@ -447,5 +460,11 @@ export function mergeConfig(
     shutdown: { ...defaults.shutdown, ...partial.shutdown },
     signals: { ...defaults.signals, ...partial.signals },
     metrics: { ...defaults.metrics, ...partial.metrics },
+    plugins: {
+      ...defaults.plugins,
+      ...partial.plugins,
+      plugins: partial.plugins?.plugins ?? defaults.plugins.plugins,
+      pluginDirs: partial.plugins?.pluginDirs ?? defaults.plugins.pluginDirs,
+    },
   };
 }

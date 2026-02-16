@@ -5,6 +5,11 @@
  * This server exposes BrowserX capabilities to LLMs like Claude,
  * enabling AI-driven browser automation, web scraping, and proxy control.
  *
+ * Startup is fast (<100ms) - heavy services initialize lazily on first use:
+ * - BrowserXRuntime: initializes on first browser tool call
+ * - QueryEngine: initializes on first query tool call
+ * - SessionManager: initializes on first session creation
+ *
  * Usage:
  *   deno run --allow-all mod.ts           # stdio transport (default)
  *   deno run --allow-all mod.ts --http    # HTTP transport
@@ -24,7 +29,10 @@ import { registerBrowserTools } from "./tools/browser-tools.ts";
 import { registerProxyTools } from "./tools/proxy-tools.ts";
 import { registerPageResources } from "./resources/page-resources.ts";
 import { registerMetricsResources } from "./resources/metrics-resources.ts";
+import { registerVisibilityResources } from "./resources/visibility-resources.ts";
+import { registerVisibilityTools } from "./tools/visibility-tools.ts";
 import { registerPrompts } from "./prompts/automation-prompts.ts";
+import { setGlobalActivityLogger } from "./activity/mod.ts";
 import type { PermissionSet } from "./security/permission-guard.ts";
 
 /**
@@ -99,6 +107,7 @@ function parseConfig(): {
  * Main entry point
  */
 async function main(): Promise<void> {
+  const startTime = Date.now();
   const config = parseConfig();
 
   // Log startup info to stderr (stdout is used for MCP in stdio mode)
@@ -107,11 +116,12 @@ async function main(): Promise<void> {
   console.error(`  Permissions: ${config.permissions}`);
   console.error(`  Max Sessions: ${config.maxSessions}`);
 
-  // Create MCP server and context
-  const { server, context } = await createMCPServer({
+  // Create MCP server and context (lightweight - no heavy services started yet)
+  const { server, context } = createMCPServer({
     name: "browserx-mcp",
     version: "0.1.0",
     permissions: config.permissions,
+    maxSessions: config.maxSessions,
     sessionConfig: {
       maxSessions: config.maxSessions,
     },
@@ -125,23 +135,24 @@ async function main(): Promise<void> {
     },
   });
 
-  // Log runtime stats to verify event loops are running
-  const stats = context.runtime.getStats();
-  console.error("BrowserX Runtime started:");
-  console.error(`  State: ${stats.state}`);
-  console.error(`  Event Loops: proxy=${stats.eventLoops.proxyLoopRunning}, browser=${stats.eventLoops.browserLoopsActive} active`);
-  console.error(`  Browser Pool: ${stats.resources.browserInstances} instances`);
+  // Set up global activity logger for tool wrapper integration
+  setGlobalActivityLogger(context.activityLogger);
 
-  // Register all tools
+  // Start the activity logger (enables status bar and logging)
+  context.activityLogger.start();
+
+  // Register all tools (they will use lazy initialization)
   console.error("Registering tools...");
   registerQueryTools(server, context);
   registerBrowserTools(server, context);
   registerProxyTools(server, context);
+  registerVisibilityTools(server, context, context.visibilityService);
 
   // Register all resources
   console.error("Registering resources...");
   registerPageResources(server, context);
   registerMetricsResources(server, context);
+  registerVisibilityResources(server, context, context.visibilityService);
 
   // Register prompts
   console.error("Registering prompts...");
@@ -150,12 +161,23 @@ async function main(): Promise<void> {
   // Handle shutdown signals
   const shutdown = async () => {
     console.error("\nShutting down BrowserX MCP Server...");
+    context.activityLogger.stop();
     await shutdownMCPServer(context);
     Deno.exit(0);
   };
 
   Deno.addSignalListener("SIGINT", shutdown);
   Deno.addSignalListener("SIGTERM", shutdown);
+
+  // Log service initialization status
+  const status = context.serviceInitializer.getStatus();
+  console.error("Service initialization status:");
+  console.error(`  Runtime: ${status.runtime} (lazy)`);
+  console.error(`  QueryEngine: ${status.queryEngine} (lazy)`);
+  console.error(`  SessionManager: ${status.sessionManager} (lazy)`);
+
+  const startupTime = Date.now() - startTime;
+  console.error(`Server ready in ${startupTime}ms (services will init on first use)`);
 
   // Start server with selected transport
   if (config.transport === "http") {

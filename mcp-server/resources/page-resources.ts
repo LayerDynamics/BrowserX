@@ -8,6 +8,27 @@ import { encodeBase64 } from "@std/encoding";
 import type { MCPServerContext } from "../server/mcp-server.ts";
 
 /**
+ * Helper to check if session exists (with lazy initialization awareness)
+ */
+async function checkSessionExists(
+  context: MCPServerContext,
+  sessionId: string | null,
+): Promise<{ exists: boolean; sessionManager: Awaited<ReturnType<typeof context.getSessionManager>> | null }> {
+  if (!sessionId) {
+    return { exists: false, sessionManager: null };
+  }
+
+  // Only check if session manager is already initialized
+  if (!context.serviceInitializer.isSessionManagerReady()) {
+    return { exists: false, sessionManager: null };
+  }
+
+  const sessionManager = await context.getSessionManager();
+  const exists = sessionManager.hasSession(sessionId);
+  return { exists, sessionManager };
+}
+
+/**
  * Register page-related resources with the MCP server
  */
 export function registerPageResources(
@@ -20,8 +41,9 @@ export function registerPageResources(
     "page://{sessionId}/content",
     async (uri) => {
       const sessionId = extractSessionId(uri.href);
+      const { exists, sessionManager } = await checkSessionExists(context, sessionId);
 
-      if (!sessionId || !context.sessionManager.hasSession(sessionId)) {
+      if (!exists || !sessionManager) {
         return {
           contents: [
             {
@@ -35,7 +57,7 @@ export function registerPageResources(
 
       try {
         // Use session's existing page instead of creating a new one
-        const page = await context.sessionManager.getSessionPage(sessionId);
+        const page = await sessionManager.getSessionPage(sessionId!);
 
         // Get page HTML via evaluate
         const html = await page.evaluate("document.documentElement.outerHTML");
@@ -69,8 +91,9 @@ export function registerPageResources(
     "page://{sessionId}/screenshot",
     async (uri) => {
       const sessionId = extractSessionId(uri.href);
+      const { exists, sessionManager } = await checkSessionExists(context, sessionId);
 
-      if (!sessionId || !context.sessionManager.hasSession(sessionId)) {
+      if (!exists || !sessionManager) {
         return {
           contents: [
             {
@@ -84,7 +107,7 @@ export function registerPageResources(
 
       try {
         // Use session's existing page instead of creating a new one
-        const page = await context.sessionManager.getSessionPage(sessionId);
+        const page = await sessionManager.getSessionPage(sessionId!);
 
         const screenshot = await page.screenshot({ format: "png" });
         const base64 = encodeBase64(screenshot);
@@ -118,8 +141,9 @@ export function registerPageResources(
     "page://{sessionId}/title",
     async (uri) => {
       const sessionId = extractSessionId(uri.href);
+      const { exists, sessionManager } = await checkSessionExists(context, sessionId);
 
-      if (!sessionId || !context.sessionManager.hasSession(sessionId)) {
+      if (!exists || !sessionManager) {
         return {
           contents: [
             {
@@ -133,7 +157,7 @@ export function registerPageResources(
 
       try {
         // Use session's existing page instead of creating a new one
-        const page = await context.sessionManager.getSessionPage(sessionId);
+        const page = await sessionManager.getSessionPage(sessionId!);
 
         const title = await page.evaluate("document.title");
 
@@ -166,8 +190,9 @@ export function registerPageResources(
     "page://{sessionId}/url",
     async (uri) => {
       const sessionId = extractSessionId(uri.href);
+      const { exists, sessionManager } = await checkSessionExists(context, sessionId);
 
-      if (!sessionId || !context.sessionManager.hasSession(sessionId)) {
+      if (!exists || !sessionManager) {
         return {
           contents: [
             {
@@ -181,7 +206,7 @@ export function registerPageResources(
 
       try {
         // Use session's existing page instead of creating a new one
-        const page = await context.sessionManager.getSessionPage(sessionId);
+        const page = await sessionManager.getSessionPage(sessionId!);
 
         const currentUrl = page.getCurrentURL() ?? "about:blank";
 

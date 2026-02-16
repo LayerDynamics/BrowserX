@@ -30,6 +30,7 @@ import { BrowserPool } from "./resources/BrowserPool.ts";
 import { SignalHandler } from "./signals/SignalHandler.ts";
 import { UnifiedMetricsCollector } from "./metrics/UnifiedMetricsCollector.ts";
 import { HealthChecker } from "./metrics/HealthChecker.ts";
+import { PluginManager } from "./plugins/PluginManager.ts";
 
 /**
  * BrowserX Runtime Options
@@ -64,6 +65,7 @@ export class BrowserXRuntime {
   public readonly signalHandler: SignalHandler;
   public readonly metricsCollector: UnifiedMetricsCollector;
   public readonly healthChecker: HealthChecker;
+  public readonly pluginManager: PluginManager;
 
   // Query Engine (lazily loaded)
   private _queryEngine?: unknown;
@@ -96,6 +98,13 @@ export class BrowserXRuntime {
     this.signalHandler = new SignalHandler(this.config.signals);
     this.metricsCollector = new UnifiedMetricsCollector(this.config.metrics);
     this.healthChecker = new HealthChecker(this.config.metrics);
+    this.pluginManager = new PluginManager({
+      config: this.config,
+      browserPool: this.browserPool,
+      healthChecker: this.healthChecker,
+      getQueryEngine: () => this._queryEngine,
+      getProxyRuntime: () => this._proxyRuntime,
+    });
 
     // Register components with lifecycle manager
     this.registerComponents();
@@ -132,6 +141,7 @@ export class BrowserXRuntime {
     }
 
     components.push("query-engine");
+    components.push("plugin-manager");
 
     for (const id of components) {
       this.lifecycleManager.registerComponent(id);
@@ -199,6 +209,18 @@ export class BrowserXRuntime {
       dependencies: ["browser-pool"],
       timeout: 10000,
     });
+
+    // Step 6: Plugin manager (depends on query engine — plugins may contribute to all layers)
+    this.initSequence.registerStep({
+      name: "Initialize plugin manager",
+      component: "plugin-manager",
+      execute: async () => {
+        await this.pluginManager.start();
+      },
+      dependencies: ["query-engine"],
+      timeout: this.config.plugins.activationTimeout + 5000,
+      optional: true,
+    });
   }
 
   /**
@@ -206,6 +228,17 @@ export class BrowserXRuntime {
    */
   private setupShutdownSteps(): void {
     // Shutdown in reverse order of initialization
+
+    // Step 0: Plugin manager (deactivate plugins first, before subsystems they depend on)
+    this.shutdownSequence.registerStep({
+      name: "Shutdown plugin manager",
+      component: "plugin-manager",
+      execute: async () => {
+        await this.pluginManager.stop();
+      },
+      timeout: this.config.plugins.activationTimeout + 5000,
+      graceful: true,
+    });
 
     // Step 1: Query engine
     this.shutdownSequence.registerStep({
@@ -313,6 +346,16 @@ export class BrowserXRuntime {
       },
     );
 
+    // Plugin manager health
+    this.healthChecker.registerHandler(
+      "plugin-manager",
+      HealthChecker.createBooleanHandler(
+        () => this.pluginManager.isRunning(),
+        "Plugin manager running",
+        "Plugin manager not running",
+      ),
+    );
+
     // Metrics collector health
     this.healthChecker.registerHandler(
       "metrics-collector",
@@ -337,6 +380,7 @@ export class BrowserXRuntime {
     this.eventCoordinator.addEventListener(forwardEvent);
     this.signalHandler.addEventListener(forwardEvent);
     this.healthChecker.addEventListener(forwardEvent);
+    this.pluginManager.addEventListener(forwardEvent);
   }
 
   /**
@@ -694,6 +738,13 @@ export class BrowserXRuntime {
     if (index !== -1) {
       this.eventListeners.splice(index, 1);
     }
+  }
+
+  /**
+   * Emit an event from an external component (e.g., MCP SessionManager)
+   */
+  emitExternalEvent(event: RuntimeEvent): void {
+    this.emitEvent(event);
   }
 
   /**
