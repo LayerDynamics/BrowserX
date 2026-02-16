@@ -84,7 +84,7 @@ export function createMockHTTPRequest(
   return new Request(url, {
     method,
     headers: new Headers(headers),
-    body,
+    body: body as BodyInit | null | undefined,
   });
 }
 
@@ -100,7 +100,7 @@ export function createMockHTTPResponse(
 ): Response {
   const { status = 200, headers = {} } = options;
 
-  return new Response(body, {
+  return new Response(body as BodyInit, {
     status,
     headers: new Headers(headers),
   });
