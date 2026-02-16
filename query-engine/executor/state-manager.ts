@@ -170,7 +170,14 @@ export class StateManager {
       return false;
     }
     const lastSnapshot = this.snapshots[this.snapshots.length - 1];
-    this.state = this.deepClone(lastSnapshot.state);
+
+    // Transaction-aware: restore to active transaction or main state
+    if (this.transactionStack.length > 0) {
+      this.transactionStack[this.transactionStack.length - 1].state = this.deepClone(lastSnapshot.state);
+    } else {
+      this.state = this.deepClone(lastSnapshot.state);
+    }
+
     this.snapshots.pop();
     return true;
   }
@@ -302,14 +309,12 @@ export class StateManager {
       return value.map(item => this.deepCloneValue(item));
     }
 
-    // Handle circular references by using a WeakMap cache
-    // For simplicity, we'll use JSON parse/stringify for now
-    // which doesn't handle circular refs but is safe for most cases
+    // Handle plain objects by recursively cloning enumerable properties
+    // Note: circular references are not supported and will result in a stack overflow
     try {
-      // Handle plain objects
       const cloned: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        // Skip symbol properties for now
+        // Skip symbol properties
         if (typeof k !== 'symbol') {
           cloned[k] = this.deepCloneValue(v);
         }

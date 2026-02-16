@@ -476,18 +476,19 @@ Deno.test({
     const proxy = new LoadBalancerProxy(route, {});
 
     try {
-      // Make sequential requests - connections complete between requests
-      const responses: string[] = [];
-      for (let i = 0; i < 4; i++) {
+      // Make concurrent requests to trigger rebalancing
+      // When requests overlap, least-connections will distribute across servers
+      const promises = Array.from({ length: 4 }, () => {
         const { request, context } = createMockRequest("http://localhost/test");
-        const response = await proxy.handleRequest(request, context);
-        responses.push(new TextDecoder().decode(response.body));
-      }
+        return proxy.handleRequest(request, context);
+      });
 
-      // All connections complete, so both servers should be used
-      assert(
-        responses.includes("rebalance-0") || responses.includes("rebalance-1")
-      );
+      const responses = await Promise.all(promises);
+      const bodies = responses.map((r) => new TextDecoder().decode(r.body));
+
+      // With concurrent requests, both servers should be used
+      assert(bodies.includes("rebalance-0"));
+      assert(bodies.includes("rebalance-1"));
     } finally {
       await proxy.shutdown();
       await shutdownServerPool(servers);
