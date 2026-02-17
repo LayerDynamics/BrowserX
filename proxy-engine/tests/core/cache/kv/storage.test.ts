@@ -293,7 +293,7 @@ Deno.test({
     await store.set("k", new Uint8Array([42]));
     const result = await store.get("k");
     assertExists(result);
-    assertEquals(result[0], 42);
+    assertEquals(result![0], 42);
   },
 });
 
@@ -371,7 +371,7 @@ Deno.test({
     await store.set("third", new Uint8Array(5));
     const result = await store.get("third");
     assertExists(result);
-    assertEquals(result.length, 5);
+    assertEquals(result!.length, 5);
   },
 });
 
