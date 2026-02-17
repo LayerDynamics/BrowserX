@@ -112,6 +112,35 @@ export interface ActiveExecution {
 }
 
 /**
+ * A validation error returned by /api/validate.
+ */
+export interface ValidationError {
+  line: number;
+  column: number;
+  message: string;
+  type: 'syntax' | 'semantic';
+}
+
+/**
+ * A single stage in the query execution pipeline.
+ */
+export interface PipelineStage {
+  name: string;
+  status: 'idle' | 'running' | 'done' | 'error';
+  durationMs: number | null;
+}
+
+const DEFAULT_PIPELINE_STAGES: PipelineStage[] = [
+  { name: 'Lex',      status: 'idle', durationMs: null },
+  { name: 'Parse',    status: 'idle', durationMs: null },
+  { name: 'Analyze',  status: 'idle', durationMs: null },
+  { name: 'Optimize', status: 'idle', durationMs: null },
+  { name: 'Plan',     status: 'idle', durationMs: null },
+  { name: 'Execute',  status: 'idle', durationMs: null },
+  { name: 'Format',   status: 'idle', durationMs: null },
+];
+
+/**
  * Main Playground store using Zustand.
  * Manages all state for the playground including editor, execution, results, and UI.
  */
@@ -152,6 +181,16 @@ export interface PlaygroundStore {
   /** Show templates panel */
   showTemplates: boolean;
 
+  // ===== Visualizer State =====
+  /** Active tab in the Visualizer panel */
+  visualizerTab: 'ast' | 'pipeline' | 'dom' | 'network';
+  /** AST data from /api/validate */
+  astData: unknown | null;
+  /** Validation errors from /api/validate */
+  astErrors: ValidationError[];
+  /** Pipeline stage statuses and timings */
+  pipelineStages: PipelineStage[];
+
   // ===== Actions =====
   /** Set the current query text */
   setQuery: (query: string) => void;
@@ -185,6 +224,14 @@ export interface PlaygroundStore {
   toggleHistory: () => void;
   /** Toggle templates panel visibility */
   toggleTemplates: () => void;
+  /** Set the active visualizer tab */
+  setVisualizerTab: (tab: 'ast' | 'pipeline' | 'dom' | 'network') => void;
+  /** Update AST data and validation errors */
+  setASTData: (ast: unknown | null, errors: ValidationError[]) => void;
+  /** Replace all pipeline stages */
+  setPipelineStages: (stages: PipelineStage[]) => void;
+  /** Reset all pipeline stages to idle */
+  resetPipeline: () => void;
 }
 
 /**
@@ -254,6 +301,10 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
   previewMode: 'screenshot',
   showHistory: false,
   showTemplates: false,
+  visualizerTab: 'ast',
+  astData: null,
+  astErrors: [],
+  pipelineStages: DEFAULT_PIPELINE_STAGES.map((s) => ({ ...s })),
 
   // ===== Actions =====
   setQuery: (query: string) => {
@@ -472,5 +523,21 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
 
   toggleTemplates: () => {
     set((state) => ({ showTemplates: !state.showTemplates }));
+  },
+
+  setVisualizerTab: (tab) => {
+    set({ visualizerTab: tab });
+  },
+
+  setASTData: (ast, errors) => {
+    set({ astData: ast, astErrors: errors });
+  },
+
+  setPipelineStages: (stages) => {
+    set({ pipelineStages: stages });
+  },
+
+  resetPipeline: () => {
+    set({ pipelineStages: DEFAULT_PIPELINE_STAGES.map((s) => ({ ...s })) });
   },
 }));

@@ -1,0 +1,21 @@
+---
+import { PipelineVisualizer } from '../components/pipeline/PipelineVisualizer';
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+---
+
+<StarlightPage frontmatter={{
+  title: 'How It Works',
+  description: 'Watch BrowserX execute queries through the live pipeline: Lexer → Parser → Semantic Analysis → Optimizer → Planner → Executor → Formatter',
+  template: 'splash'
+}}>
+  <div class="pipeline-page-container">
+    <PipelineVisualizer client:only="react" />
+  </div>
+</StarlightPage>
+
+<style>
+  .pipeline-page-container {
+    width: 100%;
+    min-height: calc(100vh - 140px);
+  }
+</style>
