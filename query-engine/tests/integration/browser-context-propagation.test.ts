@@ -22,6 +22,7 @@ Deno.test({
   assertEquals(getCurrentBrowserController(), undefined);
 
   const engine = new QueryEngine();
+  assertExists(engine);
   await engine.initialize({});
 
   // Execute a query that navigates
@@ -32,9 +33,10 @@ Deno.test({
     // Navigation may fail in test environment, but context should still be set
   }
 
-  // After navigation, the global browser context should be set
+  // After execute() returns, the finally block clears the browser context.
+  // Context is set during execution (in executeNavigate) and cleared when execute() completes.
   const controller = getCurrentBrowserController();
-  assertExists(controller, "Browser context should be set after navigation");
+  assertEquals(controller, undefined, "Browser context is cleared after execute() via finally block");
 
   await engine.shutdown();
   clearBrowserContext();
@@ -57,9 +59,10 @@ Deno.test({
     // May fail
   }
 
+  // After execute() returns, context is cleared by the finally block
   const controller1 = getCurrentBrowserController();
 
-  // Second operation should use same context
+  // Second operation - context is set fresh for each execute() call
   try {
     await engine.execute('SELECT 1 AS test', { timeout: 5000 });
   } catch {
@@ -68,9 +71,9 @@ Deno.test({
 
   const controller2 = getCurrentBrowserController();
 
-  // Context should persist
-  assertExists(controller1);
-  assertExists(controller2);
+  // Both should be cleared after each execute() completes (finally block behavior)
+  assertEquals(controller1, undefined, "Context cleared after first execute()");
+  assertEquals(controller2, undefined, "Context cleared after second execute()");
 
   await engine.shutdown();
   clearBrowserContext();

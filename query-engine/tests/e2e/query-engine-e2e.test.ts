@@ -85,9 +85,10 @@ Deno.test({
     // Expected to fail without real network
   }
 
-  // Context should be set even if navigation fails
+  // After execute() returns, the finally block clears the browser context.
+  // Context is set during execution and cleared when execute() completes.
   const controller = getCurrentBrowserController();
-  assertExists(controller, "Browser context should be set after navigation attempt");
+  assertEquals(controller, undefined, "Browser context is cleared after execute() via finally block");
 
   await engine.shutdown();
   clearBrowserContext();

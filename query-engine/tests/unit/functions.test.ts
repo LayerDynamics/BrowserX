@@ -62,6 +62,8 @@ import {
   ATTR,
   COUNT,
   EXISTS,
+  CLICK,
+  TYPE,
   DOM_FUNCTIONS,
 } from "../../schema/functions/dom-functions.ts";
 
@@ -761,13 +763,15 @@ Deno.test({
 Deno.test({
   name: "DOM_FUNCTIONS - all functions exported",
   fn() {
-    assertEquals(DOM_FUNCTIONS.length, 5);
+    assertEquals(DOM_FUNCTIONS.length, 7);
     const names = DOM_FUNCTIONS.map((f) => f.signature.name);
     assert(names.includes("TEXT"));
     assert(names.includes("HTML"));
     assert(names.includes("ATTR"));
     assert(names.includes("COUNT"));
     assert(names.includes("EXISTS"));
+    assert(names.includes("CLICK"));
+    assert(names.includes("TYPE"));
   },
 });
 
@@ -830,6 +834,34 @@ Deno.test({
     assertEquals(EXISTS.signature.maxArgs, 1);
     assertEquals(EXISTS.signature.returnType, DataType.BOOLEAN);
     assertEquals(EXISTS.signature.isAsync, true);
+  },
+});
+
+Deno.test({
+  name: "CLICK - signature is correct",
+  fn() {
+    assertEquals(CLICK.signature.name, "CLICK");
+    assertEquals(CLICK.signature.category, FunctionCategory.DOM);
+    assertEquals(CLICK.signature.minArgs, 1);
+    assertEquals(CLICK.signature.maxArgs, 1);
+    assertEquals(CLICK.signature.returnType, DataType.BOOLEAN);
+    assertEquals(CLICK.signature.isAsync, true);
+    assertExists(CLICK.signature.description);
+    assertExists(CLICK.signature.examples);
+  },
+});
+
+Deno.test({
+  name: "TYPE - signature is correct",
+  fn() {
+    assertEquals(TYPE.signature.name, "TYPE");
+    assertEquals(TYPE.signature.category, FunctionCategory.DOM);
+    assertEquals(TYPE.signature.minArgs, 2);
+    assertEquals(TYPE.signature.maxArgs, 2);
+    assertEquals(TYPE.signature.returnType, DataType.BOOLEAN);
+    assertEquals(TYPE.signature.isAsync, true);
+    assertExists(TYPE.signature.description);
+    assertExists(TYPE.signature.examples);
   },
 });
 

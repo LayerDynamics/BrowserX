@@ -27,16 +27,12 @@ Deno.test({
     // Navigation may fail, but context should still be managed
   }
 
-  // Context should exist during/after execution
+  // After execute() completes, the finally block clears the context
   const controllerAfterExec = getCurrentBrowserController();
-  assertExists(controllerAfterExec, "Context should exist after execution");
+  assertEquals(controllerAfterExec, undefined, "Context should be cleared after execute() via finally block");
 
-  // After shutdown, context should be cleared
+  // Shutdown the engine
   await engine.shutdown();
-
-  // Note: Global context is not automatically cleared by engine shutdown
-  // The engine should call clearBrowserContext() to clean up
-  // This test verifies that behavior is implemented
 
   clearBrowserContext(); // Manual cleanup for test isolation
 });

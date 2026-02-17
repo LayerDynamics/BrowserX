@@ -41,7 +41,7 @@ import {
 import { QueryID } from "../types/primitives.ts";
 import { EvaluationContext, ExpressionEvaluator } from "./expression-evaluator.ts";
 import { BrowserController } from "../controllers/browser/browser-controller.ts";
-import { setCurrentBrowserController } from "../controllers/browser/browser-context.ts";
+import { setCurrentBrowserController, clearBrowserContext } from "../controllers/browser/browser-context.ts";
 import { ProxyController } from "../controllers/proxy/proxy-controller.ts";
 import { ExecutionContextManager, StateManager } from "../state/mod.ts";
 import { type DependencyGraph, topologicalSort } from "../utils/mod.ts";
@@ -114,6 +114,11 @@ export class QueryExecutor {
 
     // Convert to legacy format for backward compatibility
     const context: ExecutionContext = this.currentContextManager.toLegacyContext();
+
+    // Set browser context for DOM function evaluation throughout this query
+    if (this.browserController) {
+      setCurrentBrowserController(this.browserController);
+    }
 
     let cacheHits = 0;
     let cacheMisses = 0;
@@ -205,6 +210,8 @@ export class QueryExecutor {
         cacheHits,
         cacheMisses,
       };
+    } finally {
+      clearBrowserContext();
     }
   }
 
@@ -421,6 +428,7 @@ export class QueryExecutor {
       const browserEngine = new BrowserEngine();
       this.browserController = new BrowserController(browserEngine);
     }
+    setCurrentBrowserController(this.browserController);
 
     // Execute the DOM query step which returns extracted data
     const results = await this.browserController.executeDOMQuery(step, options);
