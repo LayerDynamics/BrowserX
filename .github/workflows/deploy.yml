@@ -106,19 +106,24 @@ jobs:
               up -d --no-deps browserx-api
 
             for i in $(seq 1 24); do
-              if curl -fsS http://localhost:8080/health > /dev/null 2>&1; then
+              API_ID=$(docker compose -f docker-compose.yml -f docker-compose.override.yml \
+                ps -q browserx-api 2>/dev/null)
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$API_ID" 2>/dev/null || echo "unknown")
+              if [ "$STATUS" = "healthy" ]; then
                 echo "browserx-api healthy"
                 break
               fi
-              echo "Waiting for browserx-api (${i}/24)..."
+              echo "Waiting for browserx-api (${i}/24) — status: ${STATUS}..."
               sleep 5
             done
 
             docker compose -f docker-compose.yml -f docker-compose.override.yml \
               up -d --no-deps doc-site
 
+            # --force-recreate stops any existing nginx (releases port 80) then
+            # starts the new container, preventing "port is already allocated" errors
             docker compose -f docker-compose.yml -f docker-compose.override.yml \
-              up -d --no-deps nginx
+              up -d --no-deps --force-recreate nginx
 
             docker system prune -f
             echo "Deploy complete!"
