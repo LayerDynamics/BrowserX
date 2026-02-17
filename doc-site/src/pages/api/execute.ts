@@ -352,8 +352,28 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    // 3. Execute query (mock for now)
+    // 3. Execute query — proxy to real BrowserX API if configured, else mock
     const timeout = body.options?.timeout ?? 30000;
+    const browserxApiUrl = import.meta.env.BROWSERX_API_URL;
+
+    if (browserxApiUrl) {
+      try {
+        const upstream = await fetch(`${browserxApiUrl}/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: body.query, options: body.options }),
+          signal: AbortSignal.timeout(timeout),
+        });
+        const upstreamText = await upstream.text();
+        return new Response(upstreamText, {
+          status: upstream.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } catch {
+        // Fall through to mock if upstream is unreachable
+      }
+    }
+
     const results = await executeMockQuery(body.query, timeout);
 
     // 4. Return success response

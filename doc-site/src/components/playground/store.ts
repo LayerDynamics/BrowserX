@@ -119,8 +119,8 @@ export interface PlaygroundStore {
   // ===== Editor State =====
   /** Current query text in the editor */
   currentQuery: string;
-  /** Editor mode: code or visual blocks */
-  editorMode: 'code' | 'blocks';
+  /** Editor mode: code, visual blocks, or generator */
+  editorMode: 'code' | 'blocks' | 'generator';
 
   // ===== Execution State =====
   /** Currently active execution, if any */
@@ -155,8 +155,8 @@ export interface PlaygroundStore {
   // ===== Actions =====
   /** Set the current query text */
   setQuery: (query: string) => void;
-  /** Switch between code and blocks editor mode */
-  setEditorMode: (mode: 'code' | 'blocks') => void;
+  /** Switch between code, blocks, and generator editor mode */
+  setEditorMode: (mode: 'code' | 'blocks' | 'generator') => void;
   /** Execute a query (async operation) */
   executeQuery: (query: string) => Promise<void>;
   /** Cancel the currently running execution */
@@ -260,7 +260,7 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
     set({ currentQuery: query });
   },
 
-  setEditorMode: (mode: 'code' | 'blocks') => {
+  setEditorMode: (mode: 'code' | 'blocks' | 'generator') => {
     set({ editorMode: mode });
   },
 
