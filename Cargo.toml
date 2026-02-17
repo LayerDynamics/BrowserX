@@ -1,14 +1,14 @@
 [workspace]
-members = ["crates/pixpane"]
+members = ["crates/pixpane", "crates/webgpu_x"]
 exclude = ["crates/target", "target"]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["geoprox"]
+authors = ["LayerDynamics"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/geoprox/geoprox"
+repository = "https://github.com/LayerDynamics/BrowserX"
 
 [workspace.dependencies]
 # Windowing
