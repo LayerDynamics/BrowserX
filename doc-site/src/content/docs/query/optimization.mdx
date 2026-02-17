@@ -1,0 +1,616 @@
+---
+title: Query Optimization
+description: Techniques for optimizing query performance
+---
+
+The Query Engine automatically optimizes queries, but understanding optimization techniques helps you write more efficient queries.
+
+## Automatic Optimizations
+
+The Query Engine applies several automatic optimizations:
+
+### 1. Constant Folding
+
+Evaluates constant expressions at compile time.
+
+**Before Optimization:**
+```sql
+WHERE 1 + 1 = 2 AND status = "active"
+WHERE price * 1.1 > 100
+```
+
+**After Optimization:**
+```sql
+WHERE true AND status = "active"  → WHERE status = "active"
+WHERE price > 90.9  -- Computed at compile time
+```
+
+**Benefits:**
+- Reduces runtime computation
+- Simplifies execution plan
+- Improves readability of optimized plan
+
+### 2. Dead Code Elimination
+
+Removes unreachable code and always-false conditions.
+
+**Before Optimization:**
+```sql
+IF false THEN
+  SELECT "never executed"
+
+WHERE 1 = 2 AND status = "active"
+```
+
+**After Optimization:**
+```sql
+-- Entire IF block removed
+
+WHERE false  -- Entire WHERE clause can be eliminated
+```
+
+### 3. Predicate Pushdown
+
+Moves filters closer to data source to reduce data transfer.
+
+**Before Optimization:**
+```sql
+SELECT name, price FROM "https://store.com/products"
+WHERE price < 100
+```
+
+**After Optimization:**
+```sql
+-- Filter applied in browser using CSS selector (when possible)
+SELECT name, price FROM "https://store.com/products"
+WHERE SELECTOR ".product[data-price<'100']"
+```
+
+**Benefits:**
+- Reduces data extraction
+- Faster DOM traversal
+- Lower memory usage
+
+### 4. Cache Utilization
+
+Uses cached data when available and fresh.
+
+**Before Optimization:**
+```sql
+SELECT title FROM "https://example.com"
+```
+
+**After Optimization:**
+```sql
+IF CACHED("https://example.com") AND CACHE_AGE < 3600 THEN
+  SELECT title FROM CACHE("https://example.com")
+ELSE
+  SELECT title FROM "https://example.com"
+  CACHE RESULT
+```
+
+**Benefits:**
+- Eliminates network requests
+- Reduces page load time
+- Lowers server load
+
+### 5. Parallel Execution
+
+Detects independent operations and executes in parallel.
+
+**Before Optimization:**
+```sql
+SELECT title FROM "https://url1.com";
+SELECT title FROM "https://url2.com";
+SELECT title FROM "https://url3.com";
+```
+
+**After Optimization:**
+```sql
+PARALLEL {
+  SELECT title FROM "https://url1.com",
+  SELECT title FROM "https://url2.com",
+  SELECT title FROM "https://url3.com"
+}
+```
+
+**Benefits:**
+- Faster overall execution
+- Better resource utilization
+- Concurrent network requests
+
+## Manual Optimization Techniques
+
+### Use Specific Selectors
+
+**Inefficient:**
+```sql
+-- Overly broad selector
+SELECT TEXT("div") FROM "https://example.com"
+```
+
+**Efficient:**
+```sql
+-- Specific selector
+SELECT TEXT("div.product-name") FROM "https://example.com"
+SELECT TEXT("#product-title") FROM "https://example.com"
+```
+
+**Why:**
+- Faster DOM traversal
+- More predictable results
+- Better performance
+
+### Batch Field Extraction
+
+**Inefficient:**
+```sql
+-- Multiple queries
+SELECT TEXT(".title") FROM "https://example.com";
+SELECT TEXT(".price") FROM "https://example.com";
+SELECT TEXT(".rating") FROM "https://example.com";
+```
+
+**Efficient:**
+```sql
+-- Single query
+SELECT
+  TEXT(".title") AS title,
+  TEXT(".price") AS price,
+  TEXT(".rating") AS rating
+FROM "https://example.com"
+```
+
+**Benefits:**
+- Single page load
+- One browser instance
+- Reduced overhead
+
+### Leverage Caching
+
+**Without Caching:**
+```sql
+FOR EACH url IN urls
+  SELECT data FROM url  -- Fetches every time
+```
+
+**With Caching:**
+```sql
+SET cache.enabled = true
+SET cache.ttl = 3600  -- 1 hour
+
+FOR EACH url IN urls
+  SELECT data FROM url  -- Uses cache when available
+```
+
+**Explicit Cache Control:**
+```sql
+-- Only use cache
+SELECT data FROM url WITH { cache: "only" }
+
+-- Force fresh fetch
+SELECT data FROM url WITH { cache: false }
+
+-- Use cache if < 5 minutes old
+IF CACHE_AGE(url) < 300 THEN
+  SELECT data FROM CACHE(url)
+ELSE
+  SELECT data FROM url
+```
+
+### Connection Reuse
+
+**Inefficient:**
+```sql
+FOR EACH url IN urls
+  NEW BROWSER →
+    SELECT data FROM url
+  CLOSE BROWSER
+```
+
+**Efficient:**
+```sql
+WITH browser AS NEW BROWSER
+FOR EACH url IN urls
+  browser → SELECT data FROM url
+```
+
+**Benefits:**
+- Reuses browser instance
+- Shares cookies/state
+- Faster startup
+
+### Limit Data Extraction
+
+**Inefficient:**
+```sql
+-- Extract everything
+SELECT * FROM "https://example.com"
+```
+
+**Efficient:**
+```sql
+-- Extract only needed fields
+SELECT title, description FROM "https://example.com"
+```
+
+**Benefits:**
+- Less data to process
+- Lower memory usage
+- Faster execution
+
+### Use Pagination
+
+**Inefficient:**
+```sql
+-- Load all at once
+SELECT data FROM "https://api.example.com/items?limit=10000"
+```
+
+**Efficient:**
+```sql
+-- Paginate
+FOR page IN RANGE(0, 100)
+  SELECT data FROM "https://api.example.com/items?limit=100&offset=" || (page * 100)
+  STREAM RESULT
+```
+
+**Benefits:**
+- Controlled memory usage
+- Faster initial response
+- Better error recovery
+
+### Optimize Conditions
+
+**Inefficient:**
+```sql
+-- Expensive function in WHERE
+WHERE UPPER(title) = "TEST"
+```
+
+**Efficient:**
+```sql
+-- Case-insensitive comparison
+WHERE title LIKE "test"  -- Often optimized internally
+```
+
+**Inefficient:**
+```sql
+-- Multiple OR conditions
+WHERE status = "a" OR status = "b" OR status = "c" OR status = "d"
+```
+
+**Efficient:**
+```sql
+-- Use IN
+WHERE status IN ("a", "b", "c", "d")
+```
+
+### Proxy Optimization
+
+**Basic:**
+```sql
+NAVIGATE TO url
+  WITH { proxy: { cache: true } }
+```
+
+**Optimized:**
+```sql
+NAVIGATE TO url
+  WITH {
+    proxy: {
+      cache: true,
+      ttl: 3600,
+      // Only intercept what's needed
+      intercept: {
+        urls: ["*/api/*"],
+        methods: ["GET"]
+      },
+      // Reuse connections
+      keepAlive: true
+    }
+  }
+```
+
+### Resource Hints
+
+**Without Hints:**
+```sql
+FOR EACH url IN urls
+  SELECT data FROM url
+```
+
+**With Prefetching:**
+```sql
+WITH PREFETCH 5  -- Prefetch next 5 URLs
+FOR EACH url IN urls
+  SELECT data FROM url
+```
+
+**Benefits:**
+- Overlaps network and processing
+- Reduces perceived latency
+- Better throughput
+
+## Performance Patterns
+
+### Pattern 1: Streaming Large Datasets
+
+```sql
+-- Stream results to avoid memory issues
+FOR EACH url IN large_url_list
+  SELECT data FROM url
+  STREAM EACH RESULT  -- Don't accumulate in memory
+```
+
+### Pattern 2: Batch Processing
+
+```sql
+-- Process in batches
+BATCH 10 {
+  FOR EACH url IN urls
+    SELECT data FROM url IN NEW TAB
+}
+```
+
+**Benefits:**
+- Parallel processing
+- Controlled resource usage
+- Better throughput
+
+### Pattern 3: Early Termination
+
+```sql
+-- Stop when found
+FOR EACH url IN urls
+  SELECT data FROM url
+  WHERE condition
+  LIMIT 1  -- Stop after first match
+```
+
+### Pattern 4: Conditional Execution
+
+```sql
+-- Skip unnecessary work
+IF NOT CACHED(url) THEN
+  SELECT data FROM url
+```
+
+### Pattern 5: Selective Interception
+
+```sql
+-- Only intercept what's needed
+NAVIGATE TO url
+  WITH {
+    proxy: {
+      intercept: {
+        urls: ["*/api/critical/*"],  -- Not all traffic
+        methods: ["POST", "PUT"]      -- Not all methods
+      }
+    }
+  }
+```
+
+## Monitoring Performance
+
+### Enable Timing
+
+```sql
+SET debug.timing = true
+
+SELECT data FROM "https://example.com"
+```
+
+**Output:**
+```json
+{
+  "data": {...},
+  "timing": {
+    "parse": 2,
+    "analyze": 1,
+    "optimize": 3,
+    "plan": 1,
+    "execute": 523,
+    "total": 530
+  }
+}
+```
+
+### Explain Query Plan
+
+```typescript
+// Get execution plan without executing
+const plan = await engine.explain(query);
+
+console.log("Execution plan:");
+for (const step of plan.steps) {
+  console.log(`- ${step.type}.${step.action} (${step.estimatedDuration}ms)`);
+}
+console.log(`Estimated total: ${plan.estimatedCost}ms`);
+```
+
+### Profile Queries
+
+```sql
+SET debug.profile = true
+
+SELECT data FROM "https://example.com"
+```
+
+**Output:**
+```json
+{
+  "data": {...},
+  "profile": {
+    "memoryPeak": 45234567,
+    "cpuTime": 1234,
+    "browserInstances": 3,
+    "networkRequests": 127,
+    "cacheHits": 45,
+    "cacheMisses": 82
+  }
+}
+```
+
+## Optimization Checklist
+
+- [ ] Use specific CSS selectors
+- [ ] Batch field extraction in single query
+- [ ] Enable caching with appropriate TTL
+- [ ] Reuse browser instances
+- [ ] Extract only needed fields
+- [ ] Use pagination for large datasets
+- [ ] Apply filters early (predicate pushdown)
+- [ ] Use streaming for large results
+- [ ] Leverage parallel execution
+- [ ] Profile slow queries
+- [ ] Monitor cache hit rates
+- [ ] Set appropriate timeouts
+- [ ] Use connection pooling
+- [ ] Avoid nested loops when possible
+- [ ] Use CTEs to avoid repeated computation
+
+## Common Performance Issues
+
+### Issue 1: Too Many Browser Instances
+
+**Problem:**
+```sql
+FOR EACH url IN urls
+  NEW BROWSER → SELECT data FROM url
+```
+
+**Solution:**
+```sql
+WITH browser AS NEW BROWSER
+FOR EACH url IN urls
+  browser → SELECT data FROM url
+```
+
+### Issue 2: No Caching
+
+**Problem:**
+```sql
+-- Same URL fetched multiple times
+SELECT data FROM url;  -- Fetch
+-- ... later ...
+SELECT data FROM url;  -- Fetch again
+```
+
+**Solution:**
+```sql
+SET cache.enabled = true
+SET cache.ttl = 3600
+```
+
+### Issue 3: Broad Selectors
+
+**Problem:**
+```sql
+SELECT TEXT("div") FROM url  -- Matches too many
+```
+
+**Solution:**
+```sql
+SELECT TEXT("div.specific-class") FROM url
+SELECT TEXT("#unique-id") FROM url
+```
+
+### Issue 4: Sequential Execution
+
+**Problem:**
+```sql
+SELECT data FROM url1;
+SELECT data FROM url2;
+SELECT data FROM url3;
+```
+
+**Solution:**
+```sql
+PARALLEL {
+  SELECT data FROM url1,
+  SELECT data FROM url2,
+  SELECT data FROM url3
+}
+```
+
+### Issue 5: Memory Accumulation
+
+**Problem:**
+```sql
+-- Accumulates all results in memory
+FOR EACH url IN large_list
+  SELECT data FROM url
+```
+
+**Solution:**
+```sql
+-- Stream results
+FOR EACH url IN large_list
+  SELECT data FROM url
+  STREAM EACH RESULT
+```
+
+## Benchmarking
+
+### Measure Query Performance
+
+```typescript
+const start = performance.now();
+const result = await engine.execute(query);
+const duration = performance.now() - start;
+
+console.log(`Query executed in ${duration}ms`);
+console.log(`Internal timing: ${result.timing.total}ms`);
+```
+
+### Compare Optimizations
+
+```typescript
+// Baseline
+const baseline = await benchmark(() =>
+  engine.execute(originalQuery)
+);
+
+// Optimized
+const optimized = await benchmark(() =>
+  engine.execute(optimizedQuery)
+);
+
+console.log(`Speedup: ${baseline / optimized}x`);
+```
+
+### Load Testing
+
+```typescript
+// Execute many queries concurrently
+const queries = Array(100).fill(query);
+const start = performance.now();
+
+await Promise.all(
+  queries.map(q => engine.execute(q))
+);
+
+const duration = performance.now() - start;
+console.log(`${queries.length} queries in ${duration}ms`);
+console.log(`Average: ${duration / queries.length}ms per query`);
+```
+
+## Best Practices Summary
+
+1. **Use caching aggressively** - Set appropriate TTLs
+2. **Batch operations** - Multiple fields in one query
+3. **Reuse resources** - Browser instances, connections
+4. **Filter early** - Apply WHERE clauses as soon as possible
+5. **Limit data** - Extract only what you need
+6. **Parallelize** - Execute independent queries concurrently
+7. **Stream results** - For large datasets
+8. **Monitor metrics** - Track cache hits, timings
+9. **Profile slow queries** - Identify bottlenecks
+10. **Test optimizations** - Measure before and after
+
+## Next Steps
+
+- Review [Real-World Examples](/query/examples)
+- Study [API Reference](/query/api-reference)
+- Explore [Architecture Details](/query/architecture)

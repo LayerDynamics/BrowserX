@@ -1,0 +1,737 @@
+---
+title: Integration Patterns
+description: Using BrowserX Runtime in your applications
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide demonstrates common integration patterns for using the BrowserX Runtime in various application architectures.
+
+## Standalone Application
+
+### Basic Integration
+
+```typescript
+import { createRuntime } from "@browserx/runtime";
+
+async function main() {
+  const runtime = await createRuntime({
+    config: {
+      browser: { maxInstances: 10 },
+      metrics: { enabled: true, port: 9090 },
+    },
+  });
+
+  try {
+    // Application logic
+    await runApplication(runtime);
+  } finally {
+    await runtime.shutdown();
+  }
+}
+
+main().catch(console.error);
+```
+
+### With Error Handling
+
+```typescript
+async function robustMain() {
+  let runtime: BrowserXRuntime | undefined;
+
+  try {
+    runtime = await createRuntime();
+
+    // Set up signal handlers
+    process.on("SIGINT", async () => {
+      console.log("Received SIGINT, shutting down...");
+      await runtime?.shutdown("SIGINT");
+      process.exit(0);
+    });
+
+    await runApplication(runtime);
+  } catch (error) {
+    console.error("Fatal error:", error);
+
+    // Attempt graceful shutdown
+    if (runtime) {
+      try {
+        await runtime.shutdown("Error recovery");
+      } catch (shutdownError) {
+        console.error("Shutdown error:", shutdownError);
+      }
+    }
+
+    process.exit(1);
+  }
+}
+```
+
+## Web Server Integration
+
+### Express Server
+
+<Tabs>
+<TabItem label="Basic Setup">
+
+```typescript
+import express from "express";
+import { createRuntime } from "@browserx/runtime";
+
+const app = express();
+let runtime: BrowserXRuntime;
+
+// Initialize runtime before starting server
+async function init() {
+  runtime = await createRuntime({
+    config: {
+      browser: { maxInstances: 20 },
+      metrics: { enabled: true, port: 9090 },
+    },
+  });
+}
+
+// Routes
+app.get("/screenshot", async (req, res) => {
+  const url = req.query.url as string;
+
+  const instance = await runtime.browserPool.acquire();
+
+  try {
+    const browser = instance.browserEngine as BrowserEngine;
+    await browser.navigate(url);
+    const screenshot = await browser.screenshot();
+
+    res.type("image/png").send(Buffer.from(screenshot));
+  } finally {
+    runtime.browserPool.release(instance.id);
+  }
+});
+
+// Start server
+init().then(() => {
+  app.listen(3000, () => {
+    console.log("Server running on port 3000");
+  });
+});
+
+// Graceful shutdown
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received, closing server...");
+  await runtime.shutdown();
+  process.exit(0);
+});
+```
+
+</TabItem>
+
+<TabItem label="With Health Endpoint">
+
+```typescript
+// Health check endpoint
+app.get("/health", async (req, res) => {
+  const health = await runtime.getHealthStatus();
+
+  const httpStatus = health.status === "healthy" ? 200
+    : health.status === "degraded" ? 200
+    : 503;
+
+  res.status(httpStatus).json(health);
+});
+
+// Readiness check (K8s)
+app.get("/ready", async (req, res) => {
+  if (runtime.isRunning()) {
+    res.status(200).json({ ready: true });
+  } else {
+    res.status(503).json({ ready: false });
+  }
+});
+```
+
+</TabItem>
+
+<TabItem label="With Middleware">
+
+```typescript
+// Request logging middleware
+app.use((req, res, next) => {
+  runtime.metricsCollector.incrementCounter(
+    "http_requests_total",
+    1,
+    { method: req.method, path: req.path }
+  );
+
+  const start = Date.now();
+
+  res.on("finish", () => {
+    const duration = (Date.now() - start) / 1000;
+
+    runtime.metricsCollector.observeHistogram(
+      "http_request_duration_seconds",
+      duration
+    );
+
+    runtime.metricsCollector.incrementCounter(
+      "http_responses_total",
+      1,
+      { method: req.method, path: req.path, status: String(res.statusCode) }
+    );
+  });
+
+  next();
+});
+```
+
+</TabItem>
+</Tabs>
+
+## Deno Deploy Integration
+
+```typescript
+// main.ts
+import { createRuntime } from "@browserx/runtime";
+
+const runtime = await createRuntime({
+  config: {
+    browser: { maxInstances: 5 },
+    eventLoop: { enabled: true },
+  },
+});
+
+Deno.serve(async (req) => {
+  const url = new URL(req.url);
+
+  if (url.pathname === "/screenshot") {
+    const targetUrl = url.searchParams.get("url");
+
+    if (!targetUrl) {
+      return new Response("Missing url parameter", { status: 400 });
+    }
+
+    const instance = await runtime.browserPool.acquire();
+
+    try {
+      const browser = instance.browserEngine as BrowserEngine;
+      await browser.navigate(targetUrl);
+      const screenshot = await browser.screenshot();
+
+      return new Response(screenshot, {
+        headers: { "Content-Type": "image/png" },
+      });
+    } finally {
+      runtime.browserPool.release(instance.id);
+    }
+  }
+
+  return new Response("Not Found", { status: 404 });
+});
+```
+
+## Query Engine Integration
+
+### Direct Query Execution
+
+```typescript
+import { createRuntime } from "@browserx/runtime";
+
+const runtime = await createRuntime();
+const queryEngine = runtime.getQueryEngine() as QueryEngine;
+
+// Execute a query
+const result = await queryEngine.execute(
+  'SELECT title, description FROM "https://example.com"'
+);
+
+console.log(result);
+```
+
+### With Browser Pool
+
+```typescript
+// Query engine automatically uses runtime's browser pool
+const result = await queryEngine.execute(`
+  NAVIGATE TO "https://example.com"
+  WITH { browser: { enableJavaScript: true } }
+  CAPTURE dom.title, response.status
+`);
+
+console.log(`Title: ${result.dom.title}`);
+console.log(`Status: ${result.response.status}`);
+```
+
+## MCP Server Integration
+
+The Runtime integrates seamlessly with the MCP Server:
+
+```typescript
+// mcp-server/server/service-initializer.ts
+import { createRuntime } from "@browserx/runtime";
+import type { BrowserXRuntime } from "@browserx/runtime";
+
+export class ServiceInitializer {
+  private runtime?: BrowserXRuntime;
+
+  async initializeRuntime(config: RuntimeConfig): Promise<void> {
+    if (this.runtime) return;
+
+    this.runtime = await createRuntime({
+      config: {
+        browser: config.browser,
+        plugins: config.plugins,
+        metrics: config.metrics,
+      },
+    });
+
+    // Wire runtime into session manager
+    this.sessionManager.setBrowserPool(this.runtime.browserPool);
+    this.sessionManager.setEventEmitter(
+      this.runtime.emitExternalEvent.bind(this.runtime)
+    );
+
+    // Register session manager health check
+    this.runtime.healthChecker.registerHandler(
+      "session-manager",
+      async () => {
+        const capacity = this.sessionManager.hasCapacity();
+        return {
+          status: capacity ? "healthy" : "degraded",
+          message: capacity ? "Sessions available" : "At capacity",
+        };
+      }
+    );
+
+    // Register session metrics
+    this.runtime.metricsCollector.registerComponentMetrics(
+      "session-manager",
+      () => ({
+        active_sessions: {
+          name: "browserx_mcp_active_sessions",
+          type: "gauge",
+          value: this.sessionManager.getActiveSessionCount(),
+          timestamp: Date.now(),
+        },
+      })
+    );
+  }
+
+  async shutdown(): Promise<void> {
+    // Session manager releases pool instances first
+    await this.sessionManager.stop();
+
+    // Then runtime shuts down the pool
+    await this.runtime?.shutdown();
+  }
+}
+```
+
+## Monitoring Integration
+
+### Datadog
+
+```typescript
+import { StatsD } from "hot-shots";
+import { createRuntime } from "@browserx/runtime";
+
+const statsd = new StatsD({ host: "localhost", port: 8125 });
+const runtime = await createRuntime();
+
+// Forward runtime events to Datadog
+runtime.addEventListener((event) => {
+  switch (event.type) {
+    case "state_change":
+      statsd.increment("browserx.state_changes", {
+        from: event.from,
+        to: event.to,
+      });
+      break;
+
+    case "component_error":
+      statsd.increment("browserx.errors", {
+        component: event.componentId,
+      });
+      break;
+
+    case "health_check":
+      statsd.gauge("browserx.health", event.status === "healthy" ? 1 : 0);
+      break;
+  }
+});
+
+// Forward metrics
+setInterval(() => {
+  const stats = runtime.getStats();
+
+  statsd.gauge("browserx.uptime", stats.uptime);
+  statsd.gauge("browserx.browser_instances", stats.resources.browserInstances);
+  statsd.gauge("browserx.active_sessions", stats.resources.activeSessions);
+  statsd.gauge("browserx.memory.heap", stats.memory.heapUsed);
+}, 10000); // Every 10 seconds
+```
+
+### Prometheus + Grafana
+
+The Runtime exposes Prometheus metrics out-of-the-box:
+
+```typescript
+// Enable metrics
+const runtime = await createRuntime({
+  config: {
+    metrics: {
+      enabled: true,
+      port: 9090,
+      exportFormat: "prometheus",
+    },
+  },
+});
+
+// Metrics available at http://localhost:9090/metrics
+```
+
+Configure Prometheus to scrape:
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'browserx'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+```
+
+## Docker Integration
+
+### Dockerfile
+
+```dockerfile
+FROM denoland/deno:2.1.4
+
+WORKDIR /app
+
+# Copy dependencies
+COPY deno.json deno.lock ./
+RUN deno cache deno.json
+
+# Copy application
+COPY . .
+
+# Expose metrics port
+EXPOSE 9090
+
+# Run application
+CMD ["deno", "task", "start"]
+```
+
+### Docker Compose
+
+```yaml
+services:
+  browserx:
+    build: .
+    ports:
+      - "3000:3000"     # Application
+      - "9090:9090"     # Metrics
+    environment:
+      - BROWSERX_BROWSER_MAX_INSTANCES=20
+      - BROWSERX_METRICS_ENABLED=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - browserx
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+```
+
+## Kubernetes Integration
+
+### Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: browserx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: browserx
+  template:
+    metadata:
+      labels:
+        app: browserx
+    spec:
+      containers:
+      - name: browserx
+        image: your-registry/browserx:latest
+        ports:
+        - containerPort: 3000
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: BROWSERX_BROWSER_MAX_INSTANCES
+          value: "10"
+        - name: BROWSERX_METRICS_ENABLED
+          value: "true"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+```
+
+### Service & Monitoring
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: browserx
+  labels:
+    app: browserx
+spec:
+  selector:
+    app: browserx
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: browserx
+spec:
+  selector:
+    matchLabels:
+      app: browserx
+  endpoints:
+  - port: metrics
+    interval: 15s
+```
+
+## Worker Pool Pattern
+
+Use the Runtime with a worker pool for parallel processing:
+
+```typescript
+import { createRuntime } from "@browserx/runtime";
+
+const runtime = await createRuntime({
+  config: {
+    browser: { minInstances: 5, maxInstances: 20 },
+  },
+});
+
+class WorkerPool {
+  private queue: Array<() => Promise<void>> = [];
+  private activeWorkers = 0;
+  private readonly maxConcurrency: number;
+
+  constructor(maxConcurrency: number) {
+    this.maxConcurrency = maxConcurrency;
+  }
+
+  async submit<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.queue.push(async () => {
+        try {
+          const result = await task();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      this.processQueue();
+    });
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.activeWorkers >= this.maxConcurrency || this.queue.length === 0) {
+      return;
+    }
+
+    const task = this.queue.shift();
+    if (!task) return;
+
+    this.activeWorkers++;
+
+    try {
+      await task();
+    } finally {
+      this.activeWorkers--;
+      this.processQueue();
+    }
+  }
+}
+
+const pool = new WorkerPool(10);
+
+// Process URLs in parallel
+const urls = ["https://example1.com", "https://example2.com", ...];
+
+const results = await Promise.all(
+  urls.map(url => pool.submit(async () => {
+    const instance = await runtime.browserPool.acquire();
+
+    try {
+      const browser = instance.browserEngine as BrowserEngine;
+      await browser.navigate(url);
+      return await browser.screenshot();
+    } finally {
+      runtime.browserPool.release(instance.id);
+    }
+  }))
+);
+```
+
+## Best Practices
+
+### 1. Always Shutdown Gracefully
+
+```typescript
+async function cleanup(runtime: BrowserXRuntime) {
+  console.log("Shutting down...");
+
+  try {
+    await runtime.shutdown("Application exit");
+    console.log("Shutdown complete");
+  } catch (error) {
+    console.error("Shutdown error:", error);
+    process.exit(1);
+  }
+}
+
+process.on("SIGINT", () => cleanup(runtime));
+process.on("SIGTERM", () => cleanup(runtime));
+```
+
+### 2. Monitor Pool Capacity
+
+```typescript
+setInterval(() => {
+  const stats = runtime.browserPool.getStats();
+
+  if (stats.inUseInstances >= stats.maxInstances * 0.8) {
+    console.warn("Pool approaching capacity");
+  }
+
+  if (stats.totalErrors > 10) {
+    console.error("High error rate in browser pool");
+  }
+}, 60000);
+```
+
+### 3. Use Health Checks in Load Balancers
+
+```typescript
+app.get("/health", async (req, res) => {
+  const health = await runtime.getHealthStatus();
+
+  // Return 503 if unhealthy (load balancer will stop routing)
+  const status = health.status === "unhealthy" ? 503 : 200;
+
+  res.status(status).json({
+    status: health.status,
+    components: health.components.map(c => ({
+      id: c.componentId,
+      status: c.status,
+      message: c.message,
+    })),
+  });
+});
+```
+
+### 4. Implement Circuit Breakers
+
+```typescript
+class CircuitBreaker {
+  private failures = 0;
+  private readonly threshold = 5;
+  private state: "closed" | "open" = "closed";
+
+  async execute<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.state === "open") {
+      throw new Error("Circuit breaker is open");
+    }
+
+    try {
+      const result = await fn();
+      this.failures = 0;
+      return result;
+    } catch (error) {
+      this.failures++;
+
+      if (this.failures >= this.threshold) {
+        this.state = "open";
+        console.error("Circuit breaker opened");
+
+        // Auto-reset after 60 seconds
+        setTimeout(() => {
+          this.state = "closed";
+          this.failures = 0;
+        }, 60000);
+      }
+
+      throw error;
+    }
+  }
+}
+
+const breaker = new CircuitBreaker();
+
+app.get("/screenshot", async (req, res) => {
+  try {
+    const screenshot = await breaker.execute(async () => {
+      const instance = await runtime.browserPool.acquire();
+      // ... use instance
+      return screenshot;
+    });
+
+    res.type("image/png").send(screenshot);
+  } catch (error) {
+    res.status(503).json({ error: "Service temporarily unavailable" });
+  }
+});
+```
+
+## Next Steps
+
+- [Configuration](./configuration) - Configure the runtime
+- [Browser Pool](./browser-pool) - Manage browser instances
+- [Metrics & Health](./metrics-health) - Monitor production deployments
+- [Plugin System](./plugins) - Extend functionality

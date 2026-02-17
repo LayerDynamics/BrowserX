@@ -1,0 +1,894 @@
+---
+title: Middleware Pipeline
+description: Build composable request/response processing pipelines with authentication, rate limiting, CORS, compression, and logging middleware
+---
+
+The Proxy Engine's middleware system provides a flexible, composable way to process requests and responses. Middleware can authenticate users, enforce rate limits, add CORS headers, compress responses, log traffic, and transform headers.
+
+## Middleware Concepts
+
+### Request vs Response Middleware
+
+**Request Middleware** processes incoming requests before they reach the proxy handler:
+- Can short-circuit and return a response immediately
+- Adds metadata to request context
+- Validates, authenticates, or transforms requests
+
+**Response Middleware** transforms outgoing responses before sending to clients:
+- Modifies response headers or body
+- Adds compression, caching headers
+- Logs response data
+
+### Middleware Chain
+
+Middleware executes in priority order (lower priority = earlier execution):
+
+```text
+Request Flow:
+Client → Logging(1) → CORS(2) → Auth(3) → RateLimit(4) → Proxy → Backend
+
+Response Flow:
+Backend → Proxy → Compression(1) → Headers(2) → Client
+```
+
+### Middleware Result Types
+
+Request middleware returns one of three result types:
+
+```typescript
+// Continue to next middleware
+{ type: "continue" }
+
+// Short-circuit and return response
+{ type: "respond", response: HTTPResponse }
+
+// Trigger error handling
+{ type: "error", error: Error }
+```
+
+## Built-in Middleware
+
+### Authentication Middleware
+
+Validates credentials and enforces access control.
+
+#### Basic Auth
+
+```typescript
+import {
+  AuthMiddleware,
+  InMemoryUserValidator,
+} from "@browserx/proxy-engine";
+
+const authMiddleware = new AuthMiddleware({
+  method: "basic",
+  realm: "API Access",
+  validator: new InMemoryUserValidator({
+    "admin": {
+      password: "secret123",
+      roles: ["admin", "user"],
+    },
+    "user": {
+      password: "pass456",
+      roles: ["user"],
+    },
+  }),
+});
+
+// Request with Authorization: Basic YWRtaW46c2VjcmV0MTIz
+// Decodes to: admin:secret123 → Validates → Sets context.user
+```
+
+**Custom Validator**:
+
+```typescript
+class DatabaseUserValidator implements BasicAuthValidator {
+  async validate(username: string, password: string): Promise<AuthenticatedUser | null> {
+    const user = await db.users.findOne({ username });
+    if (!user) return null;
+
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) return null;
+
+    return {
+      id: user.id,
+      username: user.username,
+      roles: user.roles,
+      attributes: { email: user.email },
+    };
+  }
+}
+
+const authMiddleware = new AuthMiddleware({
+  method: "basic",
+  validator: new DatabaseUserValidator(),
+});
+```
+
+#### Bearer Token Auth
+
+```typescript
+import {
+  AuthMiddleware,
+  InMemoryTokenValidator,
+} from "@browserx/proxy-engine";
+
+const authMiddleware = new AuthMiddleware({
+  method: "bearer",
+  validator: new InMemoryTokenValidator({
+    "secret-token-abc123": {
+      userId: "user-1",
+      username: "alice",
+      roles: ["admin"],
+    },
+    "secret-token-xyz789": {
+      userId: "user-2",
+      username: "bob",
+      roles: ["user"],
+    },
+  }),
+});
+
+// Request with Authorization: Bearer secret-token-abc123
+// Validates token → Sets context.user
+```
+
+**JWT Token Validator**:
+
+```typescript
+import { verify } from "https://deno.land/x/djwt/mod.ts";
+
+class JWTTokenValidator implements TokenValidator {
+  constructor(private secretKey: CryptoKey) {}
+
+  async validate(token: string): Promise<AuthenticatedUser | null> {
+    try {
+      const payload = await verify(token, this.secretKey);
+
+      return {
+        id: payload.sub as string,
+        username: payload.username as string,
+        roles: payload.roles as string[],
+        attributes: payload,
+      };
+    } catch {
+      return null;
+    }
+  }
+}
+
+const authMiddleware = new AuthMiddleware({
+  method: "bearer",
+  validator: new JWTTokenValidator(secretKey),
+});
+```
+
+#### Role-Based Access Control
+
+```typescript
+const authMiddleware = new AuthMiddleware({
+  method: "bearer",
+  validator: tokenValidator,
+  accessRules: [
+    { path: "/admin/*", roles: ["admin"] },
+    { path: "/api/users/*", roles: ["admin", "user"] },
+    { path: "/public/*", roles: [] }, // Allow all authenticated users
+  ],
+});
+
+// Request to /admin/settings with user role ["user"] → 403 Forbidden
+// Request to /api/users/123 with user role ["user"] → Allowed
+```
+
+### Rate Limiting Middleware
+
+Protects APIs from abuse by limiting request rates.
+
+#### Token Bucket Algorithm
+
+Allows burst traffic up to bucket capacity, then enforces steady rate.
+
+```typescript
+import { RateLimitMiddleware } from "@browserx/proxy-engine";
+
+const rateLimitMiddleware = new RateLimitMiddleware({
+  algorithm: "token-bucket",
+  tokensPerInterval: 100,    // 100 tokens added per interval
+  interval: 60000,           // 1 minute interval
+  maxBurst: 120,             // Allow bursts up to 120 requests
+  keyGenerator: (req, ctx) => ctx.clientIP, // Rate limit per IP
+});
+
+// Client makes 120 requests in 5 seconds → All allowed (burst)
+// Client makes 121st request → Rate limited (bucket empty)
+// After 36 seconds → 60 tokens refilled → Client can make 60 more requests
+```
+
+**Per-User Rate Limiting**:
+
+```typescript
+const rateLimitMiddleware = new RateLimitMiddleware({
+  algorithm: "token-bucket",
+  tokensPerInterval: 1000,   // Higher limit for authenticated users
+  interval: 60000,
+  keyGenerator: (req, ctx) => {
+    // Rate limit by user ID if authenticated, otherwise by IP
+    return ctx.user ? `user:${ctx.user.id}` : `ip:${ctx.clientIP}`;
+  },
+});
+```
+
+#### Sliding Window Algorithm
+
+More accurate rate limiting with sliding time window.
+
+```typescript
+const rateLimitMiddleware = new RateLimitMiddleware({
+  algorithm: "sliding-window",
+  maxRequests: 100,          // Max 100 requests
+  windowMs: 60000,           // Per 60 second window
+  keyGenerator: (req, ctx) => ctx.clientIP,
+});
+
+// More precise than fixed windows
+// At t=59s: 100 requests made → allowed
+// At t=61s: New request → check last 60s (from t=1s to t=61s)
+//           If >100 requests in that window → rate limited
+```
+
+#### Custom Rate Limit Headers
+
+```typescript
+const rateLimitMiddleware = new RateLimitMiddleware({
+  algorithm: "token-bucket",
+  tokensPerInterval: 100,
+  interval: 60000,
+  includeHeaders: true,      // Add rate limit headers to response
+});
+
+// Response headers:
+// X-RateLimit-Limit: 100
+// X-RateLimit-Remaining: 47
+// X-RateLimit-Reset: 1640000000
+```
+
+### CORS Middleware
+
+Handles Cross-Origin Resource Sharing for web applications.
+
+#### Basic CORS
+
+```typescript
+import { CORSMiddleware } from "@browserx/proxy-engine";
+
+const corsMiddleware = new CORSMiddleware({
+  allowOrigin: "*",                                    // Allow all origins
+  allowMethods: ["GET", "POST", "PUT", "DELETE"],
+  allowHeaders: ["Content-Type", "Authorization"],
+  exposeHeaders: ["X-Request-ID"],
+  maxAge: 86400,                                       // Cache preflight for 24 hours
+  allowCredentials: false,
+});
+
+// Adds headers:
+// Access-Control-Allow-Origin: *
+// Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+// Access-Control-Allow-Headers: Content-Type, Authorization
+// Access-Control-Max-Age: 86400
+```
+
+#### Specific Origins
+
+```typescript
+const corsMiddleware = new CORSMiddleware({
+  allowOrigin: "https://app.example.com",
+  allowMethods: ["GET", "POST"],
+  allowHeaders: ["Content-Type", "Authorization"],
+  allowCredentials: true,                              // Required for cookies/auth
+});
+
+// Only allows requests from https://app.example.com
+// Access-Control-Allow-Origin: https://app.example.com
+// Access-Control-Allow-Credentials: true
+```
+
+#### Multiple Origins
+
+```typescript
+const allowedOrigins = [
+  "https://app.example.com",
+  "https://admin.example.com",
+  "http://localhost:3000",
+];
+
+const corsMiddleware = new CORSMiddleware({
+  allowOrigin: (origin) => {
+    return allowedOrigins.includes(origin) ? origin : null;
+  },
+  allowMethods: ["GET", "POST", "PUT", "DELETE"],
+  allowHeaders: ["Content-Type", "Authorization"],
+  allowCredentials: true,
+});
+
+// Dynamically returns matching origin or denies request
+```
+
+#### Preflight Handling
+
+CORS middleware automatically handles OPTIONS preflight requests:
+
+```text
+OPTIONS /api/users HTTP/1.1
+Origin: https://app.example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type, Authorization
+
+→ Response:
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: https://app.example.com
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Max-Age: 86400
+```
+
+### Compression Middleware
+
+Compresses responses to reduce bandwidth.
+
+#### Gzip Compression
+
+```typescript
+import { CompressionMiddleware } from "@browserx/proxy-engine";
+
+const compressionMiddleware = new CompressionMiddleware({
+  enabled: true,
+  encoding: "gzip",
+  threshold: 1024,           // Only compress responses > 1KB
+  level: 6,                  // Compression level 1-9 (6 = default balance)
+});
+
+// Adds header: Content-Encoding: gzip
+// Typical compression: 60-80% reduction for text content
+```
+
+#### Multiple Encodings
+
+```typescript
+const compressionMiddleware = new CompressionMiddleware({
+  enabled: true,
+  encoding: ["gzip", "deflate", "br"], // Try brotli first, then gzip, then deflate
+  threshold: 1024,
+});
+
+// Respects Accept-Encoding header from client:
+// Accept-Encoding: gzip, deflate, br → Uses br (brotli, best compression)
+// Accept-Encoding: gzip, deflate → Uses gzip
+// Accept-Encoding: * → Uses br
+```
+
+#### Selective Compression
+
+```typescript
+const compressionMiddleware = new CompressionMiddleware({
+  enabled: true,
+  encoding: "gzip",
+  threshold: 1024,
+  filter: (req, res) => {
+    // Only compress text content
+    const contentType = res.headers["content-type"] || "";
+    return (
+      contentType.includes("text/") ||
+      contentType.includes("application/json") ||
+      contentType.includes("application/javascript")
+    );
+  },
+});
+
+// Compresses: text/html, application/json, text/css, etc.
+// Doesn't compress: image/png, video/mp4, application/octet-stream
+```
+
+### Logging Middleware
+
+Logs requests and responses for monitoring and debugging.
+
+#### Request Logging
+
+```typescript
+import {
+  RequestLoggingMiddleware,
+  ConsoleLogger,
+} from "@browserx/proxy-engine";
+
+const loggingMiddleware = new RequestLoggingMiddleware({
+  level: "info",
+  format: "combined",        // Apache Combined Log Format
+  logger: new ConsoleLogger(),
+});
+
+// Logs:
+// 192.168.1.10 - alice [16/Jan/2025:10:30:45 +0000] "GET /api/users HTTP/1.1" 200 1234 "https://app.example.com" "Mozilla/5.0"
+```
+
+#### Custom Log Format
+
+```typescript
+class CustomLogFormatter implements LogFormatter {
+  format(req: HTTPRequest, res: HTTPResponse, ctx: RequestContext): string {
+    const duration = Date.now() - ctx.startTime;
+    return JSON.stringify({
+      timestamp: new Date().toISOString(),
+      requestId: ctx.requestId,
+      method: req.method,
+      path: req.uri,
+      status: res.statusCode,
+      duration,
+      clientIP: ctx.clientIP,
+      userAgent: req.headers["user-agent"],
+      user: ctx.user?.username,
+    });
+  }
+}
+
+const loggingMiddleware = new RequestLoggingMiddleware({
+  level: "info",
+  formatter: new CustomLogFormatter(),
+  logger: new ConsoleLogger(),
+});
+
+// Logs JSON:
+// {"timestamp":"2025-01-16T10:30:45.123Z","requestId":"req-abc123","method":"GET","path":"/api/users","status":200,"duration":45,"clientIP":"192.168.1.10","userAgent":"Mozilla/5.0","user":"alice"}
+```
+
+#### Structured Logging
+
+```typescript
+class StructuredLogger implements Logger {
+  log(level: LogLevel, message: string, metadata?: Record<string, unknown>): void {
+    console.log(JSON.stringify({
+      level,
+      message,
+      timestamp: new Date().toISOString(),
+      ...metadata,
+    }));
+  }
+
+  error(message: string, error?: Error): void {
+    this.log("error", message, {
+      error: error?.message,
+      stack: error?.stack,
+    });
+  }
+}
+
+const loggingMiddleware = new RequestLoggingMiddleware({
+  level: "info",
+  logger: new StructuredLogger(),
+});
+```
+
+### Header Transform Middleware
+
+Adds, removes, or modifies headers in requests and responses.
+
+#### Add Headers
+
+```typescript
+import { HeaderTransformMiddleware } from "@browserx/proxy-engine";
+
+const headerMiddleware = new HeaderTransformMiddleware({
+  request: [
+    { operation: "add", header: "X-Request-ID", value: () => crypto.randomUUID() },
+    { operation: "add", header: "X-Forwarded-Proto", value: "https" },
+  ],
+  response: [
+    { operation: "add", header: "X-Content-Type-Options", value: "nosniff" },
+    { operation: "add", header: "X-Frame-Options", value: "DENY" },
+    { operation: "add", header: "Strict-Transport-Security", value: "max-age=31536000" },
+  ],
+});
+```
+
+#### Remove Headers
+
+```typescript
+const headerMiddleware = new HeaderTransformMiddleware({
+  request: [
+    { operation: "remove", header: "Cookie" },        // Strip cookies
+  ],
+  response: [
+    { operation: "remove", header: "Server" },        // Hide server version
+    { operation: "remove", header: "X-Powered-By" },  // Hide framework
+  ],
+});
+```
+
+#### Replace Headers
+
+```typescript
+const headerMiddleware = new HeaderTransformMiddleware({
+  request: [
+    { operation: "replace", header: "Host", value: "backend.internal" },
+  ],
+  response: [
+    { operation: "replace", header: "Server", value: "BrowserX Proxy" },
+  ],
+});
+```
+
+#### Conditional Headers
+
+```typescript
+const headerMiddleware = new HeaderTransformMiddleware({
+  response: [
+    {
+      operation: "add",
+      header: "Cache-Control",
+      value: (req, res) => {
+        // Cache based on response status
+        if (res.statusCode === 200) {
+          return "public, max-age=3600";
+        }
+        return "no-cache, no-store, must-revalidate";
+      },
+    },
+  ],
+});
+```
+
+## Middleware Chain Configuration
+
+### Basic Chain
+
+```typescript
+import {
+  GatewayServer,
+  RequestLoggingMiddleware,
+  CORSMiddleware,
+  CompressionMiddleware,
+} from "@browserx/proxy-engine";
+
+const server = new GatewayServer({
+  host: "0.0.0.0",
+  port: 8080,
+  routes: [/* routes */],
+  middleware: {
+    request: [
+      {
+        middleware: new RequestLoggingMiddleware({ level: "info" }),
+        config: { enabled: true, priority: 1 },
+      },
+      {
+        middleware: new CORSMiddleware({ allowOrigin: "*" }),
+        config: { enabled: true, priority: 2 },
+      },
+    ],
+    response: [
+      {
+        middleware: new CompressionMiddleware({ encoding: "gzip" }),
+        config: { enabled: true, priority: 1 },
+      },
+    ],
+  },
+});
+```
+
+### Production Chain
+
+```typescript
+const server = new GatewayServer({
+  host: "0.0.0.0",
+  port: 443,
+  routes: [/* routes */],
+  middleware: {
+    request: [
+      // 1. Logging (always first)
+      {
+        middleware: new RequestLoggingMiddleware({
+          level: "info",
+          format: "combined",
+        }),
+        config: { enabled: true, priority: 1 },
+      },
+      // 2. CORS (before auth)
+      {
+        middleware: new CORSMiddleware({
+          allowOrigin: "https://app.example.com",
+          allowMethods: ["GET", "POST", "PUT", "DELETE"],
+          allowCredentials: true,
+        }),
+        config: { enabled: true, priority: 2 },
+      },
+      // 3. Authentication
+      {
+        middleware: new AuthMiddleware({
+          method: "bearer",
+          validator: jwtValidator,
+        }),
+        config: { enabled: true, priority: 3 },
+      },
+      // 4. Rate limiting (after auth for per-user limits)
+      {
+        middleware: new RateLimitMiddleware({
+          algorithm: "token-bucket",
+          tokensPerInterval: 1000,
+          interval: 60000,
+          keyGenerator: (req, ctx) => ctx.user?.id || ctx.clientIP,
+        }),
+        config: { enabled: true, priority: 4 },
+      },
+      // 5. Request headers
+      {
+        middleware: new HeaderTransformMiddleware({
+          request: [
+            { operation: "add", header: "X-Request-ID", value: () => crypto.randomUUID() },
+          ],
+        }),
+        config: { enabled: true, priority: 5 },
+      },
+    ],
+    response: [
+      // 1. Compression (first to compress before other transforms)
+      {
+        middleware: new CompressionMiddleware({
+          encoding: "gzip",
+          threshold: 1024,
+        }),
+        config: { enabled: true, priority: 1 },
+      },
+      // 2. Security headers
+      {
+        middleware: new HeaderTransformMiddleware({
+          response: [
+            { operation: "add", header: "X-Content-Type-Options", value: "nosniff" },
+            { operation: "add", header: "X-Frame-Options", value: "DENY" },
+            { operation: "add", header: "Strict-Transport-Security", value: "max-age=31536000" },
+            { operation: "remove", header: "Server" },
+          ],
+        }),
+        config: { enabled: true, priority: 2 },
+      },
+    ],
+  },
+});
+```
+
+## Custom Middleware
+
+### Creating Request Middleware
+
+```typescript
+import type { RequestMiddleware, RequestContext, MiddlewareResult } from "@browserx/proxy-engine";
+
+class RequestIDMiddleware implements RequestMiddleware {
+  readonly name = "request-id";
+
+  async processRequest(
+    request: HTTPRequest,
+    context: RequestContext
+  ): Promise<MiddlewareResult> {
+    // Generate request ID
+    const requestId = crypto.randomUUID();
+
+    // Add to context for other middleware
+    context.requestId = requestId;
+
+    // Add to request headers
+    request.headers["x-request-id"] = requestId;
+
+    // Continue to next middleware
+    return { type: "continue" };
+  }
+}
+```
+
+### Creating Response Middleware
+
+```typescript
+import type { ResponseMiddleware, RequestContext } from "@browserx/proxy-engine";
+
+class ResponseTimeMiddleware implements ResponseMiddleware {
+  readonly name = "response-time";
+
+  async processResponse(
+    request: HTTPRequest,
+    response: HTTPResponse,
+    context: RequestContext
+  ): Promise<HTTPResponse> {
+    // Calculate response time
+    const duration = Date.now() - context.startTime;
+
+    // Add header
+    response.headers["x-response-time"] = `${duration}ms`;
+
+    return response;
+  }
+}
+```
+
+### Middleware with Configuration
+
+```typescript
+interface CachingMiddlewareConfig {
+  maxAge: number;
+  cacheableStatuses: number[];
+}
+
+class CachingMiddleware implements ResponseMiddleware {
+  readonly name = "caching";
+
+  constructor(private config: CachingMiddlewareConfig) {}
+
+  async processResponse(
+    request: HTTPRequest,
+    response: HTTPResponse,
+    context: RequestContext
+  ): Promise<HTTPResponse> {
+    // Only cache successful responses
+    if (this.config.cacheableStatuses.includes(response.statusCode)) {
+      response.headers["cache-control"] = `public, max-age=${this.config.maxAge}`;
+    } else {
+      response.headers["cache-control"] = "no-cache, no-store, must-revalidate";
+    }
+
+    return response;
+  }
+}
+
+// Usage
+const cachingMiddleware = new CachingMiddleware({
+  maxAge: 3600,
+  cacheableStatuses: [200, 301, 404],
+});
+```
+
+## Middleware Patterns
+
+### Circuit Breaker
+
+```typescript
+class CircuitBreakerMiddleware implements RequestMiddleware {
+  readonly name = "circuit-breaker";
+  private failureCount = 0;
+  private lastFailureTime = 0;
+  private state: "closed" | "open" | "half-open" = "closed";
+
+  constructor(
+    private threshold: number,
+    private timeout: number,
+  ) {}
+
+  async processRequest(
+    request: HTTPRequest,
+    context: RequestContext
+  ): Promise<MiddlewareResult> {
+    const now = Date.now();
+
+    // Check circuit state
+    if (this.state === "open") {
+      if (now - this.lastFailureTime > this.timeout) {
+        this.state = "half-open";
+      } else {
+        return {
+          type: "respond",
+          response: {
+            statusCode: 503,
+            statusText: "Service Unavailable",
+            headers: { "content-type": "text/plain" },
+            body: new TextEncoder().encode("Circuit breaker is open"),
+          },
+        };
+      }
+    }
+
+    // Store state for response handling
+    context.metadata.circuitBreakerState = this.state;
+
+    return { type: "continue" };
+  }
+
+  recordSuccess(): void {
+    this.failureCount = 0;
+    this.state = "closed";
+  }
+
+  recordFailure(): void {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+
+    if (this.failureCount >= this.threshold) {
+      this.state = "open";
+    }
+  }
+}
+```
+
+### Request Deduplication
+
+```typescript
+class DeduplicationMiddleware implements RequestMiddleware {
+  readonly name = "deduplication";
+  private pending = new Map<string, Promise<HTTPResponse>>();
+
+  async processRequest(
+    request: HTTPRequest,
+    context: RequestContext
+  ): Promise<MiddlewareResult> {
+    // Generate key from request
+    const key = `${request.method}:${request.uri}`;
+
+    // Check if request is already pending
+    const pendingRequest = this.pending.get(key);
+    if (pendingRequest) {
+      // Wait for existing request
+      const response = await pendingRequest;
+      return { type: "respond", response };
+    }
+
+    // Mark as pending
+    const responsePromise = new Promise<HTTPResponse>((resolve) => {
+      context.metadata.deduplicationResolve = resolve;
+    });
+    this.pending.set(key, responsePromise);
+
+    // Continue to proxy
+    return { type: "continue" };
+  }
+
+  completeRequest(key: string, response: HTTPResponse): void {
+    this.pending.delete(key);
+  }
+}
+```
+
+## Best Practices
+
+1. **Order matters**: Place middleware in logical order
+   - Logging first (captures all requests)
+   - CORS before auth (preflight requests don't need auth)
+   - Auth before rate limiting (per-user limits)
+   - Compression last in response chain
+
+2. **Use priorities**: Explicitly set priority values to control order
+   ```typescript
+   { middleware: loggingMiddleware, config: { enabled: true, priority: 1 } }
+   ```
+
+3. **Minimize middleware**: Only enable what you need
+   - Each middleware adds latency
+   - Disabled middleware is skipped
+
+4. **Error handling**: Middleware should handle errors gracefully
+   ```typescript
+   async processRequest(request, context): Promise<MiddlewareResult> {
+     try {
+       // Process request
+       return { type: "continue" };
+     } catch (error) {
+       return { type: "error", error };
+     }
+   }
+   ```
+
+5. **Use context metadata**: Share data between middleware
+   ```typescript
+   // In auth middleware
+   context.metadata.userId = user.id;
+
+   // In rate limit middleware
+   const userId = context.metadata.userId;
+   ```
+
+6. **Async operations**: Use async/await for I/O
+   ```typescript
+   async processRequest(request, context): Promise<MiddlewareResult> {
+     const user = await database.getUser(userId);
+     // ...
+   }
+   ```
+
+## Next Steps
+
+- [Caching](/proxy/caching) - HTTP caching implementation
+- [Observability](/proxy/observability) - Metrics and monitoring
+- [Configuration](/proxy/configuration) - Full configuration reference

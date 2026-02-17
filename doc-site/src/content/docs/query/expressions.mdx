@@ -1,0 +1,603 @@
+---
+title: Expressions and Operators
+description: Expression syntax and operator reference for BrowserX queries
+---
+
+Expressions are the building blocks of query conditions and computed values. The Query Engine supports a rich expression language with operators for comparison, logic, arithmetic, and more.
+
+## Expression Types
+
+### Literals
+
+```sql
+-- String literals
+"hello world"
+'single quotes'
+
+-- Number literals
+42
+3.14
+1.5e10
+
+-- Boolean literals
+true
+false
+
+-- Null literal
+null
+
+-- Array literals
+[1, 2, 3]
+["a", "b", "c"]
+
+-- Object literals
+{key: "value", nested: {field: 123}}
+```
+
+### Identifiers
+
+```sql
+-- Simple identifiers
+fieldName
+productPrice
+userEmail
+
+-- Nested field access
+product.name
+user.profile.email
+response.data.items[0]
+```
+
+### Function Calls
+
+```sql
+-- DOM functions
+TEXT(".product-name")
+ATTR("img", "src")
+COUNT(".item")
+
+-- String functions
+UPPER(title)
+SUBSTRING(text, 0, 100)
+REPLACE(url, "http://", "https://")
+
+-- Utility functions
+PARSE_JSON(response.body)
+PARSE_NUMBER(price)
+NOW()
+```
+
+## Comparison Operators
+
+### Equality
+
+```sql
+-- Equal
+price = 100
+status = "active"
+count = COUNT(".item")
+
+-- Not equal
+price != 0
+status != "pending"
+```
+
+### Relational
+
+```sql
+-- Greater than
+price > 100
+age > 18
+
+-- Greater than or equal
+price >= 100
+age >= 18
+
+-- Less than
+price < 1000
+count < 10
+
+-- Less than or equal
+price <= 1000
+rating <= 5
+```
+
+### Examples
+
+```sql
+-- Filter products by price
+SELECT name, price FROM "https://store.com/products"
+WHERE price >= 100 AND price <= 500
+
+-- Filter by date
+SELECT title, date FROM "https://blog.com"
+WHERE date > "2024-01-01"
+
+-- Filter by rating
+SELECT product FROM "https://store.com"
+WHERE rating >= 4.5
+```
+
+## Logical Operators
+
+### AND
+
+Logical conjunction - both conditions must be true.
+
+```sql
+-- Both conditions must be true
+WHERE price < 100 AND inStock = true
+
+-- Multiple conditions
+WHERE status = "active" AND verified = true AND score > 80
+
+-- With parentheses for clarity
+WHERE (price < 100) AND (rating >= 4.0)
+```
+
+### OR
+
+Logical disjunction - at least one condition must be true.
+
+```sql
+-- Either condition can be true
+WHERE status = "active" OR status = "pending"
+
+-- Multiple alternatives
+WHERE category = "electronics" OR category = "computers" OR category = "phones"
+
+-- Complex conditions
+WHERE (price < 100 AND inStock = true) OR (price < 50)
+```
+
+### NOT
+
+Logical negation - inverts boolean value.
+
+```sql
+-- Negate condition
+WHERE NOT deleted
+
+-- Negate comparison
+WHERE NOT (price > 1000)
+
+-- Negate function result
+WHERE NOT EXISTS("#error")
+```
+
+### Precedence
+
+```sql
+-- AND has higher precedence than OR
+WHERE a OR b AND c  -- Evaluated as: a OR (b AND c)
+
+-- Use parentheses for clarity
+WHERE (a OR b) AND c
+WHERE a OR (b AND c)
+
+-- NOT has highest precedence
+WHERE NOT a AND b  -- Evaluated as: (NOT a) AND b
+```
+
+### Examples
+
+```sql
+-- Complex filtering
+SELECT * FROM "https://store.com/products"
+WHERE (price < 100 OR onSale = true)
+  AND (rating >= 4.0)
+  AND NOT outOfStock
+
+-- Login check
+IF EXISTS("#user-menu") AND NOT EXISTS("#login-required") THEN
+  SELECT "Authenticated"
+ELSE
+  NAVIGATE TO "/login"
+```
+
+## Arithmetic Operators
+
+### Basic Arithmetic
+
+```sql
+-- Addition
+total = price + tax
+quantity = current + 1
+
+-- Subtraction
+remaining = total - sold
+age = currentYear - birthYear
+
+-- Multiplication
+total = price * quantity
+tax = price * 0.1
+
+-- Division
+average = sum / count
+percentage = (part / whole) * 100
+
+-- Modulo
+remainder = number % 10
+isEven = (number % 2) = 0
+```
+
+### Examples
+
+```sql
+-- Calculate total with tax
+SELECT
+  name,
+  price,
+  price * 1.1 AS priceWithTax
+FROM "https://store.com/products"
+
+-- Calculate discount
+SELECT
+  name,
+  originalPrice,
+  originalPrice * (1 - discountPercent / 100) AS finalPrice
+FROM "https://store.com/sale"
+
+-- Filter by computed value
+SELECT * FROM "https://store.com/products"
+WHERE (price * quantity) > 1000
+```
+
+## String Operators
+
+### Concatenation
+
+```sql
+-- String concatenation with ||
+fullName = firstName || " " || lastName
+url = "https://" || domain || path
+
+-- Examples
+SELECT
+  firstName || " " || lastName AS fullName,
+  "Product: " || name AS label
+FROM "https://example.com"
+```
+
+### Pattern Matching (LIKE)
+
+SQL-style pattern matching with wildcards.
+
+```sql
+-- % matches any sequence of characters
+WHERE title LIKE "%test%"        -- Contains "test"
+WHERE title LIKE "test%"         -- Starts with "test"
+WHERE title LIKE "%test"         -- Ends with "test"
+
+-- _ matches single character
+WHERE code LIKE "ABC_"           -- ABC followed by one char
+WHERE code LIKE "A_C"            -- A, one char, then C
+
+-- Case sensitivity
+WHERE title LIKE "%TEST%"        -- Case-sensitive by default
+WHERE UPPER(title) LIKE "%TEST%" -- Case-insensitive
+```
+
+**Examples:**
+
+```sql
+-- Find products with "laptop" in name
+SELECT name, price FROM "https://store.com/products"
+WHERE name LIKE "%laptop%"
+
+-- Find articles by date pattern
+SELECT title FROM "https://blog.com"
+WHERE date LIKE "2024-%"
+
+-- Find emails
+SELECT email FROM "https://example.com"
+WHERE email LIKE "%@gmail.com"
+```
+
+### Regular Expression Matching (MATCHES)
+
+```sql
+-- Regex matching
+WHERE email MATCHES /^[\w\.-]+@[\w\.-]+\.\w+$/
+WHERE phone MATCHES /^\d{3}-\d{3}-\d{4}$/
+WHERE url MATCHES /^https:\/\//
+
+-- With flags
+WHERE text MATCHES /pattern/i    -- Case-insensitive
+WHERE text MATCHES /pattern/g    -- Global
+WHERE text MATCHES /pattern/m    -- Multiline
+```
+
+**Examples:**
+
+```sql
+-- Validate email format
+SELECT email FROM "https://example.com"
+WHERE email MATCHES /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
+
+-- Extract phone numbers
+SELECT text FROM "https://example.com"
+WHERE text MATCHES /\d{3}-\d{3}-\d{4}/
+
+-- Find URLs
+SELECT content FROM "https://example.com"
+WHERE content MATCHES /https?:\/\/[^\s]+/
+```
+
+## Collection Operators
+
+### IN
+
+Check if value is in a collection.
+
+```sql
+-- Value in array
+WHERE status IN ("active", "pending", "approved")
+WHERE category IN categories
+
+-- Number in range
+WHERE price IN (100, 200, 300, 400, 500)
+
+-- Not in collection
+WHERE status NOT IN ("deleted", "archived")
+```
+
+**Examples:**
+
+```sql
+-- Filter by multiple statuses
+SELECT * FROM "https://example.com"
+WHERE status IN ("active", "pending")
+
+-- Exclude categories
+SELECT * FROM "https://store.com/products"
+WHERE category NOT IN ("archived", "discontinued")
+```
+
+### CONTAINS
+
+Check if collection contains element.
+
+```sql
+-- Array contains value
+WHERE tags CONTAINS "featured"
+WHERE colors CONTAINS "red"
+
+-- String contains substring
+WHERE description CONTAINS "warranty"
+```
+
+**Examples:**
+
+```sql
+-- Find products with specific tag
+SELECT * FROM "https://store.com/products"
+WHERE tags CONTAINS "sale"
+
+-- Find posts with keyword
+SELECT title FROM "https://blog.com"
+WHERE keywords CONTAINS "tutorial"
+```
+
+## Null Handling
+
+### IS NULL / IS NOT NULL
+
+```sql
+-- Check for null
+WHERE description IS NULL
+WHERE email IS NOT NULL
+
+-- Coalesce (use first non-null value)
+SELECT COALESCE(nickname, firstName, "Anonymous") AS displayName
+FROM "https://example.com"
+```
+
+### Null-Safe Equality
+
+```sql
+-- Regular equality fails with null
+WHERE value = null  -- Always false
+
+-- Use IS NULL instead
+WHERE value IS NULL
+
+-- Null-safe comparison
+WHERE COALESCE(value, 0) = 0
+```
+
+## Conditional Expressions
+
+### CASE Expression
+
+```sql
+-- Simple case
+CASE status
+  WHEN "active" THEN "Active"
+  WHEN "pending" THEN "Pending"
+  ELSE "Unknown"
+END
+
+-- Searched case
+CASE
+  WHEN price < 100 THEN "Budget"
+  WHEN price < 500 THEN "Mid-range"
+  ELSE "Premium"
+END
+```
+
+**Examples:**
+
+```sql
+-- Categorize products by price
+SELECT
+  name,
+  price,
+  CASE
+    WHEN price < 100 THEN "Budget"
+    WHEN price < 500 THEN "Mid-range"
+    WHEN price < 1000 THEN "Premium"
+    ELSE "Luxury"
+  END AS priceCategory
+FROM "https://store.com/products"
+
+-- Status labels
+SELECT
+  name,
+  CASE status
+    WHEN "active" THEN "✓ Active"
+    WHEN "pending" THEN "⏳ Pending"
+    WHEN "error" THEN "❌ Error"
+    ELSE "Unknown"
+  END AS statusLabel
+FROM "https://example.com"
+```
+
+### IF Expression
+
+```sql
+-- Inline if
+IF(condition, trueValue, falseValue)
+
+-- Examples
+SELECT IF(inStock, "Available", "Out of Stock") AS availability
+SELECT IF(price > 100, price * 0.9, price) AS finalPrice
+```
+
+## Type Conversion
+
+### Explicit Conversion
+
+```sql
+-- To string
+STRING(123)          → "123"
+STRING(true)         → "true"
+
+-- To number
+NUMBER("123")        → 123
+NUMBER("3.14")       → 3.14
+PARSE_NUMBER("$99.99") → 99.99
+
+-- To boolean
+BOOLEAN(1)           → true
+BOOLEAN(0)           → false
+BOOLEAN("true")      → true
+```
+
+### Implicit Conversion
+
+```sql
+-- String + number
+"Total: " || 123  → "Total: 123"
+
+-- Number comparison
+"123" > 100      → true (string converted to number)
+
+-- Boolean in arithmetic
+true + 1         → 2
+false + 1        → 1
+```
+
+## Operator Precedence
+
+From highest to lowest:
+
+1. **Function calls** - `UPPER(text)`, `COUNT(selector)`
+2. **Property access** - `obj.field`, `arr[0]`
+3. **Unary** - `NOT`, `-`, `+`
+4. **Multiplicative** - `*`, `/`, `%`
+5. **Additive** - `+`, `-`
+6. **Comparison** - `>`, `>=`, `<`, `<=`
+7. **Equality** - `=`, `!=`
+8. **Logical AND** - `AND`
+9. **Logical OR** - `OR`
+
+**Examples:**
+
+```sql
+-- Without parentheses (uses precedence)
+WHERE a OR b AND c     -- Evaluates as: a OR (b AND c)
+WHERE NOT a OR b       -- Evaluates as: (NOT a) OR b
+WHERE x + y * z        -- Evaluates as: x + (y * z)
+
+-- With parentheses (explicit grouping)
+WHERE (a OR b) AND c
+WHERE NOT (a OR b)
+WHERE (x + y) * z
+```
+
+## Practical Examples
+
+### Complex Filtering
+
+```sql
+SELECT * FROM "https://store.com/products"
+WHERE
+  (
+    (category = "electronics" AND price < 500)
+    OR
+    (category = "books" AND rating >= 4.0)
+  )
+  AND inStock = true
+  AND NOT discontinued
+```
+
+### Computed Fields
+
+```sql
+SELECT
+  name,
+  price,
+  quantity,
+  price * quantity AS subtotal,
+  price * quantity * 0.1 AS tax,
+  price * quantity * 1.1 AS total,
+  IF(quantity > 10, "Bulk order", "Regular order") AS orderType
+FROM "https://store.com/cart"
+```
+
+### String Manipulation
+
+```sql
+SELECT
+  UPPER(title) AS titleUpper,
+  LOWER(email) AS emailLower,
+  TRIM(description) AS descriptionClean,
+  firstName || " " || lastName AS fullName,
+  SUBSTRING(content, 0, 100) || "..." AS preview
+FROM "https://example.com"
+```
+
+### Conditional Logic
+
+```sql
+SELECT
+  name,
+  price,
+  CASE
+    WHEN onSale = true THEN price * 0.8
+    WHEN quantity > 100 THEN price * 0.9
+    ELSE price
+  END AS finalPrice,
+  IF(
+    EXISTS(".badge.new"),
+    "New",
+    IF(EXISTS(".badge.sale"), "Sale", "Regular")
+  ) AS badge
+FROM "https://store.com/products"
+```
+
+## Best Practices
+
+1. **Use parentheses** - Make complex expressions explicit
+2. **Avoid deep nesting** - Break complex conditions into CTEs
+3. **Use appropriate operators** - LIKE for patterns, MATCHES for regex
+4. **Handle nulls** - Use IS NULL, not = null
+5. **Type safety** - Use explicit conversion when mixing types
+6. **Readable formatting** - Break long expressions into multiple lines
+
+## Next Steps
+
+- Study [Real-World Examples](/query/examples)
+- Learn about [Query Optimization](/query/optimization)
+- Explore [API Reference](/query/api-reference)

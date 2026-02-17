@@ -1,0 +1,656 @@
+---
+title: DOM Functions
+description: Built-in functions for DOM manipulation and data extraction
+---
+
+The Query Engine provides built-in DOM functions for extracting and manipulating web page content. These functions work with CSS selectors and XPath expressions.
+
+## Text Extraction
+
+### TEXT(selector)
+
+Extract text content from elements.
+
+**Syntax:**
+```sql
+TEXT(selector)
+```
+
+**Examples:**
+```sql
+-- Extract page title
+SELECT TEXT("title") AS title FROM "https://example.com"
+
+-- Extract product name
+SELECT TEXT(".product-name") AS name FROM "https://store.com/product/123"
+
+-- Extract all headings
+SELECT TEXT("h1, h2, h3") AS headings FROM "https://example.com"
+
+-- Extract with variable
+SELECT TEXT(selector) FROM url WHERE selector = ".price"
+```
+
+**Returns:** String containing the text content of the first matching element.
+
+**Note:** For multiple elements, use with aggregation:
+```sql
+SELECT ARRAY(TEXT("li")) AS items FROM "https://example.com/list"
+```
+
+## HTML Extraction
+
+### HTML(selector)
+
+Extract HTML content from elements.
+
+**Syntax:**
+```sql
+HTML(selector)
+```
+
+**Examples:**
+```sql
+-- Extract article HTML
+SELECT HTML("article") AS content FROM "https://blog.com/post/123"
+
+-- Extract product description
+SELECT HTML(".description") AS description FROM "https://store.com/product/123"
+
+-- Extract with outer HTML
+SELECT HTML("div.container") AS html FROM "https://example.com"
+```
+
+**Returns:** String containing the innerHTML of the first matching element.
+
+### OUTER_HTML(selector)
+
+Extract element including its own tag.
+
+**Syntax:**
+```sql
+OUTER_HTML(selector)
+```
+
+**Examples:**
+```sql
+-- Extract complete element
+SELECT OUTER_HTML(".widget") AS widget FROM "https://example.com"
+```
+
+**Returns:** String containing the outerHTML of the element.
+
+## Attribute Extraction
+
+### ATTR(selector, attributeName)
+
+Extract attribute values from elements.
+
+**Syntax:**
+```sql
+ATTR(selector, attributeName)
+```
+
+**Examples:**
+```sql
+-- Extract link href
+SELECT ATTR("a.download", "href") AS downloadUrl
+FROM "https://example.com"
+
+-- Extract image source
+SELECT ATTR("img.logo", "src") AS logoUrl
+FROM "https://example.com"
+
+-- Extract data attribute
+SELECT ATTR(".product", "data-price") AS price
+FROM "https://store.com/product/123"
+
+-- Extract multiple attributes
+SELECT
+  ATTR("img", "src") AS src,
+  ATTR("img", "alt") AS alt,
+  ATTR("img", "width") AS width
+FROM "https://example.com"
+```
+
+**Returns:** String value of the specified attribute, or null if attribute doesn't exist.
+
+**Common Attributes:**
+- `href` - Link URLs
+- `src` - Image/script sources
+- `alt` - Alternative text
+- `title` - Title text
+- `class` - CSS classes
+- `id` - Element ID
+- `data-*` - Custom data attributes
+
+## Element Existence
+
+### EXISTS(selector)
+
+Check if elements matching selector exist.
+
+**Syntax:**
+```sql
+EXISTS(selector)
+```
+
+**Examples:**
+```sql
+-- Check if logged in
+IF EXISTS("#user-menu") THEN
+  SELECT "Logged in"
+ELSE
+  SELECT "Not logged in"
+
+-- Check for error messages
+SELECT EXISTS(".error-message") AS hasError
+FROM "https://example.com"
+
+-- Conditional navigation
+IF EXISTS("#login-form") THEN
+  NAVIGATE TO "/login"
+
+-- Wait for element
+WAIT FOR EXISTS("#content-loaded")
+```
+
+**Returns:** Boolean - true if at least one element matches the selector, false otherwise.
+
+## Element Counting
+
+### COUNT(selector)
+
+Count the number of matching elements.
+
+**Syntax:**
+```sql
+COUNT(selector)
+```
+
+**Examples:**
+```sql
+-- Count products
+SELECT COUNT(".product") AS productCount
+FROM "https://store.com/products"
+
+-- Count reviews
+SELECT COUNT(".review") AS reviewCount
+FROM "https://store.com/product/123"
+
+-- Count list items
+SELECT COUNT("ul > li") AS itemCount
+FROM "https://example.com/list"
+
+-- Conditional based on count
+IF COUNT(".item") > 10 THEN
+  SELECT "Many items"
+ELSE
+  SELECT "Few items"
+```
+
+**Returns:** Number - count of matching elements.
+
+## Form Interaction
+
+### CLICK(selector)
+
+Click on an element.
+
+**Syntax:**
+```sql
+CLICK selector [WITH options]
+```
+
+**Examples:**
+```sql
+-- Simple click
+CLICK "#submit-button"
+
+-- Click and wait for navigation
+CLICK "a.next-page" WITH { waitForNavigation: true }
+
+-- Click with timeout
+CLICK "#slow-button" WITH { timeout: 5000 }
+
+-- Click in query
+SELECT TEXT(".result") FROM "https://example.com"
+WHERE CLICK("#load-more") THEN WAIT 1s
+```
+
+**Options:**
+```typescript
+{
+  waitForNavigation?: boolean;  // Wait for navigation after click
+  timeout?: number;             // Timeout in milliseconds
+}
+```
+
+### TYPE(selector, text)
+
+Type text into an input field.
+
+**Syntax:**
+```sql
+TYPE(selector, text)
+INSERT text INTO selector  -- Alternative syntax
+```
+
+**Examples:**
+```sql
+-- Type into input
+TYPE("#email", "user@example.com")
+TYPE("#password", "secret123")
+
+-- Alternative INSERT syntax
+INSERT "user@example.com" INTO "#email"
+INSERT "secret123" INTO "#password"
+
+-- Type with delay
+TYPE("#search", "query") WITH { delay: 100 }
+
+-- Type and submit
+TYPE("#search", "laptop")
+CLICK "#search-button"
+```
+
+**Options:**
+```typescript
+{
+  delay?: number;  // Delay between keystrokes (ms)
+}
+```
+
+## Collection Operations
+
+### QUERY_SELECTOR_ALL(selector)
+
+Get array of all matching elements.
+
+**Syntax:**
+```sql
+QUERY_SELECTOR_ALL(selector)
+```
+
+**Examples:**
+```sql
+-- Get all products
+SELECT ARRAY(
+  FOR EACH product IN QUERY_SELECTOR_ALL(".product")
+    {
+      name: TEXT(product, ".name"),
+      price: TEXT(product, ".price")
+    }
+) AS products
+FROM "https://store.com/products"
+
+-- Get all links
+SELECT ARRAY(ATTR("a", "href")) AS links
+FROM "https://example.com"
+```
+
+**Returns:** Array of elements matching the selector.
+
+### MAP(selector, function)
+
+Map over elements and extract data.
+
+**Syntax:**
+```sql
+MAP(selector, function)
+```
+
+**Examples:**
+```sql
+-- Map over products
+SELECT MAP(".product", product => {
+  name: TEXT(product, ".name"),
+  price: PARSE_NUMBER(TEXT(product, ".price")),
+  url: ATTR(product, "a", "href")
+}) AS products
+FROM "https://store.com/products"
+
+-- Map over list items
+SELECT MAP("li", item => TEXT(item)) AS items
+FROM "https://example.com/list"
+```
+
+## Metadata Extraction
+
+### META(name)
+
+Extract meta tag content.
+
+**Syntax:**
+```sql
+META(name)
+```
+
+**Examples:**
+```sql
+-- Extract description
+SELECT META("description") AS description
+FROM "https://example.com"
+
+-- Extract keywords
+SELECT META("keywords") AS keywords
+FROM "https://example.com"
+
+-- Extract Open Graph data
+SELECT
+  META("og:title") AS ogTitle,
+  META("og:description") AS ogDescription,
+  META("og:image") AS ogImage
+FROM "https://example.com"
+```
+
+**Common Meta Tags:**
+- `description` - Page description
+- `keywords` - Page keywords
+- `author` - Content author
+- `viewport` - Viewport settings
+- `og:*` - Open Graph metadata
+- `twitter:*` - Twitter Card metadata
+
+## Document Properties
+
+### TITLE
+
+Get document title.
+
+**Syntax:**
+```sql
+SELECT title FROM url
+```
+
+**Examples:**
+```sql
+-- Extract title
+SELECT title FROM "https://example.com"
+
+-- Multiple documents
+FOR EACH url IN urls
+  SELECT title FROM url
+```
+
+### URL
+
+Get current document URL.
+
+**Syntax:**
+```sql
+SELECT url FROM "https://example.com"
+```
+
+### DOMAIN
+
+Get current domain.
+
+**Syntax:**
+```sql
+SELECT domain FROM "https://example.com"
+```
+
+## Link and Resource Extraction
+
+### LINKS
+
+Get all links on page.
+
+**Syntax:**
+```sql
+SELECT links FROM url
+```
+
+**Examples:**
+```sql
+-- Get all links
+SELECT links FROM "https://example.com"
+
+-- Filter links
+SELECT links FROM "https://example.com"
+WHERE link LIKE "%.pdf"
+
+-- Get links with text
+SELECT ARRAY(
+  FOR EACH link IN QUERY_SELECTOR_ALL("a")
+    {
+      url: ATTR(link, "href"),
+      text: TEXT(link)
+    }
+) AS links
+FROM "https://example.com"
+```
+
+### IMAGES
+
+Get all images on page.
+
+**Syntax:**
+```sql
+SELECT images FROM url
+```
+
+**Examples:**
+```sql
+-- Get all image URLs
+SELECT images FROM "https://example.com"
+
+-- Get images with details
+SELECT ARRAY(
+  FOR EACH img IN QUERY_SELECTOR_ALL("img")
+    {
+      src: ATTR(img, "src"),
+      alt: ATTR(img, "alt"),
+      width: ATTR(img, "width"),
+      height: ATTR(img, "height")
+    }
+) AS images
+FROM "https://example.com"
+```
+
+### SCRIPTS
+
+Get all script sources.
+
+**Syntax:**
+```sql
+SELECT scripts FROM url
+```
+
+### STYLESHEETS
+
+Get all stylesheet links.
+
+**Syntax:**
+```sql
+SELECT stylesheets FROM url
+```
+
+## XPath Support
+
+### XPATH(expression)
+
+Query DOM using XPath.
+
+**Syntax:**
+```sql
+XPATH(expression)
+```
+
+**Examples:**
+```sql
+-- XPath query
+SELECT XPATH("//div[@class='content']") AS content
+FROM "https://example.com"
+
+-- XPath with attribute
+SELECT XPATH("//a[@href]/@href") AS links
+FROM "https://example.com"
+
+-- XPath text extraction
+SELECT XPATH("//h1/text()") AS heading
+FROM "https://example.com"
+```
+
+## Computed Styles
+
+### COMPUTED_STYLE(selector, property)
+
+Get computed CSS property value.
+
+**Syntax:**
+```sql
+COMPUTED_STYLE(selector, property)
+```
+
+**Examples:**
+```sql
+-- Get background color
+SELECT COMPUTED_STYLE(".header", "background-color") AS bgColor
+FROM "https://example.com"
+
+-- Get display property
+SELECT COMPUTED_STYLE("#popup", "display") AS display
+FROM "https://example.com"
+
+-- Get multiple properties
+SELECT
+  COMPUTED_STYLE(".element", "width") AS width,
+  COMPUTED_STYLE(".element", "height") AS height,
+  COMPUTED_STYLE(".element", "color") AS color
+FROM "https://example.com"
+```
+
+## Element Properties
+
+### PROPERTY(selector, propertyName)
+
+Get element property value.
+
+**Syntax:**
+```sql
+PROPERTY(selector, propertyName)
+```
+
+**Examples:**
+```sql
+-- Get input value
+SELECT PROPERTY("input#email", "value") AS email
+FROM "https://example.com"
+
+-- Get checkbox state
+SELECT PROPERTY("input#terms", "checked") AS termsAccepted
+FROM "https://example.com"
+
+-- Get element ID
+SELECT PROPERTY(".widget", "id") AS widgetId
+FROM "https://example.com"
+```
+
+**Common Properties:**
+- `value` - Input/textarea value
+- `checked` - Checkbox/radio state
+- `disabled` - Disabled state
+- `innerHTML` - HTML content
+- `textContent` - Text content
+- `id` - Element ID
+- `className` - CSS classes
+
+## Visibility Checks
+
+### IS_VISIBLE(selector)
+
+Check if element is visible.
+
+**Syntax:**
+```sql
+IS_VISIBLE(selector)
+```
+
+**Examples:**
+```sql
+-- Check visibility
+SELECT IS_VISIBLE("#popup") AS popupVisible
+FROM "https://example.com"
+
+-- Wait for visibility
+WAIT FOR IS_VISIBLE(".content")
+
+-- Conditional based on visibility
+IF IS_VISIBLE(".error-message") THEN
+  SELECT TEXT(".error-message") AS error
+```
+
+**Returns:** Boolean - true if element is visible (not display:none, visibility:hidden, or 0 opacity).
+
+## Practical Examples
+
+### E-commerce Product Scraping
+
+```sql
+SELECT {
+  name: TEXT(".product-name"),
+  price: PARSE_NUMBER(TEXT(".product-price")),
+  rating: PARSE_NUMBER(ATTR(".rating", "data-rating")),
+  image: ATTR(".product-image", "src"),
+  inStock: EXISTS(".in-stock"),
+  reviewCount: COUNT(".review"),
+  description: HTML(".product-description")
+} FROM "https://store.com/product/123"
+```
+
+### Form Automation
+
+```sql
+-- Fill out login form
+INSERT "user@example.com" INTO "#email"
+INSERT "password123" INTO "#password"
+CLICK "input#remember-me"
+CLICK "button[type='submit']"
+WAIT FOR EXISTS("#user-menu")
+```
+
+### Link Collection
+
+```sql
+SELECT ARRAY(
+  FOR EACH link IN QUERY_SELECTOR_ALL("a[href]")
+    {
+      url: ATTR(link, "href"),
+      text: TEXT(link),
+      title: ATTR(link, "title"),
+      isExternal: ATTR(link, "target") = "_blank"
+    }
+) AS links
+FROM "https://example.com"
+```
+
+### Metadata Extraction
+
+```sql
+SELECT {
+  title: TEXT("title"),
+  description: META("description"),
+  keywords: META("keywords"),
+  ogTitle: META("og:title"),
+  ogImage: META("og:image"),
+  canonical: ATTR("link[rel='canonical']", "href"),
+  author: META("author")
+} FROM "https://example.com"
+```
+
+## Best Practices
+
+1. **Use specific selectors** - Avoid overly broad selectors
+2. **Check existence first** - Use EXISTS() before TEXT() or ATTR()
+3. **Handle nulls** - DOM functions return null if element not found
+4. **Use WAIT FOR** - Wait for dynamic content to load
+5. **Batch operations** - Extract multiple fields in one query
+6. **Cache selectors** - Reuse selectors for better performance
+
+## Next Steps
+
+- Learn about [Expressions and Operators](/query/expressions)
+- Study [Real-World Examples](/query/examples)
+- Explore [Query Optimization](/query/optimization)

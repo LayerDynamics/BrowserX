@@ -1,0 +1,660 @@
+---
+title: API Reference
+description: Programmatic API for the Query Engine
+---
+
+This reference documents the programmatic API for using the Query Engine in TypeScript/Deno applications.
+
+## QueryEngine Class
+
+The main class for executing queries programmatically.
+
+### Constructor
+
+```typescript
+import { QueryEngine } from "@browserx/query-engine";
+
+const engine = new QueryEngine(config?: QueryEngineConfig);
+```
+
+### Configuration
+
+```typescript
+interface QueryEngineConfig {
+  browser?: BrowserEngineConfig;
+  proxy?: ProxyEngineConfig;
+  resources?: ResourceManagerConfig;
+  security?: SecurityConfig;
+  metrics?: MetricsConfig;
+  errorRecovery?: ErrorRecoveryConfig;
+}
+```
+
+#### BrowserEngineConfig
+
+```typescript
+interface BrowserEngineConfig {
+  headless?: boolean;                    // Run in headless mode
+  defaultViewport?: {                    // Default viewport size
+    width: number;
+    height: number;
+  };
+  defaultTimeout?: number;               // Default timeout (ms)
+}
+```
+
+#### ProxyEngineConfig
+
+```typescript
+interface ProxyEngineConfig {
+  enabled?: boolean;                     // Enable proxy
+  defaultTimeout?: number;               // Default timeout (ms)
+  cache?: {
+    enabled?: boolean;                   // Enable caching
+    defaultTTL?: number;                 // Cache TTL (seconds)
+    maxSize?: number;                    // Max cache size (bytes)
+  };
+  rateLimit?: {
+    requestsPerSecond?: number;
+    requestsPerMinute?: number;
+  };
+}
+```
+
+#### ResourceManagerConfig
+
+```typescript
+interface ResourceManagerConfig {
+  browsers?: {
+    min?: number;                        // Minimum pool size
+    max?: number;                        // Maximum pool size
+    idleTimeout?: number;                // Idle timeout (ms)
+    maxLifetime?: number;                // Max lifetime (ms)
+  };
+  pages?: {
+    max?: number;                        // Max concurrent pages
+    idleTimeout?: number;                // Idle timeout (ms)
+  };
+  connections?: {
+    max?: number;                        // Max concurrent connections
+    idleTimeout?: number;                // Idle timeout (ms)
+  };
+  memory?: {
+    maxUsage?: number;                   // Max memory (bytes)
+    pressureThreshold?: number;          // Memory pressure threshold
+  };
+}
+```
+
+#### SecurityConfig
+
+```typescript
+interface SecurityConfig {
+  permissions?: Permission[];            // Required permissions
+  sandbox?: {
+    enabled?: boolean;                   // Enable sandboxing
+    timeout?: number;                    // Sandbox timeout (ms)
+  };
+  rateLimit?: {
+    perSecond?: number;
+    perMinute?: number;
+    perHour?: number;
+  };
+  urlValidation?: {
+    allowedProtocols?: string[];         // e.g., ["https", "http"]
+    allowedDomains?: string[];           // Domain whitelist
+    blockedDomains?: string[];           // Domain blacklist
+    blockPrivateIPs?: boolean;           // Block private IP ranges
+  };
+}
+
+enum Permission {
+  NAVIGATE_PUBLIC = "NAVIGATE_PUBLIC",
+  NAVIGATE_PRIVATE = "NAVIGATE_PRIVATE",
+  READ_COOKIES = "READ_COOKIES",
+  WRITE_COOKIES = "WRITE_COOKIES",
+  READ_STORAGE = "READ_STORAGE",
+  WRITE_STORAGE = "WRITE_STORAGE",
+  EXECUTE_JS = "EXECUTE_JS",
+  INTERCEPT_TRAFFIC = "INTERCEPT_TRAFFIC",
+  MODIFY_REQUESTS = "MODIFY_REQUESTS",
+  SCREENSHOT = "SCREENSHOT",
+  FILE_DOWNLOAD = "FILE_DOWNLOAD",
+  FILE_UPLOAD = "FILE_UPLOAD"
+}
+```
+
+### Methods
+
+#### initialize()
+
+Initialize the engine and allocate resources.
+
+```typescript
+await engine.initialize(config?: QueryEngineConfig): Promise<void>
+```
+
+**Example:**
+```typescript
+await engine.initialize({
+  browser: { headless: true },
+  proxy: { enabled: true }
+});
+```
+
+#### execute()
+
+Execute a query synchronously.
+
+```typescript
+await engine.execute(
+  query: string,
+  options?: QueryOptions
+): Promise<QueryResult>
+```
+
+**Parameters:**
+- `query` - SQL-like query string
+- `options` - Query execution options
+
+**Returns:** `QueryResult` object
+
+**Example:**
+```typescript
+const result = await engine.execute(
+  `SELECT title FROM "https://example.com"`,
+  {
+    timeout: 30000,
+    format: "json",
+    cache: true
+  }
+);
+
+console.log(result.data);
+// { title: "Example Domain" }
+```
+
+#### executeAsync()
+
+Execute a query asynchronously and return a query ID.
+
+```typescript
+await engine.executeAsync(
+  query: string,
+  options?: QueryOptions
+): Promise<QueryID>
+```
+
+**Returns:** Query ID string
+
+**Example:**
+```typescript
+const queryId = await engine.executeAsync(
+  `SELECT * FROM "https://slow-site.com"`
+);
+
+// Check status later
+const status = await engine.getQueryStatus(queryId);
+console.log(status.state); // "RUNNING", "COMPLETED", "FAILED"
+```
+
+#### getQueryStatus()
+
+Get the status of an async query.
+
+```typescript
+await engine.getQueryStatus(queryId: QueryID): Promise<QueryStatus>
+```
+
+**Returns:**
+```typescript
+interface QueryStatus {
+  queryId: QueryID;
+  state: QueryExecutionState;
+  progress?: number;              // 0-100
+  startTime: number;
+  endTime?: number;
+  error?: Error;
+  result?: QueryResult;
+}
+
+type QueryExecutionState =
+  | "QUEUED"
+  | "RUNNING"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
+```
+
+**Example:**
+```typescript
+const status = await engine.getQueryStatus(queryId);
+
+if (status.state === "COMPLETED") {
+  console.log(status.result.data);
+} else if (status.state === "FAILED") {
+  console.error(status.error);
+} else {
+  console.log(`Progress: ${status.progress}%`);
+}
+```
+
+#### cancelQuery()
+
+Cancel a running query.
+
+```typescript
+await engine.cancelQuery(queryId: QueryID): Promise<void>
+```
+
+**Example:**
+```typescript
+await engine.cancelQuery(queryId);
+```
+
+#### getQueries()
+
+Get all tracked queries.
+
+```typescript
+engine.getQueries(): Map<QueryID, QueryStatus>
+```
+
+**Example:**
+```typescript
+const queries = engine.getQueries();
+for (const [id, status] of queries) {
+  console.log(`${id}: ${status.state}`);
+}
+```
+
+#### getMetrics()
+
+Get engine performance metrics.
+
+```typescript
+engine.getMetrics(): QueryEngineMetrics
+```
+
+**Returns:**
+```typescript
+interface QueryEngineMetrics {
+  queries: {
+    total: number;
+    successful: number;
+    failed: number;
+    cancelled: number;
+    timeout: number;
+  };
+  performance: {
+    averageExecutionTime: number;
+    p50: number;
+    p95: number;
+    p99: number;
+  };
+  resources: {
+    browsers: number;
+    pages: number;
+    connections: number;
+    memoryUsage: number;
+  };
+  errors: {
+    byType: Record<string, number>;
+    total: number;
+  };
+}
+```
+
+**Example:**
+```typescript
+const metrics = engine.getMetrics();
+console.log(`Total queries: ${metrics.queries.total}`);
+console.log(`Success rate: ${metrics.queries.successful / metrics.queries.total * 100}%`);
+console.log(`Avg execution time: ${metrics.performance.averageExecutionTime}ms`);
+```
+
+#### shutdown()
+
+Shutdown the engine and cleanup resources.
+
+```typescript
+await engine.shutdown(): Promise<void>
+```
+
+**Example:**
+```typescript
+await engine.shutdown();
+```
+
+#### isInitialized()
+
+Check if engine is initialized.
+
+```typescript
+engine.isInitialized(): boolean
+```
+
+**Example:**
+```typescript
+if (!engine.isInitialized()) {
+  await engine.initialize();
+}
+```
+
+#### getProxyController()
+
+Get the proxy controller instance.
+
+```typescript
+engine.getProxyController(): ProxyController | undefined
+```
+
+**Example:**
+```typescript
+const proxy = engine.getProxyController();
+if (proxy) {
+  const metrics = proxy.getMetrics();
+  console.log(metrics);
+}
+```
+
+#### getRuntime()
+
+Get the proxy runtime instance.
+
+```typescript
+engine.getRuntime(): Runtime | undefined
+```
+
+## QueryOptions
+
+Options for query execution.
+
+```typescript
+interface QueryOptions {
+  timeout?: number;              // Query timeout (ms)
+  format?: OutputFormat;         // Output format
+  cache?: boolean;               // Use cache
+  streaming?: boolean;           // Stream results
+  variables?: Record<string, unknown>;  // Query variables
+}
+
+type OutputFormat = "json" | "table" | "csv" | "stream";
+```
+
+**Example:**
+```typescript
+const result = await engine.execute(query, {
+  timeout: 60000,
+  format: "json",
+  cache: true,
+  variables: { userId: 123 }
+});
+```
+
+## QueryResult
+
+Result of query execution.
+
+```typescript
+interface QueryResult {
+  data: unknown;                 // Query result data
+  timing: {
+    parse: number;               // Parse time (ms)
+    analyze: number;             // Analysis time (ms)
+    optimize: number;            // Optimization time (ms)
+    plan: number;                // Planning time (ms)
+    execute: number;             // Execution time (ms)
+    total: number;               // Total time (ms)
+  };
+  metadata: {
+    queryId: QueryID;
+    state: QueryExecutionState;
+    steps: number;               // Number of steps
+    cacheHits: number;
+    cacheMisses: number;
+    plan?: ExecutionPlan;        // Execution plan (if requested)
+  };
+  errors?: Error[];              // Errors (if any)
+}
+```
+
+**Example:**
+```typescript
+const result = await engine.execute(query);
+
+console.log(result.data);
+console.log(`Executed in ${result.timing.total}ms`);
+console.log(`${result.metadata.steps} steps`);
+console.log(`Cache hit rate: ${result.metadata.cacheHits / (result.metadata.cacheHits + result.metadata.cacheMisses)}`);
+```
+
+## Error Handling
+
+The Query Engine throws specific error types:
+
+```typescript
+import {
+  QueryError,
+  ParseError,
+  SemanticError,
+  ExecutionError,
+  NetworkError,
+  TimeoutError,
+  SecurityError,
+  PermissionError
+} from "@browserx/query-engine";
+
+try {
+  const result = await engine.execute(query);
+} catch (error) {
+  if (error instanceof ParseError) {
+    console.error("Syntax error:", error.message, error.location);
+  } else if (error instanceof SemanticError) {
+    console.error("Type error:", error.message);
+  } else if (error instanceof NetworkError) {
+    console.error("Network error:", error.message);
+  } else if (error instanceof TimeoutError) {
+    console.error("Timeout:", error.message);
+  } else if (error instanceof SecurityError) {
+    console.error("Security error:", error.message);
+  } else if (error instanceof PermissionError) {
+    console.error("Permission denied:", error.message);
+  } else {
+    console.error("Unknown error:", error);
+  }
+}
+```
+
+## Event Handling
+
+Subscribe to query engine events:
+
+```typescript
+engine.on("query:start", (queryId: QueryID) => {
+  console.log(`Query started: ${queryId}`);
+});
+
+engine.on("query:complete", (queryId: QueryID, result: QueryResult) => {
+  console.log(`Query completed: ${queryId}`);
+});
+
+engine.on("query:error", (queryId: QueryID, error: Error) => {
+  console.error(`Query failed: ${queryId}`, error);
+});
+
+engine.on("query:cancel", (queryId: QueryID) => {
+  console.log(`Query cancelled: ${queryId}`);
+});
+
+engine.on("resource:pressure", (usage: ResourceUsage) => {
+  console.warn("Resource pressure:", usage);
+});
+```
+
+## Streaming Results
+
+For large result sets, use streaming:
+
+```typescript
+const stream = await engine.executeStream(query);
+
+for await (const chunk of stream) {
+  console.log("Received chunk:", chunk.data);
+  console.log(`Progress: ${chunk.progress}%`);
+}
+```
+
+## Advanced Usage
+
+### Custom Function Registry
+
+Register custom functions:
+
+```typescript
+import { globalRegistry } from "@browserx/query-engine";
+
+globalRegistry.register({
+  name: "CUSTOM_FUNCTION",
+  signature: [DataType.String],
+  returnType: DataType.String,
+  implementation: (value: string) => {
+    return value.toUpperCase();
+  }
+});
+
+// Use in queries
+const result = await engine.execute(`
+  SELECT CUSTOM_FUNCTION(title) AS upperTitle
+  FROM "https://example.com"
+`);
+```
+
+### Query Plan Inspection
+
+Inspect execution plan without executing:
+
+```typescript
+const plan = await engine.explain(query);
+
+console.log("Execution plan:");
+for (const step of plan.steps) {
+  console.log(`- ${step.type}.${step.action} (${step.estimatedDuration}ms)`);
+}
+console.log(`Estimated total: ${plan.estimatedCost}ms`);
+```
+
+### Variable Binding
+
+Use variables in queries:
+
+```typescript
+const result = await engine.execute(`
+  SELECT * FROM :url WHERE price < :maxPrice
+`, {
+  variables: {
+    url: "https://store.com/products",
+    maxPrice: 100
+  }
+});
+```
+
+### Prepared Statements
+
+Prepare queries for reuse:
+
+```typescript
+const prepared = await engine.prepare(`
+  SELECT title, price FROM :url WHERE category = :category
+`);
+
+// Execute multiple times with different parameters
+const result1 = await prepared.execute({
+  url: "https://store.com/products",
+  category: "electronics"
+});
+
+const result2 = await prepared.execute({
+  url: "https://store.com/products",
+  category: "books"
+});
+```
+
+## Complete Example
+
+```typescript
+import { QueryEngine, Permission } from "@browserx/query-engine";
+
+// Create engine
+const engine = new QueryEngine({
+  browser: {
+    headless: true,
+    defaultViewport: { width: 1920, height: 1080 }
+  },
+  proxy: {
+    enabled: true,
+    cache: { enabled: true, defaultTTL: 3600 }
+  },
+  security: {
+    permissions: [
+      Permission.NAVIGATE_PUBLIC,
+      Permission.READ_COOKIES,
+      Permission.SCREENSHOT
+    ]
+  }
+});
+
+// Initialize
+await engine.initialize();
+
+try {
+  // Execute query
+  const result = await engine.execute(`
+    SELECT
+      title,
+      description,
+      TEXT(".price") AS price,
+      COUNT(".review") AS reviews
+    FROM "https://store.com/product/123"
+  `);
+
+  console.log("Product:", result.data);
+  console.log("Execution time:", result.timing.total, "ms");
+
+  // Get metrics
+  const metrics = engine.getMetrics();
+  console.log("Total queries:", metrics.queries.total);
+  console.log("Success rate:", metrics.queries.successful / metrics.queries.total);
+
+} catch (error) {
+  console.error("Query failed:", error);
+} finally {
+  // Cleanup
+  await engine.shutdown();
+}
+```
+
+## TypeScript Types
+
+All types are exported from the main module:
+
+```typescript
+import type {
+  QueryEngine,
+  QueryEngineConfig,
+  QueryOptions,
+  QueryResult,
+  QueryStatus,
+  QueryExecutionState,
+  QueryEngineMetrics,
+  Permission,
+  OutputFormat,
+  // ... and more
+} from "@browserx/query-engine";
+```
+
+## Next Steps
+
+- Study [Real-World Examples](/query/examples)
+- Learn about [Query Optimization](/query/optimization)
+- Explore [Performance Tuning](/query/performance)

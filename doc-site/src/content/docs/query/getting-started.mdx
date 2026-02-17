@@ -1,0 +1,403 @@
+---
+title: Getting Started with Query Engine
+description: Install and run your first BrowserX queries
+---
+
+import { Tabs, TabItem, Code } from '@astrojs/starlight/components';
+
+This guide will help you install the Query Engine and execute your first queries.
+
+## Installation
+
+The Query Engine is part of the BrowserX workspace. To use it:
+
+```bash
+# Clone BrowserX repository
+git clone https://github.com/LayerDynamics/BrowserX.git
+cd BrowserX
+
+# Install dependencies
+deno install
+```
+
+## Basic Usage
+
+### Creating an Engine Instance
+
+```typescript
+import { QueryEngine } from "@browserx/query-engine";
+
+const engine = new QueryEngine({
+  browser: {
+    headless: true,
+    defaultTimeout: 30000,
+    defaultViewport: { width: 1920, height: 1080 },
+  },
+  proxy: {
+    enabled: true,
+    defaultCache: true,
+  },
+  security: {
+    permissions: ["NAVIGATE_PUBLIC", "READ_COOKIES", "SCREENSHOT"],
+  },
+});
+
+await engine.initialize();
+```
+
+### Your First Query
+
+Extract the title from a webpage:
+
+```typescript
+const result = await engine.execute(
+  `SELECT title FROM "https://example.com"`
+);
+
+console.log(result.data);
+// { title: "Example Domain" }
+```
+
+### Extracting Multiple Fields
+
+```typescript
+const result = await engine.execute(`
+  SELECT title, description, keywords
+  FROM "https://example.com"
+`);
+
+console.log(result.data);
+// {
+//   title: "Example Domain",
+//   description: "Example Domain...",
+//   keywords: "example, domain"
+// }
+```
+
+## Configuration Options
+
+### Browser Configuration
+
+```typescript
+{
+  browser: {
+    // Run browser in headless mode (no GUI)
+    headless: boolean;
+
+    // Default viewport size
+    defaultViewport: { width: number; height: number };
+
+    // Default timeout for operations (ms)
+    defaultTimeout: number;
+  }
+}
+```
+
+### Proxy Configuration
+
+```typescript
+{
+  proxy: {
+    // Enable proxy engine
+    enabled: boolean;
+
+    // Enable caching by default
+    defaultCache: boolean;
+
+    // Default timeout for proxy operations (ms)
+    defaultTimeout: number;
+
+    // Cache configuration
+    cache: {
+      enabled: boolean;
+      defaultTTL: number;  // Time to live in seconds
+      maxSize: number;     // Max cache size in bytes
+    };
+
+    // Rate limiting
+    rateLimit: {
+      requestsPerSecond: number;
+      requestsPerMinute: number;
+    };
+  }
+}
+```
+
+### Resource Management
+
+```typescript
+{
+  resources: {
+    // Browser instance pool
+    browsers: {
+      min: number;         // Minimum pool size
+      max: number;         // Maximum pool size
+      idleTimeout: number; // Idle timeout (ms)
+      maxLifetime: number; // Max lifetime (ms)
+    };
+
+    // Page limits
+    pages: {
+      max: number;         // Max concurrent pages
+      idleTimeout: number; // Idle timeout (ms)
+    };
+
+    // Connection pool
+    connections: {
+      max: number;         // Max concurrent connections
+      idleTimeout: number; // Idle timeout (ms)
+    };
+
+    // Memory limits
+    memory: {
+      maxUsage: number;           // Max memory usage (bytes)
+      pressureThreshold: number;  // Memory pressure threshold
+    };
+  }
+}
+```
+
+### Security Configuration
+
+```typescript
+{
+  security: {
+    // Required permissions
+    permissions: [
+      "NAVIGATE_PUBLIC",
+      "NAVIGATE_PRIVATE",
+      "READ_COOKIES",
+      "WRITE_COOKIES",
+      "READ_STORAGE",
+      "WRITE_STORAGE",
+      "EXECUTE_JS",
+      "INTERCEPT_TRAFFIC",
+      "MODIFY_REQUESTS",
+      "SCREENSHOT",
+      "FILE_DOWNLOAD",
+      "FILE_UPLOAD"
+    ];
+
+    // Sandboxing
+    sandbox: {
+      enabled: boolean;
+      timeout: number;  // Sandbox timeout (ms)
+    };
+
+    // Rate limiting
+    rateLimit: {
+      perSecond: number;
+      perMinute: number;
+      perHour: number;
+    };
+
+    // URL validation
+    urlValidation: {
+      allowedProtocols: string[];  // e.g., ["https", "http"]
+      allowedDomains: string[];    // Whitelist
+      blockedDomains: string[];    // Blacklist
+      blockPrivateIPs: boolean;    // Block private IP ranges
+    };
+  }
+}
+```
+
+## Common Query Patterns
+
+### Extract Data with Filtering
+
+```typescript
+const result = await engine.execute(`
+  SELECT product.name, product.price
+  FROM "https://store.com/products"
+  WHERE product.price < 100
+  ORDER BY product.price ASC
+  LIMIT 10
+`);
+```
+
+### Navigate with Options
+
+```typescript
+const result = await engine.execute(`
+  NAVIGATE TO "https://api.example.com/users"
+    WITH {
+      proxy: {
+        headers: {"Authorization": "Bearer token123"},
+        cache: false
+      },
+      browser: {
+        viewport: {width: 1920, height: 1080}
+      }
+    }
+    CAPTURE response.status, response.body
+`);
+```
+
+### Conditional Execution
+
+```typescript
+const result = await engine.execute(`
+  IF EXISTS("#login-form") THEN
+    INSERT "user@example.com" INTO "#email"
+    INSERT "password123" INTO "#password"
+    CLICK "#submit"
+    WAIT 2s
+  ELSE
+    SELECT "Already logged in"
+`);
+```
+
+### Iteration Over URLs
+
+```typescript
+const urls = [
+  "https://example1.com",
+  "https://example2.com",
+  "https://example3.com"
+];
+
+const result = await engine.execute(`
+  FOR EACH url IN ${JSON.stringify(urls)}
+    SELECT title, description FROM url
+`);
+```
+
+## Async Query Execution
+
+For long-running queries, use async execution:
+
+```typescript
+// Start query asynchronously
+const queryId = await engine.executeAsync(`
+  SELECT * FROM "https://slow-site.com"
+`);
+
+// Check status
+const status = await engine.getQueryStatus(queryId);
+console.log(`Progress: ${status.progress}%`);
+
+// Get result when complete
+if (status.state === "COMPLETED") {
+  const result = await engine.getQueryResult(queryId);
+  console.log(result.data);
+}
+
+// Or cancel if needed
+await engine.cancelQuery(queryId);
+```
+
+## Error Handling
+
+```typescript
+try {
+  const result = await engine.execute(`
+    SELECT title FROM "https://example.com"
+  `);
+  console.log(result.data);
+} catch (error) {
+  if (error instanceof NetworkError) {
+    console.error("Network error:", error.message);
+  } else if (error instanceof TimeoutError) {
+    console.error("Query timed out:", error.message);
+  } else if (error instanceof SecurityError) {
+    console.error("Permission denied:", error.message);
+  } else {
+    console.error("Unknown error:", error);
+  }
+}
+```
+
+## Query Result Structure
+
+Every query returns a `QueryResult` object:
+
+```typescript
+interface QueryResult {
+  // Query data
+  data: unknown;
+
+  // Execution timing
+  timing: {
+    parse: number;      // Parsing time (ms)
+    analyze: number;    // Semantic analysis time (ms)
+    optimize: number;   // Optimization time (ms)
+    plan: number;       // Planning time (ms)
+    execute: number;    // Execution time (ms)
+    total: number;      // Total time (ms)
+  };
+
+  // Metadata
+  metadata: {
+    queryId: string;
+    state: "COMPLETED" | "FAILED";
+    steps: number;      // Number of execution steps
+    cacheHits: number;
+    cacheMisses: number;
+  };
+
+  // Errors (if any)
+  errors?: Error[];
+}
+```
+
+## Monitoring Metrics
+
+Get engine metrics to monitor performance:
+
+```typescript
+const metrics = engine.getMetrics();
+
+console.log(metrics);
+/*
+{
+  queries: {
+    total: 100,
+    successful: 95,
+    failed: 5,
+    cancelled: 0,
+    timeout: 0
+  },
+  performance: {
+    averageExecutionTime: 523,
+    p50: 450,
+    p95: 1200,
+    p99: 2000
+  },
+  resources: {
+    browsers: 3,
+    pages: 10,
+    connections: 15,
+    memoryUsage: 524288000
+  },
+  errors: {
+    byType: {
+      NetworkError: 3,
+      TimeoutError: 2
+    },
+    total: 5
+  }
+}
+*/
+```
+
+## Cleanup
+
+Always shutdown the engine when done:
+
+```typescript
+await engine.shutdown();
+```
+
+This will:
+- Close all browser instances
+- Disconnect proxy connections
+- Clear caches
+- Release resources
+
+## Next Steps
+
+- Learn the [Query Language Syntax](/query/syntax)
+- Explore [DOM Functions](/query/dom-functions)
+- Study [Real-World Examples](/query/examples)
+- Read about [Query Optimization](/query/optimization)

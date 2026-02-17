@@ -1,0 +1,647 @@
+---
+title: Metrics and Observability
+description: Performance timing, counters, compositor stats, and WebGPU observability in BrowserX browser engine
+---
+
+BrowserX exposes a comprehensive observability surface across every layer of the browser engine. Metrics span the request pipeline (DNS, TCP, TLS, HTTP), the rendering pipeline (HTML parse, style resolution, layout, paint, composite), the compositor (frame rate, texture memory, VSync), and the WebGPU rendering backend.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│              RenderingPipelineStats                     │
+│   viewport | resources | requestPipeline                │
+│   compositor | webgpu                                   │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌───────────────────────┬─────────────────────────────────┐
+│   RequestPipeline     │   CompositorThread              │
+│   getStats()          │   getStats()                    │
+│                       │                                 │
+│  ┌─────────────────┐  │  ┌──────────────────────────┐  │
+│  │  DNSCacheStats  │  │  │   CompositorStats        │  │
+│  │  hits/misses    │  │  │   frameCount | avgFPS    │  │
+│  │  hitRate        │  │  │   textureMemory          │  │
+│  └─────────────────┘  │  │   vsyncStats             │  │
+│  ┌─────────────────┐  │  └──────────────────────────┘  │
+│  │ConnectionPool   │  │  ┌──────────────────────────┐  │
+│  │Stats            │  │  │   VSyncStats             │  │
+│  │active/idle      │  │  │   avgFPS | droppedFrames │  │
+│  │reuseRate        │  │  └──────────────────────────┘  │
+│  └─────────────────┘  │                                 │
+└───────────────────────┴─────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                  WebGPU Statistics                      │
+│   OffscreenWebGPUStatistics | LayerStatistics           │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Source Code Structure
+
+```
+/browser/src/engine/
+├── RequestPipeline.ts             # RequestTiming, RequestResult, getStats()
+├── RenderingPipeline.ts           # RenderingTiming, RenderingPipelineStats, ResourceInfo
+├── network/
+│   ├── connection/
+│   │   ├── ConnectionPool.ts          # getStats() → ConnectionPoolStats
+│   │   └── ConnectionPoolStats.ts     # ConnectionPoolStats interface
+│   └── resolution/
+│       └── DNSCache.ts                # getStats() → DNSCacheStats
+└── rendering/
+    └── compositor/
+        ├── CompositorThread.ts        # CompositorStats, getStats()
+        └── VSync.ts                   # VSyncStats, FrameTiming, getStats()
+
+/browser/src/engine/webgpu/
+├── offscreen/
+│   └── OffscreenWebGPU.ts             # OffscreenWebGPUStatistics, getStatistics()
+└── compositor/
+    └── WebGPUCompositorLayer.ts       # LayerStatistics, getStatistics()
+```
+
+## Request Timing
+
+Every HTTP request returns a `RequestResult` that includes a complete `RequestTiming` breakdown. Each field is a duration in milliseconds measured from the start of that phase:
+
+```typescript
+// From: browser/src/engine/RequestPipeline.ts
+
+export interface RequestTiming {
+    dnsLookup:     number;  // Time to resolve hostname
+    tcpConnection: number;  // Time to establish TCP connection
+    tlsHandshake:  number;  // Time for TLS 1.3 handshake
+    requestSent:   number;  // Time to write request headers + body
+    firstByte:     number;  // Time to first response byte (TTFB)
+    download:      number;  // Time to download complete response body
+    total:         number;  // Wall-clock time for the full request
+}
+
+export interface RequestResult {
+    request:   HTTPRequest;
+    response:  HTTPResponse;
+    fromCache: boolean;
+    timing:    RequestTiming;
+}
+```
+
+### Usage Example
+
+```typescript
+import { RequestPipeline } from "@browserx/browser";
+
+const pipeline = new RequestPipeline({
+    dnsConfig: { dohEndpoint: "https://cloudflare-dns.com/dns-query" }
+});
+
+const result = await pipeline.request("https://example.com");
+
+console.log("DNS lookup:    ", result.timing.dnsLookup,     "ms");
+console.log("TCP connect:   ", result.timing.tcpConnection, "ms");
+console.log("TLS handshake: ", result.timing.tlsHandshake,  "ms");
+console.log("TTFB:          ", result.timing.firstByte,     "ms");
+console.log("Download:      ", result.timing.download,       "ms");
+console.log("Total:         ", result.timing.total,          "ms");
+console.log("Cached:        ", result.fromCache);
+```
+
+## Rendering Timing
+
+The `RenderingPipeline` tracks each stage of the HTML → pixels pipeline in `RenderingTiming`. Every field records how long that stage took in milliseconds:
+
+```typescript
+// From: browser/src/engine/RenderingPipeline.ts
+
+export interface RenderingTiming {
+    htmlFetch:          number;  // Time to fetch the HTML document
+    htmlParse:          number;  // HTML tokenizer + tree builder
+    cssFetch:           number;  // Time to fetch all CSS resources
+    cssParse:           number;  // CSS tokenizer + parser + CSSOM
+    scriptExecution:    number;  // V8 JavaScript execution
+    styleResolution:    number;  // CSSOM → computed styles
+    layoutComputation:  number;  // Box model, flexbox, grid
+    paintRecording:     number;  // Display list construction
+    compositing:        number;  // GPU layer compositing
+    total:              number;  // Total wall-clock rendering time
+}
+
+export interface RenderingResult {
+    dom:           DOMNode;
+    cssom:         CSSOM;
+    renderTree:    RenderTree;
+    layoutTree:    LayoutBox;
+    displayList:   DisplayList;
+    scriptExecutor?: ScriptExecutor;
+    timing:        RenderingTiming;
+    resources:     ResourceInfo[];
+}
+```
+
+### Resource Information
+
+Each subresource loaded during rendering is tracked in `ResourceInfo`:
+
+```typescript
+export interface ResourceInfo {
+    url:       string;
+    type:      "html" | "css" | "script" | "image" | "font" | "other";
+    size:      number;   // bytes
+    fetchTime: number;   // ms
+    cached:    boolean;
+}
+```
+
+### Rendering Pipeline Statistics
+
+The full `RenderingPipelineStats` snapshot aggregates all subsystem metrics into one object:
+
+```typescript
+// From: browser/src/engine/RenderingPipeline.ts
+
+export interface RenderingPipelineStats {
+    viewport: {
+        width:            number;
+        height:           number;
+        devicePixelRatio: number;
+    };
+    resources: {
+        total:       number;
+        byType:      Record<string, number>;  // count per resource type
+        totalSize:   number;                  // bytes
+        cachedCount: number;
+    };
+    requestPipeline: {
+        dnsCache:       DNSCacheStats;
+        connectionPool: ConnectionPoolStats;
+    };
+    compositor: CompositorStats;
+    webgpu:     WebGPUStats;
+}
+```
+
+## DNS Cache Metrics
+
+`DNSCache` maintains hit/miss counters that update on every lookup. `getStats()` computes the current hit rate:
+
+```typescript
+// From: browser/src/engine/network/resolution/DNSCache.ts
+
+export interface DNSCacheStats {
+    size:    number;   // Current number of cached hostnames
+    hits:    number;   // Total cache hits since creation
+    misses:  number;   // Total cache misses since creation
+    hitRate: number;   // hits / (hits + misses), range [0, 1]
+}
+```
+
+Entries expire by TTL. A background cleanup timer runs every 60 seconds to evict stale entries.
+
+### Usage Example
+
+```typescript
+const stats = pipeline.getStats();
+const dns   = stats.dnsCache;
+
+console.log(`DNS cache: ${dns.size} entries, ${(dns.hitRate * 100).toFixed(1)}% hit rate`);
+console.log(`Hits: ${dns.hits}  Misses: ${dns.misses}`);
+```
+
+## Connection Pool Metrics
+
+`ConnectionPool` tracks connection lifecycle and reuse efficiency through `ConnectionPoolStats`:
+
+```typescript
+// From: browser/src/engine/network/connection/ConnectionPoolStats.ts
+
+export interface ConnectionPoolStats {
+    totalConnections:  number;     // All connections ever created
+    activeConnections: number;     // Connections currently in use
+    idleConnections:   number;     // Connections available for reuse
+    reuseCount:        number;     // Times an idle connection was reused
+    missCount:         number;     // Times no idle connection was available
+    errorCount:        number;     // Connections that failed or errored
+    averageWaitTime:   number;     // Average time (ms) waiting for a connection
+    lastUpdated:       Timestamp;  // When stats were last updated
+}
+```
+
+A high `reuseCount` relative to `missCount` indicates effective connection reuse and reduced TLS handshake overhead.
+
+### Usage Example
+
+```typescript
+const stats = pipeline.getStats();
+const pool  = stats.connectionPool;
+
+const reuseRate = pool.reuseCount / (pool.reuseCount + pool.missCount);
+console.log(`Active: ${pool.activeConnections}  Idle: ${pool.idleConnections}`);
+console.log(`Connection reuse rate: ${(reuseRate * 100).toFixed(1)}%`);
+console.log(`Average wait: ${pool.averageWaitTime.toFixed(2)}ms`);
+```
+
+## Compositor Metrics
+
+`CompositorThread` exposes frame-level rendering metrics through `CompositorStats`:
+
+```typescript
+// From: browser/src/engine/rendering/compositor/CompositorThread.ts
+
+export interface CompositorStats {
+    frameCount:    number;      // Total frames composited
+    averageFPS:    number;      // Rolling average frames per second
+    compositeTime: number;      // Last composite pass duration (ms)
+    uploadTime:    number;      // Last texture upload duration (ms)
+    layerCount:    number;      // Current number of compositor layers
+    textureMemory: number;      // Total GPU texture memory (bytes)
+    vsyncStats:    VSyncStats;  // Per-frame VSync statistics
+}
+```
+
+### Accessing Compositor Stats
+
+```typescript
+// From: browser/src/engine/rendering/compositor/CompositorThread.ts
+
+getStats(): CompositorStats {
+    // In headless mode, layer manager may not be initialized with GL
+    const layerCount    = this.headlessMode ? 0 : this.layerManager.getAllLayers().length;
+    const textureMemory = this.headlessMode ? 0 : this.layerManager.getTotalTextureMemory();
+
+    return {
+        frameCount:    this.frameCount,
+        averageFPS:    this.vsync.getAverageFPS(),
+        compositeTime: this.lastCompositeTime,
+        uploadTime:    this.lastUploadTime,
+        layerCount,
+        textureMemory,
+        vsyncStats:    this.vsync.getStats(),
+    };
+}
+```
+
+## VSync Frame Timing
+
+`VSync` coordinates rendering with the display refresh rate (default 60 fps) and provides per-frame timing and aggregate statistics:
+
+```typescript
+// From: browser/src/engine/rendering/compositor/VSync.ts
+
+export interface FrameTiming {
+    timestamp:   number;  // High-resolution timestamp (ms)
+    delta:       number;  // Time since last frame (ms)
+    fps:         number;  // Instantaneous frames per second
+    frameNumber: number;  // Monotonically increasing frame index
+}
+
+export interface VSyncStats {
+    averageFPS:    number;  // Rolling average FPS over last 60 frames
+    minFPS:        number;  // Minimum FPS observed
+    maxFPS:        number;  // Maximum FPS observed
+    frameCount:    number;  // Total frames rendered
+    droppedFrames: number;  // Frames that missed the target interval
+    totalTime:     number;  // Total time running (ms)
+}
+```
+
+VSync tracks the last 60 frames (`historySize: 60`) in a rolling window to compute live FPS statistics without unbounded memory growth.
+
+## Performance Timing API
+
+BrowserX implements the W3C Performance Timeline API for page-level timing. `PerformanceObserver` fans out entries to registered callbacks by type:
+
+```typescript
+// From: resource/devdocs/17.MetrcsAndObservability.md
+
+class PerformanceObserver {
+    observe(options: PerformanceObserverOptions): void {
+        for (const type of options.entryTypes) {
+            if (!this.observers.has(type)) this.observers.set(type, []);
+            this.observers.get(type)!.push(options.callback);
+        }
+    }
+
+    recordEntry(entry: PerformanceEntry): void {
+        this.entries.push(entry);
+        const observers = this.observers.get(entry.entryType);
+        if (observers) {
+            for (const callback of observers) callback([entry]);
+        }
+    }
+
+    getEntriesByType(type: string): PerformanceEntry[] {
+        return this.entries.filter(e => e.entryType === type);
+    }
+}
+
+interface PerformanceEntry {
+    name:      string;
+    entryType: string;
+    startTime: number;
+    duration:  number;
+}
+```
+
+### Navigation Timing
+
+`NavigationTiming` mirrors the W3C Navigation Timing Level 2 specification:
+
+```typescript
+interface NavigationTiming extends PerformanceEntry {
+    entryType: "navigation";
+
+    // Document lifecycle milestones
+    unloadEventStart:          number;
+    unloadEventEnd:            number;
+    domInteractive:            number;  // Parser finished, DOM accessible
+    domContentLoadedEventStart: number;
+    domContentLoadedEventEnd:  number;
+    domComplete:               number;  // All resources loaded
+    loadEventStart:            number;
+    loadEventEnd:              number;
+
+    redirectCount: number;
+    type: "navigate" | "reload" | "back_forward" | "prerender";
+}
+```
+
+### Resource Timing
+
+`ResourceTiming` provides granular timing for every subresource:
+
+```typescript
+interface ResourceTiming extends PerformanceEntry {
+    entryType: "resource";
+
+    initiatorType:       string;  // "script", "link", "img", etc.
+    nextHopProtocol:     string;  // "h2", "http/1.1", etc.
+
+    // Timing phases (all in milliseconds from time origin)
+    workerStart:         number;  // Service Worker intercept start
+    redirectStart:       number;
+    redirectEnd:         number;
+    fetchStart:          number;
+    domainLookupStart:   number;  // DNS start
+    domainLookupEnd:     number;  // DNS end
+    connectStart:        number;  // TCP connect start
+    connectEnd:          number;  // TCP connect end
+    secureConnectionStart: number; // TLS handshake start
+    requestStart:        number;  // First byte of request
+    responseStart:       number;  // First byte of response (TTFB)
+    responseEnd:         number;  // Last byte of response
+
+    // Sizes (in bytes)
+    transferSize:       number;  // Over-the-wire bytes (0 = cache hit)
+    encodedBodySize:    number;  // Compressed body
+    decodedBodySize:    number;  // Decompressed body
+}
+```
+
+### Paint Timing
+
+```typescript
+interface PaintTiming extends PerformanceEntry {
+    entryType: "paint";
+    name: "first-paint" | "first-contentful-paint";
+}
+```
+
+### Layout Shift
+
+```typescript
+interface LayoutShift extends PerformanceEntry {
+    entryType: "layout-shift";
+    value:          number;   // Shift score (0–1)
+    hadRecentInput: boolean;  // Exclude input-triggered shifts from CLS
+}
+```
+
+## Core Web Vitals
+
+`WebVitalsCollector` assembles the five key user-experience metrics from `PerformanceObserver` entries:
+
+```typescript
+interface WebVitals {
+    lcp?: number;  // Largest Contentful Paint (ms) — loading
+    fid?: number;  // First Input Delay (ms) — interactivity
+    cls?: number;  // Cumulative Layout Shift (score) — visual stability
+    fcp?: number;  // First Contentful Paint (ms) — loading
+    ttfb?: number; // Time to First Byte (ms) — server response
+}
+
+class WebVitalsCollector {
+    measureLCP(): void {
+        // Observes 'largest-contentful-paint' entries
+        // Uses the startTime of the last entry (LCP is the latest candidate)
+    }
+
+    measureCLS(): void {
+        // Accumulates layout-shift values, skipping input-adjacent shifts
+        let clsValue = 0;
+        // callback: if (!shift.hadRecentInput) clsValue += shift.value;
+    }
+
+    measureFID(): void {
+        // Observes 'first-input' entries
+        // FID = processingStart - startTime of the first input event
+    }
+
+    getMetrics(): WebVitals {
+        return { ...this.metrics };
+    }
+}
+```
+
+### Web Vitals Thresholds
+
+| Metric | Good    | Needs Improvement | Poor     |
+|--------|---------|-------------------|----------|
+| LCP    | ≤ 2.5s  | ≤ 4.0s            | > 4.0s   |
+| FID    | ≤ 100ms | ≤ 300ms           | > 300ms  |
+| CLS    | ≤ 0.1   | ≤ 0.25            | > 0.25   |
+| FCP    | ≤ 1.8s  | ≤ 3.0s            | > 3.0s   |
+| TTFB   | ≤ 800ms | ≤ 1800ms          | > 1800ms |
+
+## Memory Profiling
+
+`MemoryProfiler` exposes V8 heap snapshots and allocation tracking:
+
+```typescript
+class MemoryProfiler {
+    takeHeapSnapshot(): HeapSnapshot {
+        return {
+            timestamp: Date.now(),
+            nodes:   [],  // HeapNode[]
+            edges:   [],  // HeapEdge[]
+            strings: [],
+        };
+    }
+
+    getMemoryUsage(): MemoryUsage {
+        return {
+            jsHeapSizeLimit: 0,   // Maximum heap size (bytes)
+            totalJSHeapSize: 0,   // Allocated heap size (bytes)
+            usedJSHeapSize:  0,   // Live heap size (bytes)
+        };
+    }
+}
+
+interface HeapNode {
+    type:      string;
+    name:      string;
+    id:        number;
+    selfSize:  number;   // Bytes held by this node
+    edgeCount: number;
+}
+
+interface HeapEdge {
+    type: string;
+    name: string;
+    from: number;
+    to:   number;
+}
+```
+
+## WebGPU Observability
+
+When GPU rendering is active, two additional statistics objects are available.
+
+### OffscreenWebGPU Statistics
+
+```typescript
+// From: browser/src/engine/webgpu/offscreen/OffscreenWebGPU.ts
+
+export interface OffscreenWebGPUStatistics {
+    state:               OffscreenWebGPUState;  // IDLE | RENDERING | etc.
+    width:               number;
+    height:              number;
+    textureFormat:       GPUTextureFormat;
+    readbackCount:       number;    // Number of pixel readbacks performed
+    totalReadbackTime:   number;    // Cumulative readback time (ms)
+    averageReadbackTime: number;    // Average readback latency (ms)
+    createdAt:           Timestamp;
+}
+```
+
+### Layer Statistics
+
+Each WebGPU compositor layer exposes per-layer rendering metrics:
+
+```typescript
+// From: browser/src/engine/webgpu/compositor/WebGPUCompositorLayer.ts
+
+export interface LayerStatistics {
+    layerId:           LayerID;
+    state:             LayerState;
+    framesRendered:    number;      // Frames this layer contributed to
+    lastRenderTime:    Timestamp;
+    averageRenderTime: number;      // Average render time (ms)
+    textureMemory:     number;      // GPU memory used by this layer (bytes)
+    damageCount:       number;      // Times the layer was marked dirty
+    uploadCount:       number;      // Times texture data was uploaded to GPU
+}
+```
+
+### WebGPU Stats Aggregate
+
+The `RenderingPipelineStats.webgpu` field combines all GPU observability data:
+
+```typescript
+// From: browser/src/engine/RenderingPipeline.ts
+
+export interface WebGPUStats {
+    active:     boolean;   // Is WebGPU currently rendering?
+    available:  boolean;   // Does this environment support WebGPU?
+    offscreen?: OffscreenWebGPUStatistics;
+    device?:    GPUDeviceStats;
+    layer?:     LayerStatistics;
+}
+```
+
+## Error Reporting
+
+Both pipelines expose typed error classes that include the failed stage name, making it easy to attribute failures to specific observability checkpoints:
+
+```typescript
+// Request pipeline errors
+export class RequestPipelineError extends Error {
+    constructor(
+        message: string,
+        public readonly stage: string,   // "dns" | "tcp" | "tls" | "http" | "timeout" | "aborted"
+        public override readonly cause?: Error,
+    ) {
+        super(message);
+        this.name = "RequestPipelineError";
+    }
+}
+
+// Rendering pipeline errors
+export class RenderingPipelineError extends Error {
+    constructor(
+        message: string,
+        public readonly stage: string,   // "htmlFetch" | "htmlParse" | "layout" | etc.
+        public override readonly cause?: Error,
+    ) {
+        super(message);
+        this.name = "RenderingPipelineError";
+    }
+}
+```
+
+## Putting It All Together
+
+The following example shows how to collect a full observability snapshot after rendering a page:
+
+```typescript
+import { RenderingPipeline } from "@browserx/browser";
+
+const renderPipeline = new RenderingPipeline({ width: 1280, height: 800 });
+
+// Render a page
+const result = await renderPipeline.render("https://example.com");
+
+// --- Rendering timings ---
+const t = result.timing;
+console.log("HTML fetch:        ", t.htmlFetch,         "ms");
+console.log("HTML parse:        ", t.htmlParse,         "ms");
+console.log("CSS fetch:         ", t.cssFetch,          "ms");
+console.log("CSS parse:         ", t.cssParse,          "ms");
+console.log("Script execution:  ", t.scriptExecution,   "ms");
+console.log("Style resolution:  ", t.styleResolution,   "ms");
+console.log("Layout:            ", t.layoutComputation, "ms");
+console.log("Paint:             ", t.paintRecording,    "ms");
+console.log("Composite:         ", t.compositing,       "ms");
+console.log("Total:             ", t.total,             "ms");
+
+// --- Resource breakdown ---
+console.log(`Loaded ${result.resources.length} resources:`);
+for (const res of result.resources) {
+    console.log(`  [${res.type}] ${res.url} — ${res.size}B in ${res.fetchTime}ms${res.cached ? " (cached)" : ""}`);
+}
+
+// --- Pipeline stats snapshot ---
+const stats = renderPipeline.getStats();
+
+// DNS cache performance
+const dns = stats.requestPipeline.dnsCache;
+console.log(`DNS hit rate: ${(dns.hitRate * 100).toFixed(1)}% (${dns.hits} hits / ${dns.misses} misses)`);
+
+// Connection pool efficiency
+const pool = stats.requestPipeline.connectionPool;
+console.log(`Pool: ${pool.activeConnections} active, ${pool.idleConnections} idle, ${pool.reuseCount} reused`);
+
+// Compositor frame rate
+const comp = stats.compositor;
+console.log(`Compositor: ${comp.averageFPS.toFixed(1)} fps, ${comp.frameCount} frames`);
+console.log(`Texture memory: ${(comp.textureMemory / 1024 / 1024).toFixed(1)} MB`);
+
+// VSync health
+const vsync = comp.vsyncStats;
+console.log(`VSync: avg ${vsync.averageFPS.toFixed(1)} fps, dropped ${vsync.droppedFrames} frames`);
+
+// WebGPU status
+if (stats.webgpu.active && stats.webgpu.offscreen) {
+    const gpu = stats.webgpu.offscreen;
+    console.log(`WebGPU: avg readback ${gpu.averageReadbackTime.toFixed(2)}ms`);
+}
+```

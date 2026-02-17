@@ -1,0 +1,578 @@
+---
+title: Configuration
+description: Complete configuration reference for BrowserX Runtime
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The BrowserX Runtime provides comprehensive configuration options for all subsystems. Configuration can be provided when creating the runtime or through preset factory functions.
+
+## Configuration Structure
+
+```typescript
+interface BrowserXRuntimeConfig {
+  environment: "development" | "production" | "test";
+  logLevel: "debug" | "info" | "warn" | "error";
+  browser: BrowserPoolConfig;
+  proxy: ProxyEngineConfig;
+  query: QueryEngineConfig;
+  eventLoop: EventLoopConfig;
+  shutdown: ShutdownConfig;
+  signals: SignalConfig;
+  metrics: MetricsConfig;
+  plugins: PluginConfig;
+}
+```
+
+## Browser Pool Configuration
+
+Controls browser instance pooling and lifecycle:
+
+```typescript
+interface BrowserPoolConfig {
+  minInstances: number;        // Minimum warm instances (default: 0)
+  maxInstances: number;        // Maximum concurrent instances (default: 10)
+  idleTimeout: number;         // Close idle instances after ms (default: 1800000)
+  maxLifetime: number;         // Max instance lifetime ms (default: 3600000)
+  defaultWidth: number;        // Viewport width (default: 1280)
+  defaultHeight: number;       // Viewport height (default: 720)
+  enableJavaScript: boolean;   // Enable JS execution (default: false)
+  enableStorage: boolean;      // Enable storage APIs (default: true)
+  devicePixelRatio: number;    // Screenshot pixel ratio (default: 1.0)
+}
+```
+
+### Example Configurations
+
+<Tabs>
+<TabItem label="Low-Traffic">
+
+```typescript
+{
+  browser: {
+    minInstances: 0,
+    maxInstances: 5,
+    idleTimeout: 10 * 60 * 1000, // 10 minutes
+    maxLifetime: 30 * 60 * 1000, // 30 minutes
+  }
+}
+```
+
+</TabItem>
+
+<TabItem label="High-Traffic">
+
+```typescript
+{
+  browser: {
+    minInstances: 5,            // Keep 5 warm
+    maxInstances: 50,
+    idleTimeout: 30 * 60 * 1000, // 30 minutes
+    maxLifetime: 2 * 60 * 60 * 1000, // 2 hours
+  }
+}
+```
+
+</TabItem>
+
+<TabItem label="JavaScript Enabled">
+
+```typescript
+{
+  browser: {
+    maxInstances: 10,
+    enableJavaScript: true,     // Enable V8 execution
+    enableStorage: true,        // Enable localStorage, cookies
+    devicePixelRatio: 2.0,      // High-DPI screenshots
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+### Resource Management
+
+The browser pool automatically manages resources:
+
+- **Idle Timeout**: Instances idle for longer than `idleTimeout` are closed (respects `minInstances`)
+- **Max Lifetime**: Instances older than `maxLifetime` are rotated out (prevents memory leaks)
+- **Pre-warming**: `minInstances` warm instances are created on startup
+- **Cleanup Intervals**: Idle cleanup runs every 60 seconds, lifetime check every 5 minutes
+
+## Proxy Engine Configuration
+
+Controls the proxy engine subsystem:
+
+```typescript
+interface ProxyEngineConfig {
+  enabled: boolean;                   // Enable proxy engine (default: false)
+  gateways: ProxyGatewayConfig[];     // Gateway server configs
+  gracefulShutdownTimeout: number;    // Shutdown timeout ms (default: 30000)
+  metrics: boolean;                   // Enable proxy metrics (default: false)
+  metricsPort?: number;               // Proxy metrics port
+  metricsHost?: string;               // Proxy metrics host
+}
+
+interface ProxyGatewayConfig {
+  host: string;                       // Gateway listen host
+  port: number;                       // Gateway listen port
+  tls?: {
+    certFile: string;                 // TLS certificate path
+    keyFile: string;                  // TLS private key path
+    alpnProtocols?: string[];         // ALPN protocols (e.g., ["h2", "http/1.1"])
+  };
+  routes?: Array<{
+    pathPattern: string;              // Route path regex (e.g., "/api/.*")
+    targetHost: string;               // Upstream host
+    targetPort: number;               // Upstream port
+  }>;
+}
+```
+
+### Example: Reverse Proxy
+
+```typescript
+{
+  proxy: {
+    enabled: true,
+    gateways: [
+      {
+        host: "0.0.0.0",
+        port: 8080,
+        routes: [
+          {
+            pathPattern: "/api/.*",
+            targetHost: "backend.example.com",
+            targetPort: 3000,
+          },
+          {
+            pathPattern: "/static/.*",
+            targetHost: "cdn.example.com",
+            targetPort: 443,
+          },
+        ],
+      },
+    ],
+    gracefulShutdownTimeout: 30000,
+    metrics: true,
+    metricsPort: 9091,
+  }
+}
+```
+
+### Example: TLS Termination
+
+```typescript
+{
+  proxy: {
+    enabled: true,
+    gateways: [
+      {
+        host: "0.0.0.0",
+        port: 443,
+        tls: {
+          certFile: "/path/to/cert.pem",
+          keyFile: "/path/to/key.pem",
+          alpnProtocols: ["h2", "http/1.1"],
+        },
+        routes: [
+          {
+            pathPattern: ".*",
+            targetHost: "localhost",
+            targetPort: 8080,
+          },
+        ],
+      },
+    ],
+  }
+}
+```
+
+## Query Engine Configuration
+
+Controls the query engine subsystem:
+
+```typescript
+interface QueryEngineConfig {
+  proxyEnabled: boolean;              // Enable proxy integration (default: false)
+  cache: {
+    enabled: boolean;                 // Enable result caching (default: true)
+    defaultTTL: number;               // Cache TTL ms (default: 300000)
+    maxSize: number;                  // Max cache size bytes (default: 104857600)
+  };
+  rateLimit?: {
+    requestsPerSecond: number;        // Rate limit per second
+    requestsPerMinute: number;        // Rate limit per minute
+  };
+  sandbox: {
+    enabled: boolean;                 // Enable security sandbox (default: true)
+    timeout: number;                  // Execution timeout ms (default: 30000)
+  };
+}
+```
+
+### Example Configurations
+
+<Tabs>
+<TabItem label="Default">
+
+```typescript
+{
+  query: {
+    proxyEnabled: false,
+    cache: {
+      enabled: true,
+      defaultTTL: 5 * 60 * 1000,      // 5 minutes
+      maxSize: 100 * 1024 * 1024,     // 100MB
+    },
+    sandbox: {
+      enabled: true,
+      timeout: 30000,
+    },
+  }
+}
+```
+
+</TabItem>
+
+<TabItem label="High-Performance">
+
+```typescript
+{
+  query: {
+    proxyEnabled: true,               // Use proxy for caching
+    cache: {
+      enabled: true,
+      defaultTTL: 15 * 60 * 1000,     // 15 minutes
+      maxSize: 500 * 1024 * 1024,     // 500MB
+    },
+    rateLimit: {
+      requestsPerSecond: 100,
+      requestsPerMinute: 5000,
+    },
+    sandbox: {
+      enabled: true,
+      timeout: 60000,                 // 1 minute
+    },
+  }
+}
+```
+
+</TabItem>
+
+<TabItem label="Strict Security">
+
+```typescript
+{
+  query: {
+    proxyEnabled: false,
+    cache: {
+      enabled: false,                 // Disable caching
+    },
+    rateLimit: {
+      requestsPerSecond: 10,
+      requestsPerMinute: 500,
+    },
+    sandbox: {
+      enabled: true,
+      timeout: 10000,                 // 10 seconds max
+    },
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Event Loop Configuration
+
+Controls event loop coordination:
+
+```typescript
+interface EventLoopConfig {
+  enabled: boolean;                   // Enable event coordination (default: true)
+  targetFrameRate: number;            // Browser loop frame rate (default: 60)
+  maxMicrotasksPerCycle: number;      // Max microtasks per tick (default: 1000)
+  enableIdleTasks: boolean;           // Enable idle task processing (default: true)
+}
+```
+
+### Frame Rate Impact
+
+The `targetFrameRate` controls browser event loop tick frequency:
+
+- **60 FPS** (default): Smooth animations, responsive UI (16.67ms per frame)
+- **30 FPS**: Lower CPU usage, still acceptable for most UIs (33.33ms per frame)
+- **15 FPS**: Minimal CPU, noticeable lag in animations (66.67ms per frame)
+
+```typescript
+{
+  eventLoop: {
+    enabled: true,
+    targetFrameRate: 30,              // 30 FPS for lower CPU usage
+    maxMicrotasksPerCycle: 500,       // Lower limit for slower machines
+    enableIdleTasks: false,           // Disable idle tasks in production
+  }
+}
+```
+
+## Shutdown Configuration
+
+Controls graceful shutdown behavior:
+
+```typescript
+interface ShutdownConfig {
+  graceful: boolean;                  // Enable graceful shutdown (default: true)
+  timeout: number;                    // Total shutdown timeout ms (default: 30000)
+  drainTimeout: number;               // Connection drain timeout ms (default: 5000)
+  forceExitOnTimeout: boolean;        // Force exit after timeout (default: true)
+}
+```
+
+### Shutdown Sequence
+
+When `graceful: true`, the runtime performs ordered shutdown:
+
+1. **Plugin Manager**: Deactivate plugins in reverse activation order
+2. **Query Engine**: Abort running queries, flush caches
+3. **Proxy Engine**: Drain active connections, stop accepting new requests
+4. **Browser Pool**: Close all browser instances
+5. **Event Coordinator**: Stop all event loops
+6. **Metrics Collector**: Stop metrics server, export final metrics
+
+```typescript
+{
+  shutdown: {
+    graceful: true,
+    timeout: 60000,                   // 1 minute total
+    drainTimeout: 10000,              // 10 seconds to drain connections
+    forceExitOnTimeout: true,         // Exit if timeout exceeded
+  }
+}
+```
+
+## Signal Handling Configuration
+
+Controls OS signal handling:
+
+```typescript
+interface SignalConfig {
+  handleSIGINT: boolean;              // Handle Ctrl+C (default: true)
+  handleSIGTERM: boolean;             // Handle SIGTERM (default: true)
+  handleSIGHUP: boolean;              // Handle SIGHUP (default: false)
+}
+```
+
+When signal handling is enabled, the runtime automatically initiates graceful shutdown on signal receipt.
+
+```typescript
+{
+  signals: {
+    handleSIGINT: true,               // Ctrl+C triggers shutdown
+    handleSIGTERM: true,              // systemd stop triggers shutdown
+    handleSIGHUP: false,              // Ignore SIGHUP
+  }
+}
+```
+
+## Metrics Configuration
+
+Controls metrics collection and export:
+
+```typescript
+interface MetricsConfig {
+  enabled: boolean;                   // Enable metrics (default: false)
+  port?: number;                      // Metrics server port
+  host?: string;                      // Metrics server host (default: "127.0.0.1")
+  healthCheckInterval: number;        // Health check interval ms (default: 30000)
+  exportFormat: "prometheus" | "json"; // Export format (default: "prometheus")
+}
+```
+
+### Example: Prometheus Metrics
+
+```typescript
+{
+  metrics: {
+    enabled: true,
+    port: 9090,
+    host: "0.0.0.0",                  // Listen on all interfaces
+    healthCheckInterval: 15000,       // Check every 15 seconds
+    exportFormat: "prometheus",
+  }
+}
+```
+
+Metrics available at `http://0.0.0.0:9090/metrics` (Prometheus) and `http://0.0.0.0:9090/metrics/json` (JSON).
+
+## Plugin Configuration
+
+Controls the plugin system:
+
+```typescript
+interface PluginConfig {
+  enabled: boolean;                   // Enable plugin system (default: false)
+  pluginDirs: string[];               // Directories to scan for plugins
+  plugins: PluginEntry[];             // Explicit plugin entries
+  activationTimeout: number;          // Plugin activation timeout ms (default: 10000)
+}
+
+interface PluginEntry {
+  path: string;                       // Plugin module path or URL
+  enabled: boolean;                   // Whether to activate this plugin
+  config?: Record<string, unknown>;   // Plugin-specific configuration
+}
+```
+
+### Example: Plugin Configuration
+
+```typescript
+{
+  plugins: {
+    enabled: true,
+    pluginDirs: [
+      "./plugins",
+      "/opt/browserx/plugins",
+    ],
+    plugins: [
+      {
+        path: "./custom-plugins/analytics.ts",
+        enabled: true,
+        config: {
+          apiKey: "YOUR_API_KEY",
+          endpoint: "https://analytics.example.com",
+        },
+      },
+      {
+        path: "https://cdn.example.com/plugins/logging.js",
+        enabled: true,
+        config: {
+          logLevel: "info",
+        },
+      },
+    ],
+    activationTimeout: 15000,         // 15 seconds for slow plugins
+  }
+}
+```
+
+See [Plugin System](./plugins) for plugin development details.
+
+## Configuration Presets
+
+Pre-built configurations for common environments:
+
+### Production (Default)
+
+```typescript
+import { createDefaultConfig } from "@browserx/runtime";
+
+const config = createDefaultConfig();
+// High limits, long timeouts, minimal logging
+```
+
+### Development
+
+```typescript
+import { createDevelopmentConfig } from "@browserx/runtime";
+
+const config = createDevelopmentConfig();
+// Lower limits, faster timeouts, debug logging
+```
+
+### Testing
+
+```typescript
+import { createTestConfig } from "@browserx/runtime";
+
+const config = createTestConfig();
+// Minimal resources, fast timeouts, warnings only
+```
+
+### Custom Merge
+
+```typescript
+import { mergeConfig } from "@browserx/runtime";
+
+const config = mergeConfig({
+  browser: { maxInstances: 20 },
+  logLevel: "debug",
+  metrics: { enabled: true, port: 9090 },
+});
+```
+
+## Environment Variables
+
+Configuration can be overridden via environment variables:
+
+```bash
+# Browser pool
+BROWSERX_BROWSER_MAX_INSTANCES=20
+BROWSERX_BROWSER_IDLE_TIMEOUT=600000
+
+# Proxy
+BROWSERX_PROXY_ENABLED=true
+BROWSERX_PROXY_PORT=8080
+
+# Metrics
+BROWSERX_METRICS_ENABLED=true
+BROWSERX_METRICS_PORT=9090
+
+# Plugins
+BROWSERX_PLUGINS_ENABLED=true
+BROWSERX_PLUGINS_DIR=./plugins
+```
+
+Load environment variables with a custom config loader:
+
+```typescript
+function loadConfigFromEnv(): Partial<BrowserXRuntimeConfig> {
+  return {
+    browser: {
+      maxInstances: parseInt(process.env.BROWSERX_BROWSER_MAX_INSTANCES ?? "10"),
+      idleTimeout: parseInt(process.env.BROWSERX_BROWSER_IDLE_TIMEOUT ?? "1800000"),
+    },
+    metrics: {
+      enabled: process.env.BROWSERX_METRICS_ENABLED === "true",
+      port: parseInt(process.env.BROWSERX_METRICS_PORT ?? "9090"),
+    },
+  };
+}
+
+const runtime = new BrowserXRuntime({
+  config: mergeConfig(loadConfigFromEnv()),
+});
+```
+
+## Configuration Validation
+
+The Runtime validates configuration on startup:
+
+```typescript
+import { ConfigValidator } from "@browserx/runtime/config/ConfigValidator.ts";
+
+const validator = new ConfigValidator();
+const errors = validator.validate(config);
+
+if (errors.length > 0) {
+  console.error("Configuration errors:", errors);
+  throw new Error(`Invalid configuration: ${errors.join(", ")}`);
+}
+```
+
+Common validation errors:
+
+- `browser.maxInstances` must be > 0
+- `browser.minInstances` must be ≤ `maxInstances`
+- `browser.idleTimeout` must be > 0
+- `browser.maxLifetime` must be > `idleTimeout`
+- `shutdown.timeout` must be ≥ `shutdown.drainTimeout`
+- `plugins.activationTimeout` must be > 0
+
+## Next Steps
+
+- [Browser Pool](./browser-pool) - Using the browser pool
+- [Lifecycle](./lifecycle) - Initialization and shutdown
+- [Metrics & Health](./metrics-health) - Metrics endpoints and health checks
+- [Plugin System](./plugins) - Developing plugins

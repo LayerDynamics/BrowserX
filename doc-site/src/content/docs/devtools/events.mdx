@@ -1,0 +1,399 @@
+---
+title: Event System
+description: How the BrowserX DevTools EventBus pub/sub system works — cross-domain communication, event emission patterns, and subscribing to protocol events.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The BrowserX DevTools event system has two distinct layers that work together: the **EventBus** for internal cross-domain communication, and the **protocol event system** for delivering CDP events to connected clients over WebSocket.
+
+## EventBus — Internal Pub/Sub
+
+The `EventBus` is the central pub/sub hub that all 14 domain agents share. It decouples domains from each other: the Console domain subscribes to `Runtime.consoleAPICalled` without importing the Runtime domain, and the Overlay domain listens for `DOM.nodeSelected` without depending on the DOM domain directly.
+
+```typescript
+// dev-tools/integration/event-bus.ts
+
+export class EventBus {
+  /** Subscribe to an event */
+  on(event: string, handler: EventHandler): void
+
+  /** Unsubscribe from an event */
+  off(event: string, handler: EventHandler): void
+
+  /** Emit an event to all subscribers */
+  emit(event: string, data?: unknown): void
+
+  /** Subscribe once — auto-unsubscribes after first call */
+  once(event: string, handler: EventHandler): void
+
+  /** Remove all listeners (used during dispose) */
+  removeAllListeners(): void
+
+  /** Number of subscribers for an event */
+  listenerCount(event: string): number
+
+  /** All registered event names */
+  eventNames(): string[]
+}
+```
+
+### How BaseDomain Uses the EventBus
+
+Every domain agent's `emitEvent()` method broadcasts on both channels simultaneously:
+
+```typescript
+// From BaseDomain.emitEvent()
+protected emitEvent(eventName: string, params?: Record<string, unknown>): void {
+  const method = `${this.name}.${eventName}` as ProtocolMethod;
+  const event: ProtocolEvent = { method, params };
+
+  // 1. Notify direct listeners (WebSocket clients)
+  for (const listener of this.eventListeners) {
+    listener(event);
+  }
+
+  // 2. Notify the EventBus (other domain agents)
+  this.eventBus.emit(method, params);
+}
+```
+
+This means every CDP event emitted through `emitEvent()` is automatically available on both the protocol (WebSocket) layer and the internal EventBus.
+
+## Cross-Domain Communication
+
+The EventBus is most visibly used by the Console and Overlay domains to react to events from other domains without direct imports.
+
+### Console Domain Subscribing to Runtime Events
+
+```typescript
+// From console-domain.ts setup()
+this.eventBus.on("Runtime.consoleAPICalled" as ProtocolMethod, (data: unknown) => {
+  if (!this.enabled) return;
+
+  const params = data as {
+    type: string;
+    args: Array<{ value?: unknown; description?: string }>;
+    timestamp: number;
+    stackTrace?: StackTrace;
+  };
+
+  const level = this.mapConsoleTypeToLevel(params.type);
+  const text = params.args
+    .map((arg) => {
+      if (arg.value !== undefined) return String(arg.value);
+      if (arg.description) return arg.description;
+      return "[object]";
+    })
+    .join(" ");
+
+  this.addMessage({ source: "javascript", level, text, timestamp: params.timestamp });
+});
+```
+
+When the Runtime domain executes a `console.log()` call, it emits `Runtime.consoleAPICalled` on the EventBus. The Console domain's subscriber fires and converts that event into a `Console.messageAdded` protocol event for the connected client.
+
+### Overlay Domain Subscribing to DOM Events
+
+```typescript
+// From overlay-domain.ts setup()
+this.eventBus.on("DOM.nodeSelected", (data: unknown) => {
+  if (!this.enabled) return;
+  const eventData = data as Record<string, unknown>;
+  const nodeId = eventData?.nodeId as number | undefined;
+  if (nodeId !== undefined) {
+    this.handleNodeSelected(nodeId);
+  }
+});
+```
+
+### Emulation Domain Broadcasting Changes
+
+The Emulation domain has no protocol events but uses the EventBus to notify other domains when device settings change:
+
+```typescript
+// Other domains can subscribe to emulation changes:
+eventBus.on("Emulation.deviceMetricsChanged", (data) => {
+  // React to viewport change
+});
+
+eventBus.on("Emulation.networkConditionsChanged", (data) => {
+  // React to throttling change
+});
+```
+
+## Event Emission Patterns
+
+### Enabled Guard
+
+All domain agents check `this.enabled` before emitting events. This is a critical pattern — events are only fired when the domain is active:
+
+```typescript
+// Pattern used across all domains
+if (this.enabled) {
+  this.emitEvent("requestWillBeSent", {
+    requestId,
+    request: { url, method, headers },
+    timestamp: Date.now() / 1000,
+  });
+}
+```
+
+If a domain is disabled via `Domain.disable`, it stops emitting protocol events even if the underlying subsystem is still producing data. This lets clients opt out of event streams selectively.
+
+### Emission on Enable
+
+Several domains emit an initial batch of events immediately when enabled, to bring the client up to speed with current state:
+
+```typescript
+// CSS domain — on enable, notifies client of all existing stylesheets
+override async enable(): Promise<Record<string, unknown>> {
+  await super.enable();
+  this.collectStyleSheets();
+
+  for (const [id, sheet] of this.styleSheets) {
+    this.emitEvent("styleSheetAdded", {
+      header: this.buildHeader(id, sheet),
+    });
+  }
+
+  return {};
+}
+```
+
+```typescript
+// Debugger domain — on enable, replays all known script parse events
+override async enable(): Promise<Record<string, unknown>> {
+  await super.enable();
+
+  for (const [_scriptId, script] of this.scripts) {
+    this.emitEvent("scriptParsed", {
+      scriptId: script.scriptId,
+      url: script.url,
+      startLine: script.startLine,
+      // ...
+    });
+  }
+
+  this.discoverScripts();
+  return {};
+}
+```
+
+```typescript
+// Runtime domain — on enable, announces the execution context
+override async enable(): Promise<Record<string, unknown>> {
+  await super.enable();
+
+  this.emitEvent("executionContextCreated", {
+    context: this.getDefaultContext(),
+  });
+
+  return {};
+}
+```
+
+### Emission on Disable
+
+The Debugger domain has special cleanup behavior when disabled while paused:
+
+```typescript
+// Debugger domain — resume if paused when disabled
+override async disable(): Promise<Record<string, unknown>> {
+  if (this.paused) {
+    this.paused = false;
+    this.pauseReason = "";
+    this.callFrames = [];
+    this.emitEvent("resumed", {});   // Notify client before going silent
+  }
+
+  return await super.disable();
+}
+```
+
+## Subscribing to Events
+
+### Via WebSocket Client (External)
+
+The `DevToolsClient` provides `client.on()` for subscribing to CDP events over WebSocket:
+
+```typescript
+import { DevToolsClient } from "../dev-tools/mod.ts";
+
+const client = new DevToolsClient("ws://localhost:9222/devtools/page/default");
+await client.connect();
+
+// Subscribe to events by full method name
+client.on("Network.requestWillBeSent", (params) => {
+  console.log("Request:", params.request.url);
+});
+
+client.on("DOM.attributeModified", ({ nodeId, name, value }) => {
+  console.log(`Node ${nodeId}: ${name}="${value}"`);
+});
+
+client.on("Debugger.paused", ({ callFrames, reason }) => {
+  console.log(`Paused: ${reason}`);
+  console.log(`At: ${callFrames[0].location.lineNumber}`);
+});
+
+// Enable domains to start receiving events
+await client.send("Network.enable", {});
+await client.send("DOM.enable", {});
+await client.send("Debugger.enable", {});
+```
+
+### Via Domain addEventListener (Internal/Server-side)
+
+When working with DevTools server-side (without a WebSocket connection), use `domain.addEventListener()` to receive protocol events directly:
+
+```typescript
+import { attachDevTools } from "../dev-tools/mod.ts";
+import type { NetworkDomain } from "../dev-tools/mod.ts";
+import type { ProtocolEvent } from "../dev-tools/mod.ts";
+
+const devtools = attachDevTools(browser, { autoStart: false });
+const network = devtools.getDomain<NetworkDomain>("Network");
+
+if (network) {
+  // Direct listener — no WebSocket needed
+  network.addEventListener((event: ProtocolEvent) => {
+    if (event.method === "Network.requestWillBeSent") {
+      console.log("Request:", event.params?.request?.url);
+    }
+  });
+
+  await network.enable();
+}
+```
+
+### Via EventBus (Domain-to-Domain)
+
+Custom code can also subscribe directly to the EventBus for any CDP event:
+
+```typescript
+const devtools = attachDevTools(browser, { autoStart: false });
+
+// Subscribe to any event name on the shared EventBus
+devtools.eventBus.on("DOM.attributeModified", (data) => {
+  const { nodeId, name, value } = data as Record<string, unknown>;
+  console.log(`Attribute changed on node ${nodeId}: ${name}="${value}"`);
+});
+
+// Subscribe once — auto-removes after first event
+devtools.eventBus.once("Page.loadEventFired", () => {
+  console.log("Page loaded!");
+});
+
+// Inspect the event bus state
+console.log("Active subscriptions:", devtools.eventBus.eventNames());
+console.log("Listeners for DOM.attributeModified:", devtools.eventBus.listenerCount("DOM.attributeModified"));
+```
+
+## One-Time Event Subscription
+
+The `EventBus.once()` method is useful for waiting on a single event occurrence:
+
+```typescript
+// Wait for the page to load before taking a screenshot
+devtools.eventBus.once("Page.loadEventFired", async () => {
+  const page = devtools.getDomain("Page");
+  const { data } = await page.handleMethod("captureScreenshot", { format: "png" });
+  await Deno.writeFile("screenshot.png", base64Decode(data as string));
+});
+
+// Navigate to a URL
+const page = devtools.getDomain("Page");
+await page?.handleMethod("navigate", { url: "https://example.com" });
+```
+
+## Removing Subscriptions
+
+```typescript
+// EventBus: named handler for later removal
+const handler = (data: unknown) => console.log("Attribute changed:", data);
+devtools.eventBus.on("DOM.attributeModified", handler);
+
+// Later, remove just this handler
+devtools.eventBus.off("DOM.attributeModified", handler);
+
+// Or remove all handlers for all events at once
+devtools.eventBus.removeAllListeners();
+```
+
+```typescript
+// Domain addEventListener: store reference for removal
+const listener = (event: ProtocolEvent) => {
+  console.log("Event:", event.method);
+};
+network.addEventListener(listener);
+
+// Later
+network.removeEventListener(listener);
+```
+
+## Event Flow Diagram
+
+The following shows how a single `console.log()` call in page JavaScript produces a `Console.messageAdded` event for the connected client:
+
+```
+Page JavaScript
+  └─► console.log("hello")
+        │
+        ▼
+  Runtime domain
+  └─► evaluates console.log
+  └─► emitEvent("consoleAPICalled", { type: "log", args: [{value: "hello"}] })
+        │
+        ├─► Protocol event: Runtime.consoleAPICalled  (WebSocket clients)
+        │
+        └─► EventBus.emit("Runtime.consoleAPICalled", { ... })
+                │
+                ▼
+          Console domain subscriber
+          └─► enabled check passes
+          └─► converts to ConsoleMessage
+          └─► addMessage({ level: "log", text: "hello" })
+          └─► emitEvent("messageAdded", { message: { level, text, ... } })
+                │
+                ├─► Protocol event: Console.messageAdded  (WebSocket clients)
+                │
+                └─► EventBus.emit("Console.messageAdded", { ... })
+```
+
+<Aside type="tip">
+Both the WebSocket-level event (`Console.messageAdded`) and the internal EventBus event fire for every message. External clients connected via WebSocket see the protocol event; internal server-side code can listen on either the EventBus or via `domain.addEventListener()`.
+</Aside>
+
+## Testing Event Behavior
+
+The test suite verifies the enabled/disabled guard pattern for all 14 domains. The pattern is:
+
+```typescript
+// From dev-tools/tests/unit/domains/network_domain_test.ts
+Deno.test("NetworkDomain: does not emit events when disabled", () => {
+  const { domain, eventBus } = setup();
+
+  let emitted = false;
+  eventBus.on("Network.requestWillBeSent", () => { emitted = true; });
+
+  // trackRequest is the internal method that would emit the event
+  domain.trackRequest("https://example.com", "GET", {}, "navigation");
+
+  // Domain is not enabled — event should NOT have fired
+  assertEquals(emitted, false);
+});
+
+Deno.test("NetworkDomain: emits events when enabled", async () => {
+  const { domain, eventBus } = setup();
+
+  await domain.enable();
+
+  let emitted = false;
+  eventBus.on("Network.requestWillBeSent", () => { emitted = true; });
+
+  domain.trackRequest("https://example.com", "GET", {}, "navigation");
+
+  assertEquals(emitted, true);
+});
+```

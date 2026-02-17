@@ -1,0 +1,734 @@
+---
+title: Security Architecture
+description: TLS, sandboxing, and security model in BrowserX browser engine
+---
+
+BrowserX implements a layered, defense-in-depth security model that mirrors the design of modern browsers. Security mechanisms operate at the transport, application, and sandbox levels to protect users from malicious content and prevent unauthorized access to resources.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Application Layer                     │
+│   Same-Origin Policy | CORS | CSP | Secure Headers      │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                   Cookie Security                       │
+│   Secure | HttpOnly | SameSite | Domain Matching        │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                   Sandbox Isolation                     │
+│   Renderer Process | Filesystem | Network Restrictions  │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                   Transport Security                    │
+│   TLS 1.3 | Certificate Validation | Session Keys       │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                   Network Primitives                    │
+│   TCP Socket | TLSSocket | TLSConnection                │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Source Code Structure
+
+```
+/browser/src/engine/network/security/
+├── TLSConnection.ts     # TLS 1.3 handshake and session management
+├── TLSSocket.ts         # Socket interface wrapper over TLSConnection
+├── Certificate.ts       # X.509 certificate validation and chain building
+├── SessionKeys.ts       # HKDF/PRF-based session key derivation
+└── cacert.pem           # Bundled trusted root CA certificates
+
+/browser/src/engine/storage/
+└── CookieManager.ts     # Cookie security: Secure, HttpOnly, SameSite enforcement
+```
+
+## TLS 1.3 Implementation
+
+BrowserX implements TLS 1.3 from scratch using the `@noble/ciphers` library for authenticated encryption. The implementation lives in `TLSConnection.ts` and supports both TLS 1.3 (preferred) and TLS 1.2 (compatibility fallback).
+
+### Handshake Sequence
+
+```
+Client                                           Server
+  │                                                │
+  │  1. ClientHello                               │
+  │    - Supported versions: TLS 1.3              │
+  │    - Cipher suites (AES-GCM, ChaCha20)        │
+  │    - ECDHE key share (x25519)                 │
+  │    - SNI extension (server name)              │
+  │    - ALPN extension (h2, http/1.1)            │
+  │───────────────────────────────────────────────>│
+  │                                                │
+  │                     2. ServerHello            │
+  │                       - Selected cipher       │
+  │                       - Server ECDHE key share│
+  │                    {EncryptedExtensions}       │
+  │                    {Certificate}              │
+  │                    {CertificateVerify}         │
+  │                    {Finished}                  │
+  │<───────────────────────────────────────────────│
+  │                                                │
+  │  3. {Finished}                                │
+  │───────────────────────────────────────────────>│
+  │                                                │
+  │  [Application Data — encrypted]               │
+  │<──────────────────────────────────────────────>│
+
+Legend:
+  Plain text  — visible before keys derived
+  {Encrypted} — protected with handshake keys
+  [Encrypted] — protected with application keys
+```
+
+### TLS Configuration
+
+The `TLSConfig` interface controls all connection security parameters:
+
+```typescript
+// From: browser/src/engine/network/security/TLSConnection.ts
+
+export interface TLSConfig {
+    minVersion: TLSVersion;
+    maxVersion: TLSVersion;
+    cipherSuites: CipherSuite[];
+
+    // Certificate validation
+    verifyPeerCertificate: boolean;
+    trustedCAs: Certificate[];
+    allowSelfSigned: boolean;
+
+    // SNI (Server Name Indication)
+    serverName?: string;
+
+    // ALPN (Application-Layer Protocol Negotiation)
+    alpnProtocols: string[]; // e.g., ['h2', 'http/1.1']
+
+    // Session resumption
+    enableSessionResumption: boolean;
+    sessionTicketLifetime: Duration;
+}
+```
+
+### Supported Cipher Suites
+
+```typescript
+// From: browser/src/engine/network/security/TLSConnection.ts
+
+export enum CipherSuite {
+    // TLS 1.3 cipher suites (preferred)
+    TLS_AES_128_GCM_SHA256           = 0x1301,
+    TLS_AES_256_GCM_SHA384           = 0x1302,
+    TLS_CHACHA20_POLY1305_SHA256     = 0x1303,
+    TLS_AES_128_CCM_SHA256           = 0x1304,
+
+    // TLS 1.2 cipher suites (compatibility fallback)
+    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256       = 0xc02b,
+    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256         = 0xc02f,
+    TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384       = 0xc02c,
+    TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384         = 0xc030,
+    TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 = 0xcca9,
+    TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256   = 0xcca8,
+}
+```
+
+Default configuration prefers TLS 1.3 suites. TLS 1.2 suites are listed as fallbacks for compatibility with servers that have not yet migrated.
+
+### TLS Connection Class
+
+The `TLSConnection` class drives the full handshake and provides `read()`/`write()` methods for encrypted application data:
+
+```typescript
+// From: browser/src/engine/network/security/TLSConnection.ts
+
+export class TLSConnection {
+    private socket: Socket;
+    private config: TLSConfig;
+    private state: TLSHandshakeState = TLSHandshakeState.NONE;
+    private sessionKeys: SessionKeys | null = null;
+    private peerCertificate: Certificate | null = null;
+    private negotiatedProtocol: string | null = null;
+
+    // Sequence counters for AEAD — each record must use a unique nonce
+    private clientSequenceNumber: number = 0;
+    private serverRecordSeq: number = 0;
+
+    // Handshake transcript (all messages hashed for Finished verification)
+    private handshakeMessages: ByteBuffer[] = [];
+
+    async handshake(): Promise<void> { /* ... */ }
+    async read(buffer: ByteBuffer): Promise<number | null> { /* ... */ }
+    async write(data: ByteBuffer): Promise<number> { /* ... */ }
+    async close(): Promise<void> { /* ... */ }
+    getInfo(): TLSConnectionInfo { /* ... */ }
+}
+```
+
+### TLS Socket Wrapper
+
+`TLSSocket` wraps `TLSConnection` to implement the `Socket` interface, making TLS transparent to higher-level protocol code. It enforces that the handshake is complete before allowing I/O and maps TLS handshake states to socket states:
+
+```typescript
+// From: browser/src/engine/network/security/TLSSocket.ts
+
+export class TLSSocket implements Socket {
+    constructor(tlsConnection: TLSConnection) {
+        this.tlsConnection = tlsConnection;
+        this.underlyingSocket = tlsConnection.getSocket();
+        this.validateTLSHandshakeState();
+    }
+
+    private validateTLSHandshakeState(): void {
+        const handshakeState = this.tlsConnection.getHandshakeState();
+        if (handshakeState !== TLSHandshakeState.ESTABLISHED) {
+            throw new Error(
+                `TLSSocket requires established TLS connection, current state: ${handshakeState}`
+            );
+        }
+
+        const tlsInfo = this.tlsConnection.getInfo();
+        if (!tlsInfo.certificateVerified && tlsInfo.peerCertificate !== null) {
+            console.warn("TLS certificate present but not verified");
+        }
+    }
+}
+```
+
+### Session Key Derivation
+
+TLS session keys are derived using HKDF (for TLS 1.3) and PRF/HMAC-SHA256 (for TLS 1.2). The `SessionKeys` interface defines all key material extracted from the key exchange:
+
+```typescript
+// From: browser/src/engine/network/security/SessionKeys.ts
+
+export interface SessionKeys {
+    clientWriteKey: ByteBuffer;
+    serverWriteKey: ByteBuffer;
+    clientWriteIV: ByteBuffer;
+    serverWriteIV: ByteBuffer;
+    clientWriteMAC?: ByteBuffer; // TLS 1.2 and below only
+    serverWriteMAC?: ByteBuffer; // TLS 1.2 and below only
+}
+
+export async function deriveSessionKeys(
+    masterSecret: ByteBuffer,
+    clientRandom: ByteBuffer,
+    serverRandom: ByteBuffer,
+    cipherSuite: string,
+): Promise<SessionKeys> {
+    const keyLength = getCipherKeyLength(cipherSuite);
+    const ivLength  = getCipherIVLength(cipherSuite);
+    const macLength = getCipherMACLength(cipherSuite);
+
+    // PRF(master_secret, "key expansion", server_random + client_random)
+    const label = new TextEncoder().encode("key expansion");
+    const seed  = concat(serverRandom, clientRandom);
+    const hashAlgorithm = getPRFHashForCipherSuite(cipherSuite);
+
+    const keyMaterial = await prfWithHash(
+        masterSecret, label, seed,
+        (keyLength * 2) + (ivLength * 2) + (macLength * 2),
+        hashAlgorithm
+    );
+
+    // Slice key material: MAC keys, write keys, IVs (in RFC 5246 order)
+    let offset = 0;
+    const clientWriteMAC = keyMaterial.slice(offset, offset += macLength);
+    const serverWriteMAC = keyMaterial.slice(offset, offset += macLength);
+    const clientWriteKey = keyMaterial.slice(offset, offset += keyLength);
+    const serverWriteKey = keyMaterial.slice(offset, offset += keyLength);
+    const clientWriteIV  = keyMaterial.slice(offset, offset += ivLength);
+    const serverWriteIV  = keyMaterial.slice(offset, offset += ivLength);
+
+    return { clientWriteKey, serverWriteKey, clientWriteIV, serverWriteIV,
+             clientWriteMAC: macLength > 0 ? clientWriteMAC : undefined,
+             serverWriteMAC: macLength > 0 ? serverWriteMAC : undefined };
+}
+```
+
+## Certificate Validation
+
+Certificate validation is performed in `Certificate.ts` and covers the complete chain from leaf certificate to trusted root CA. The `validateCertificate` function runs six checks in sequence:
+
+```typescript
+// From: browser/src/engine/network/security/Certificate.ts
+
+export async function validateCertificate(
+    cert: Certificate,
+    hostname: string,
+    trustedCAs: Certificate[],
+    intermediateCerts: Certificate[] = [],
+): Promise<CertificateValidationResult> {
+    // 1. Check expiration
+    const now = new Date();
+    if (now < cert.notBefore) return { valid: false, reason: "Certificate not yet valid" };
+    if (now > cert.notAfter)  return { valid: false, reason: "Certificate expired" };
+
+    // 2. Verify hostname (exact match or wildcard *.example.com)
+    const hostnameMatches = matchesHostname(hostname, [cert.subject, ...cert.subjectAltNames]);
+    if (!hostnameMatches) return { valid: false, reason: "Hostname mismatch" };
+
+    // 3. Build certificate chain (intermediates + trusted CAs)
+    const chain = buildCertificateChain(cert, trustedCAs, intermediateCerts);
+    if (!chain) return { valid: false, reason: "Unable to build certificate chain" };
+
+    // 4. Verify each issuer signature in the chain
+    for (let i = 0; i < chain.length - 1; i++) {
+        if (!await verifySignature(chain[i], chain[i + 1])) {
+            return { valid: false, reason: `Invalid signature for ${chain[i].subject}` };
+        }
+    }
+
+    // 5. Confirm root CA is in the trusted store
+    const root = chain[chain.length - 1];
+    const trustedRoot = trustedCAs.find(ca => ca.subject === root.subject);
+    if (!trustedRoot) return { valid: false, reason: "Untrusted root CA" };
+
+    return { valid: true, chain };
+}
+```
+
+### Chain Building
+
+The chain builder supports both direct-trust (root in the trusted store) and cross-signed roots. It searches intermediate certificates before trusted CAs when looking for an issuer:
+
+```typescript
+// Combines server-provided intermediates with the trusted CA store
+const allCerts = [...intermediateCerts, ...trustedCAs];
+
+for (let depth = 0; depth < maxDepth; depth++) {
+    if (current.issuer === current.subject) return chain; // self-signed root
+
+    const issuer = allCerts.find(ca => ca.subject === current.issuer);
+    if (!issuer) return null; // chain cannot be completed
+
+    chain.push(issuer);
+    current = issuer;
+
+    const isInTrustedStore = trustedCAs.some(ca => ca.subject === current.subject);
+    if (isInTrustedStore) return chain;
+}
+```
+
+### Wildcard Hostname Matching
+
+```typescript
+function matchesHostname(hostname: string, certNames: string[]): boolean {
+    for (const certName of certNames) {
+        if (hostname === certName) return true; // exact match
+
+        // *.example.com matches sub.example.com but not example.com
+        if (certName.startsWith("*.")) {
+            const domain = certName.substring(2);
+            const parts  = hostname.split(".");
+            if (parts.length >= 2 && parts.slice(1).join(".") === domain) return true;
+        }
+    }
+    return false;
+}
+```
+
+### TLS Alert Codes
+
+`TLSConnection` produces typed alert codes on validation failure:
+
+```typescript
+enum TLSAlertDescription {
+    CLOSE_NOTIFY          = 0,
+    BAD_CERTIFICATE       = 42,
+    UNSUPPORTED_CERTIFICATE = 43,
+    CERTIFICATE_REVOKED   = 44,
+    CERTIFICATE_EXPIRED   = 45,
+    CERTIFICATE_UNKNOWN   = 46,
+    UNKNOWN_CA            = 48,
+    ACCESS_DENIED         = 49,
+    HANDSHAKE_FAILURE     = 40,
+    PROTOCOL_VERSION      = 70,
+    INSUFFICIENT_SECURITY = 71,
+}
+```
+
+## Same-Origin Policy
+
+The Same-Origin Policy (SOP) governs which cross-origin operations are permitted. Two URLs share an origin only when their scheme, host, and port all match exactly.
+
+```typescript
+interface Origin {
+    scheme: string;
+    host: string;
+    port: number;
+}
+
+class OriginChecker {
+    isSameOrigin(origin1: Origin, origin2: Origin): boolean {
+        return origin1.scheme === origin2.scheme &&
+               origin1.host   === origin2.host   &&
+               origin1.port   === origin2.port;
+    }
+
+    parseOrigin(url: string): Origin {
+        const parsed = new URL(url);
+        return {
+            scheme: parsed.protocol.replace(":", ""),
+            host:   parsed.hostname,
+            port:   parseInt(parsed.port) || this.getDefaultPort(parsed.protocol),
+        };
+    }
+
+    canAccess(from: Origin, to: Origin): boolean {
+        return this.isSameOrigin(from, to); // cross-origin blocked by default
+    }
+}
+```
+
+## CORS Enforcement
+
+CORS allows servers to opt in to cross-origin requests. BrowserX enforces both the preflight negotiation and the per-response validation.
+
+### Preflight Detection
+
+Simple requests (safe method + safe headers + simple Content-Type) bypass preflight. Everything else triggers an `OPTIONS` preflight:
+
+```typescript
+class CORSValidator {
+    requiresPreflight(request: HTTPRequest): boolean {
+        return !this.isSimpleRequest(request);
+    }
+
+    private isSimpleRequest(request: HTTPRequest): boolean {
+        if (!["GET", "HEAD", "POST"].includes(request.method)) return false;
+
+        const simpleHeaders = ["Accept", "Accept-Language",
+                               "Content-Language", "Content-Type"];
+        for (const [header] of request.headers) {
+            if (!simpleHeaders.includes(header)) return false;
+        }
+
+        const contentType = request.headers.get("Content-Type");
+        if (contentType) {
+            const simpleTypes = [
+                "application/x-www-form-urlencoded",
+                "multipart/form-data",
+                "text/plain",
+            ];
+            if (!simpleTypes.some(t => contentType.startsWith(t))) return false;
+        }
+
+        return true;
+    }
+}
+```
+
+### Preflight Request Construction
+
+```typescript
+createPreflightRequest(request: HTTPRequest): HTTPRequest {
+    return {
+        method: "OPTIONS",
+        url: request.url,
+        headers: new Map([
+            ["Access-Control-Request-Method",  request.method],
+            ["Access-Control-Request-Headers", this.getRequestHeaders(request)],
+            ["Origin", this.getOrigin(request)],
+        ]),
+        body: undefined,
+    };
+}
+```
+
+### Response Validation
+
+After a preflight succeeds, each actual response is also validated against `Access-Control-Allow-Origin` and, when credentials are included, `Access-Control-Allow-Credentials`:
+
+```typescript
+validateResponse(request: HTTPRequest, response: HTTPResponse): boolean {
+    const allowOrigin = response.headers.get("Access-Control-Allow-Origin");
+    const origin      = this.getOrigin(request);
+
+    if (allowOrigin !== "*" && allowOrigin !== origin) return false;
+
+    if (request.credentials === "include") {
+        const allowCredentials = response.headers.get("Access-Control-Allow-Credentials");
+        if (allowCredentials !== "true") return false;
+    }
+
+    return true;
+}
+```
+
+## Content Security Policy
+
+The `ContentSecurityPolicy` class parses the `Content-Security-Policy` header and evaluates every script execution and resource load against the declared directives.
+
+### Parsing
+
+```typescript
+class ContentSecurityPolicy {
+    private directives: Map<string, string[]> = new Map();
+
+    parse(cspHeader: string): void {
+        const directives = cspHeader.split(";").map(d => d.trim());
+        for (const directive of directives) {
+            const [name, ...values] = directive.split(/\s+/);
+            this.directives.set(name, values);
+        }
+    }
+}
+```
+
+### Script Execution Checks
+
+Inline scripts must have a matching nonce or hash unless `unsafe-inline` is present:
+
+```typescript
+canExecuteScript(source: ScriptSource): boolean {
+    const scriptSrc = this.directives.get("script-src")
+                   || this.directives.get("default-src");
+
+    if (!scriptSrc) return true; // no CSP restriction
+
+    if (source.type === "inline") {
+        if (scriptSrc.includes("'unsafe-inline'")) return true;
+
+        // Nonce-based allowance: script-src 'nonce-abc123'
+        if (source.nonce && scriptSrc.some(v => v === `'nonce-${source.nonce}'`))
+            return true;
+
+        // Hash-based allowance: script-src 'sha256-<hash>'
+        if (source.hash && scriptSrc.some(v => v === `'sha256-${source.hash}'`))
+            return true;
+
+        return false;
+    }
+
+    // External script: check URL against source list
+    if (source.type === "external") {
+        return this.matchesSource(source.url!, scriptSrc);
+    }
+
+    return false;
+}
+```
+
+### Resource Load Checks
+
+Each resource type maps to its own CSP directive, falling back to `default-src`:
+
+```typescript
+canLoadResource(url: string, type: ResourceType): boolean {
+    const directiveName = this.getDirectiveForResourceType(type);
+    const directive = this.directives.get(directiveName)
+                   || this.directives.get("default-src");
+
+    if (!directive) return true;
+    return this.matchesSource(url, directive);
+}
+
+private getDirectiveForResourceType(type: ResourceType): string {
+    switch (type) {
+        case "script":  return "script-src";
+        case "style":   return "style-src";
+        case "image":   return "img-src";
+        case "font":    return "font-src";
+        case "media":   return "media-src";
+        case "frame":   return "frame-src";
+        case "connect": return "connect-src";
+        default:        return "default-src";
+    }
+}
+```
+
+### Source List Matching
+
+Sources support keyword tokens (`'none'`, `'self'`, `*`), scheme prefixes (`https:`), and wildcard host patterns (`*.example.com`):
+
+```typescript
+private matchesSource(url: string, sources: string[]): boolean {
+    const parsedUrl = new URL(url);
+
+    for (const source of sources) {
+        if (source === "'none'") return false;
+        if (source === "*")      return true;
+        if (source === "'self'") continue; // checked against page origin
+
+        // Scheme match: "https:"
+        if (source.endsWith(":") && parsedUrl.protocol === source) return true;
+
+        // Host match (exact or wildcard)
+        if (this.hostMatches(parsedUrl.hostname, source)) return true;
+    }
+    return false;
+}
+```
+
+## Sandbox Isolation
+
+The renderer sandbox restricts what untrusted content can do at the OS level. Each `RendererSandbox` instance holds a `SandboxRestrictions` policy checked before any privileged operation:
+
+```typescript
+interface SandboxRestrictions {
+    allowFilesystem: boolean;
+    allowNetwork: boolean;
+    allowedSyscalls: string[];
+}
+
+class RendererSandbox {
+    private restrictions: SandboxRestrictions;
+
+    isAllowed(operation: SandboxOperation): boolean {
+        switch (operation.type) {
+            case "filesystem":
+                return this.restrictions.allowFilesystem;
+            case "network":
+                return this.restrictions.allowNetwork;
+            case "system-call":
+                return this.isSystemCallAllowed(operation.syscall!);
+            default:
+                return false;
+        }
+    }
+
+    private isSystemCallAllowed(syscall: string): boolean {
+        // Minimal allowlist: memory management, I/O only
+        const allowedSyscalls = ["read", "write", "mmap", "munmap", "brk"];
+        return allowedSyscalls.includes(syscall);
+    }
+}
+```
+
+## Cookie Security
+
+Cookie security is enforced in `CookieManager` at both storage time (`setCookie`) and retrieval time (`getCookiesForRequest`).
+
+### Security Flags Applied at Storage
+
+```typescript
+// From: browser/src/engine/storage/CookieManager.ts
+
+setCookie(cookie: Cookie, requestUrl: string): void {
+    if (!this.validateCookie(cookie, requestUrl)) return;
+
+    const normalizedCookie: StoredCookie = {
+        ...cookie,
+        domain:   cookie.domain || this.extractDomain(requestUrl),
+        path:     cookie.path   || "/",
+        secure:   cookie.secure   ?? false,
+        httpOnly: cookie.httpOnly ?? false,
+        sameSite: cookie.sameSite || "Lax", // SameSite=Lax is the secure default
+        createdAt: Date.now(),
+    };
+
+    this.cookies.set(this.createKey(normalizedCookie), normalizedCookie);
+}
+```
+
+### Retrieval Enforcement
+
+The `Secure` flag prevents cookies from being sent over plaintext HTTP. `SameSite` is enforced per request context:
+
+```typescript
+getCookies(url: string): Cookie[] {
+    const parsedUrl = this.parseUrl(url);
+    const isSecure  = parsedUrl.protocol === "https:";
+
+    for (const [key, cookie] of this.cookies.entries()) {
+        if (this.isExpired(cookie, now))           { this.cookies.delete(key); continue; }
+        if (cookie.secure && !isSecure)             continue; // Secure flag enforcement
+        if (!this.domainMatches(cookie.domain!, parsedUrl.hostname)) continue;
+        if (!this.pathMatches(cookie.path!,   parsedUrl.pathname))   continue;
+        matchingCookies.push(cookie);
+    }
+}
+
+getCookiesForRequest(url: string, requestUrl: string, method: string = "GET"): Cookie[] {
+    const cookies    = this.getCookies(url);
+    const isSameSite = this.isSameSiteRequest(url, requestUrl);
+    const isSafeMethod = ["GET", "HEAD", "OPTIONS", "TRACE"].includes(method.toUpperCase());
+
+    return cookies.filter(cookie => {
+        // Strict: same-site requests only
+        if (cookie.sameSite === "Strict" && !isSameSite) return false;
+
+        // Lax: same-site, OR top-level navigation with safe method
+        if (cookie.sameSite === "Lax") {
+            if (!isSameSite && !(isSafeMethod && this.isTopLevelNavigation(requestUrl)))
+                return false;
+        }
+
+        // None: cookie must carry Secure flag
+        if (cookie.sameSite === "None" && !cookie.secure) return false;
+
+        return true;
+    });
+}
+```
+
+### SameSite Policy Summary
+
+| SameSite Value | Cross-site GET | Cross-site POST | Requires Secure |
+|----------------|---------------|-----------------|-----------------|
+| `Strict`       | Blocked       | Blocked         | No              |
+| `Lax`          | Top-level nav only | Blocked  | No              |
+| `None`         | Allowed       | Allowed         | Yes             |
+
+## Secure Request Headers
+
+The `RequestPipeline` enforces security through DNS-over-HTTPS for encrypted DNS queries and exposes abort signal support for request cancellation:
+
+```typescript
+// From: browser/src/engine/RequestPipeline.ts
+
+export interface TLSConnectionInfo {
+    version: TLSVersion;
+    cipherSuite: string;
+    alpnProtocol: string | null;
+    serverName?: string;
+    peerCertificate: Certificate | null;
+    certificateVerified: boolean;
+    sessionResumed: boolean;
+}
+```
+
+DNS queries are sent over HTTPS using Cloudflare's DoH endpoint by default (`https://cloudflare-dns.com/dns-query`), preventing DNS-based traffic analysis.
+
+## Mixed Content Handling
+
+Mixed content (HTTP subresources on HTTPS pages) is blocked by default through the `canLoadResource` CSP check combined with the `Secure` cookie flag enforcement. The security model treats any plaintext HTTP request originating from an HTTPS page as a policy violation unless the CSP explicitly allows it via an `http:` scheme source in the relevant directive.
+
+## Security State Machine
+
+TLS handshake states are tracked as an explicit state machine, preventing any data from being sent or received unless the connection is fully established:
+
+```
+NONE
+  │
+  ▼ ClientHello sent
+CLIENT_HELLO
+  │
+  ▼ ServerHello received
+SERVER_HELLO
+  │
+  ▼ Certificate validated
+CERTIFICATE
+  │
+  ▼ ECDHE key exchange complete
+KEY_EXCHANGE
+  │
+  ▼ Finished messages exchanged
+FINISHED
+  │
+  ▼ Application data flows
+ESTABLISHED
+  │
+  ▼ close_notify sent
+NONE (closed)
+
+  ──► ERROR (any validation failure)
+```
+
+`TLSSocket.getTLSBasedState()` maps these handshake states to `SocketState` values so that the connection pool treats any partially-completed handshake as `OPENING`, never as a ready connection.

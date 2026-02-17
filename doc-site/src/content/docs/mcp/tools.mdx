@@ -1,0 +1,1090 @@
+---
+title: MCP Tools Reference
+description: Complete catalog of BrowserX MCP tools with schemas and examples
+---
+
+# Tools Reference
+
+BrowserX MCP Server provides three categories of tools: Browser Tools for direct browser control, Query Tools for SQL-like data extraction, and Proxy Tools for request interception and caching.
+
+## Tool Selection Guide
+
+Choose the right tool for your task:
+
+```
+Need to interact with a web page?
+├── Simple one-shot data extraction?
+│   └── browserx_query (SQL-like, fastest)
+│
+├── Multi-step workflow (navigate → click → type)?
+│   └── browser_* tools (session-based, full control)
+│
+├── Check query before running?
+│   └── browserx_query_explain (dry-run, execution plan)
+│
+├── Long-running query?
+│   └── browserx_query_async + browserx_query_status
+│
+└── Cache or intercept network requests?
+    └── proxy_* tools
+```
+
+## Browser Tools
+
+Direct browser control with session management.
+
+### browser_navigate
+
+Navigate to a URL in a browser session. Creates a new session if `sessionId` is not provided.
+
+**Schema:**
+
+```typescript
+{
+  url: string;              // URL to navigate to (HTTP/HTTPS)
+  sessionId?: string;       // Optional: reuse existing session
+  waitUntil?: "load" | "domcontentloaded" | "networkidle";
+  timeout?: number;         // Default: 30000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;        // Session ID for subsequent calls
+  newSession: boolean;      // true if new session created
+  url: string;              // Requested URL
+  currentUrl: string;       // Final URL (may differ due to redirects)
+}
+```
+
+**Examples:**
+
+```typescript
+// Create new session
+const result = await browser_navigate({
+  url: "https://example.com"
+});
+// → { sessionId: "sess_abc123", newSession: true, ... }
+
+// Reuse existing session
+await browser_navigate({
+  url: "https://example.com/page2",
+  sessionId: "sess_abc123"
+});
+
+// Fast navigation (DOM only)
+await browser_navigate({
+  url: "https://example.com",
+  waitUntil: "domcontentloaded"
+});
+
+// SPA navigation (wait for network idle)
+await browser_navigate({
+  url: "https://spa.example.com",
+  waitUntil: "networkidle"
+});
+```
+
+**When to use `waitUntil`:**
+
+| Value | Use When | Load Time |
+|-------|----------|-----------|
+| `domcontentloaded` | Simple pages, need DOM only | Fastest |
+| `load` | Need all resources (images, CSS) | Medium (default) |
+| `networkidle` | SPAs with async data loading | Slowest but most complete |
+
+---
+
+### browser_click
+
+Click an element in the current page.
+
+**Schema:**
+
+```typescript
+{
+  sessionId: string;        // Required: session from browser_navigate
+  selector: string;         // CSS selector or XPath
+  selectorType?: "css" | "xpath";  // Default: "css"
+  timeout?: number;         // Default: 5000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;
+  action: "click";
+  selector: string;
+}
+```
+
+**Examples:**
+
+```typescript
+// Click by ID
+await browser_click({
+  sessionId: "sess_abc123",
+  selector: "#submit-button"
+});
+
+// Click by class
+await browser_click({
+  sessionId: "sess_abc123",
+  selector: ".btn-primary"
+});
+
+// Click by XPath
+await browser_click({
+  sessionId: "sess_abc123",
+  selector: "//button[@type='submit']",
+  selectorType: "xpath"
+});
+
+// Click with custom timeout
+await browser_click({
+  sessionId: "sess_abc123",
+  selector: "#slow-button",
+  timeout: 10000
+});
+```
+
+**Best practices:**
+
+- Use `browser_query_dom` first to verify selector exists
+- Prefer ID selectors for stability
+- Use `browser_wait` if element loads dynamically
+
+---
+
+### browser_type
+
+Type text into an input element.
+
+**Schema:**
+
+```typescript
+{
+  sessionId: string;        // Required: session ID
+  selector: string;         // CSS selector of input/textarea
+  text: string;             // Text to type
+  clear?: boolean;          // Clear existing text first (default: false)
+  delay?: number;           // Delay between keystrokes in ms (default: 0)
+  timeout?: number;         // Default: 5000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;
+  action: "type";
+  selector: string;
+  textLength: number;
+}
+```
+
+**Examples:**
+
+```typescript
+// Type into input
+await browser_type({
+  sessionId: "sess_abc123",
+  selector: "#email",
+  text: "user@example.com"
+});
+
+// Replace existing text
+await browser_type({
+  sessionId: "sess_abc123",
+  selector: "#search",
+  text: "new search term",
+  clear: true
+});
+
+// Slow typing for validation
+await browser_type({
+  sessionId: "sess_abc123",
+  selector: "#password",
+  text: "secret123",
+  delay: 50  // 50ms between keystrokes
+});
+```
+
+**Best practices:**
+
+- Set `clear: true` when replacing form values
+- Use `delay` for sites that validate on keystroke
+- Verify input is not disabled/readonly first
+
+---
+
+### browser_screenshot
+
+Capture a screenshot of the current page or specific element.
+
+**Schema:**
+
+```typescript
+{
+  sessionId: string;        // Required: session ID
+  fullPage?: boolean;       // Capture entire scrollable page (default: false)
+  selector?: string;        // Screenshot specific element only
+  format?: "png" | "jpeg";  // Default: "png"
+  quality?: number;         // JPEG quality 0-100 (default: 80)
+  timeout?: number;         // Default: 30000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;
+  format: "png" | "jpeg";
+  size: number;             // File size in bytes
+  filePath: string;         // Saved screenshot path
+  _image: {
+    data: string;           // Base64 image data
+    mimeType: string;       // "image/png" or "image/jpeg"
+  }
+}
+```
+
+**Examples:**
+
+```typescript
+// Viewport screenshot
+const result = await browser_screenshot({
+  sessionId: "sess_abc123"
+});
+// → { filePath: ".browserx/usage_data/screenshots/2024-02-16/..." }
+
+// Full page screenshot
+await browser_screenshot({
+  sessionId: "sess_abc123",
+  fullPage: true
+});
+
+// Screenshot specific element
+await browser_screenshot({
+  sessionId: "sess_abc123",
+  selector: "#main-content"
+});
+
+// JPEG with compression
+await browser_screenshot({
+  sessionId: "sess_abc123",
+  format: "jpeg",
+  quality: 60  // Smaller file size
+});
+```
+
+**Best practices:**
+
+- Use `fullPage: true` for pages with content below the fold
+- Use element screenshots for forms/modals
+- JPEG format reduces file size for large screenshots
+
+---
+
+### browser_pdf
+
+Generate a PDF of the current page.
+
+**Schema:**
+
+```typescript
+{
+  sessionId: string;        // Required: session ID
+  format?: "A4" | "Letter" | "Legal";
+  landscape?: boolean;      // Default: false
+  printBackground?: boolean; // Include backgrounds (default: true)
+  timeout?: number;         // Default: 60000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;
+  size: number;             // PDF size in bytes
+  filePath: string;         // Saved PDF path
+  _pdf: {
+    data: string;           // Base64 PDF data
+    mimeType: "application/pdf";
+  }
+}
+```
+
+**Examples:**
+
+```typescript
+// Standard A4 PDF
+await browser_pdf({
+  sessionId: "sess_abc123",
+  format: "A4"
+});
+
+// Landscape letter
+await browser_pdf({
+  sessionId: "sess_abc123",
+  format: "Letter",
+  landscape: true
+});
+```
+
+---
+
+### browser_evaluate
+
+Execute JavaScript in the page context.
+
+**Schema:**
+
+```typescript
+{
+  sessionId: string;        // Required: session ID
+  script: string;           // JavaScript code to execute
+  timeout?: number;         // Default: 15000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;
+  result: any;              // Return value from script
+}
+```
+
+**Examples:**
+
+```typescript
+// Get page title
+const result = await browser_evaluate({
+  sessionId: "sess_abc123",
+  script: "document.title"
+});
+// → { result: "Example Domain" }
+
+// Scroll to element
+await browser_evaluate({
+  sessionId: "sess_abc123",
+  script: "document.querySelector('#footer').scrollIntoView()"
+});
+
+// Get computed styles
+await browser_evaluate({
+  sessionId: "sess_abc123",
+  script: "window.getComputedStyle(document.body).backgroundColor"
+});
+
+// Check SPA ready state
+await browser_evaluate({
+  sessionId: "sess_abc123",
+  script: "window.__appReady === true"
+});
+```
+
+**Security note:** Script content is validated to prevent code injection.
+
+---
+
+### browser_query_dom
+
+Query DOM elements and extract data.
+
+**Schema:**
+
+```typescript
+{
+  sessionId: string;        // Required: session ID
+  selector: string;         // CSS selector
+  extract?: Array<{
+    name: string;           // Field name in result
+    getText?: boolean;      // Extract text content
+    attribute?: string;     // Extract attribute value
+    getHTML?: boolean;      // Extract inner HTML
+  }>;
+  timeout?: number;         // Default: 15000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;
+  elements: Array<{
+    [key: string]: string;  // Extracted fields
+  }>;
+  count: number;
+}
+```
+
+**Examples:**
+
+```typescript
+// Find all links
+const result = await browser_query_dom({
+  sessionId: "sess_abc123",
+  selector: "a",
+  extract: [
+    { name: "text", getText: true },
+    { name: "href", attribute: "href" }
+  ]
+});
+// → { elements: [{text: "Home", href: "/"}, ...], count: 10 }
+
+// Check if element exists
+const check = await browser_query_dom({
+  sessionId: "sess_abc123",
+  selector: "#error-message"
+});
+// → { elements: [], count: 0 } if not found
+
+// Extract table data
+await browser_query_dom({
+  sessionId: "sess_abc123",
+  selector: "table tr",
+  extract: [
+    { name: "cell1", getText: true },
+    { name: "cell2", getText: true }
+  ]
+});
+```
+
+**Best practices:**
+
+- Use this to verify selectors before click/type
+- Extract structured data from repeated elements
+- Check `count: 0` to detect missing elements
+
+---
+
+### browser_wait
+
+Wait for a condition to be met.
+
+**Schema:**
+
+```typescript
+{
+  sessionId: string;        // Required: session ID
+  type: "selector" | "function" | "time";
+  selector?: string;        // When type="selector"
+  condition?: string;       // JavaScript expression when type="function"
+  duration?: number;        // Milliseconds when type="time"
+  timeout?: number;         // Default: 15000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;
+  waitType: string;
+  elapsed: number;          // Actual wait time in ms
+}
+```
+
+**Examples:**
+
+```typescript
+// Wait for element to appear (BEST)
+await browser_wait({
+  sessionId: "sess_abc123",
+  type: "selector",
+  selector: ".content-loaded"
+});
+
+// Wait for JavaScript condition (GOOD)
+await browser_wait({
+  sessionId: "sess_abc123",
+  type: "function",
+  condition: "document.querySelectorAll('.item').length > 10"
+});
+
+// Wait for SPA route change
+await browser_wait({
+  sessionId: "sess_abc123",
+  type: "function",
+  condition: "window.location.pathname === '/dashboard'"
+});
+
+// Fixed time wait (AVOID - use as last resort)
+await browser_wait({
+  sessionId: "sess_abc123",
+  type: "time",
+  duration: 3000
+});
+```
+
+**Best practices:**
+
+1. **Prefer selector waits** - Most reliable
+2. **Use function waits for dynamic conditions** - Check app state
+3. **Avoid time waits** - Slow and unreliable
+
+---
+
+### browser_close_session
+
+Close a browser session and release resources.
+
+**Schema:**
+
+```typescript
+{
+  sessionId: string;        // Required: session ID to close
+}
+```
+
+**Response:**
+
+```typescript
+{
+  sessionId: string;
+  closed: true;
+}
+```
+
+**Example:**
+
+```typescript
+await browser_close_session({
+  sessionId: "sess_abc123"
+});
+```
+
+**Important:** Always close sessions when done. Leaked sessions consume memory and count toward `MCP_MAX_SESSIONS`.
+
+---
+
+### browser_list_sessions
+
+List all active browser sessions.
+
+**Schema:**
+
+```typescript
+{}  // No parameters
+```
+
+**Response:**
+
+```typescript
+{
+  sessions: Array<{
+    id: string;
+    age: number;            // Age in milliseconds
+    lastUsed: number;       // Time since last use in ms
+    currentUrl?: string;
+  }>;
+  activeSessions: number;
+  maxSessions: number;
+}
+```
+
+**Example:**
+
+```typescript
+const result = await browser_list_sessions();
+// → {
+//   sessions: [
+//     { id: "sess_abc", age: 12345, lastUsed: 100, currentUrl: "https://..." }
+//   ],
+//   activeSessions: 1,
+//   maxSessions: 10
+// }
+```
+
+**Use cases:**
+
+- Debug "session not found" errors
+- Find sessions to close when at capacity
+- Monitor session usage
+
+---
+
+## Query Tools
+
+SQL-like interface for browser and data operations.
+
+### browserx_query
+
+Execute a BrowserX query using SQL-like syntax.
+
+**Schema:**
+
+```typescript
+{
+  query: string;            // BrowserX query
+  timeout?: number;         // Default: 30000ms
+  format?: "JSON" | "TABLE" | "CSV" | "HTML" | "XML" | "YAML";
+}
+```
+
+**Response:**
+
+```typescript
+{
+  data: any;                // Query results
+  timing: {
+    total: number;
+    parse: number;
+    optimize: number;
+    execute: number;
+  };
+  metadata: {
+    stepsExecuted: number;
+    browserNavigations: number;
+    cacheHits: number;
+    cacheMisses: number;
+  };
+}
+```
+
+**Examples:**
+
+```typescript
+// SELECT - Extract data
+await browserx_query({
+  query: "SELECT title, price FROM 'https://shop.com/product'"
+});
+
+// NAVIGATE - Go to URL and capture data
+await browserx_query({
+  query: `
+    NAVIGATE TO 'https://example.com'
+    CAPTURE response.body, dom.title
+  `
+});
+
+// INSERT - Type into field
+await browserx_query({
+  query: "INSERT 'user@test.com' INTO '#email'"
+});
+
+// CLICK - Click element
+await browserx_query({
+  query: "CLICK '#submit-button'"
+});
+
+// IF/THEN - Conditional logic
+await browserx_query({
+  query: `
+    IF EXISTS('#login-form') THEN
+      INSERT 'user@test.com' INTO '#email'
+      CLICK '#submit'
+    ELSE
+      SELECT data FROM '.content'
+    END
+  `
+});
+
+// FOR - Loop through pages
+await browserx_query({
+  query: `
+    FOR page IN RANGE(1, 5)
+      NAVIGATE TO CONCAT('https://example.com/page/', page)
+      SELECT title FROM '.article'
+    END
+  `
+});
+
+// WITH - Proxy options
+await browserx_query({
+  query: `
+    NAVIGATE TO 'https://api.example.com'
+    WITH {
+      proxy: {
+        cache: true,
+        headers: {"Authorization": "Bearer token"}
+      }
+    }
+    CAPTURE response.body
+  `
+});
+```
+
+**Query Statements:**
+
+- `SELECT` - Extract data with CSS selectors
+- `NAVIGATE` - Navigate to URL
+- `INSERT` - Type text into input
+- `UPDATE` - Modify element properties
+- `DELETE` - Remove elements
+- `CLICK` - Click element
+- `IF/THEN/ELSE` - Conditional execution
+- `FOR` - Loops (RANGE, IN)
+- `SET` - Configure query options
+- `SHOW` - Display state/config
+- `WITH` - Set execution options
+
+---
+
+### browserx_query_explain
+
+Analyze query execution plan without executing.
+
+**Schema:**
+
+```typescript
+{
+  query: string;            // Query to analyze
+  timeout?: number;         // Default: 5000ms
+}
+```
+
+**Response:**
+
+```typescript
+{
+  plan: {
+    steps: Array<{
+      id: string;
+      type: string;
+      cacheable: boolean;
+    }>;
+    estimatedCost: number;
+    resources: string[];
+    parallelGroups: number[][];
+  };
+  optimization: {
+    appliedPasses: string[];
+    improvement: number;
+  };
+}
+```
+
+**Example:**
+
+```typescript
+const plan = await browserx_query_explain({
+  query: "SELECT title, price FROM 'https://shop.com/products'"
+});
+// → {
+//   plan: {
+//     steps: [
+//       { id: "1", type: "navigate", cacheable: true },
+//       { id: "2", type: "select", cacheable: false }
+//     ],
+//     estimatedCost: 2500,
+//     ...
+//   }
+// }
+```
+
+**Use cases:**
+
+- Preview complex queries before execution
+- Understand query optimization
+- Estimate execution time
+
+---
+
+### browserx_query_async
+
+Execute query asynchronously and return query ID for status tracking.
+
+**Schema:**
+
+```typescript
+{
+  query: string;            // Query to execute
+  timeout?: number;         // Default: 300000ms (5 min)
+  format?: "JSON" | "TABLE" | "CSV" | "HTML" | "XML" | "YAML";
+}
+```
+
+**Response:**
+
+```typescript
+{
+  queryId: string;          // Use with browserx_query_status
+  status: "pending" | "running";
+}
+```
+
+**Example:**
+
+```typescript
+// Start async query
+const result = await browserx_query_async({
+  query: "FOR page IN RANGE(1, 100) NAVIGATE TO CONCAT(...) END"
+});
+// → { queryId: "query_xyz789", status: "pending" }
+
+// Poll for status
+const status = await browserx_query_status({
+  queryId: "query_xyz789"
+});
+```
+
+---
+
+### browserx_query_status
+
+Check status of async query.
+
+**Schema:**
+
+```typescript
+{
+  queryId: string;          // Query ID from browserx_query_async
+}
+```
+
+**Response:**
+
+```typescript
+{
+  queryId: string;
+  status: "pending" | "running" | "completed" | "failed";
+  progress?: number;        // 0-100
+  result?: any;             // When completed
+  error?: string;           // When failed
+  timing?: {
+    elapsed: number;
+    estimated: number;
+  };
+}
+```
+
+---
+
+### browserx_query_cancel
+
+Cancel a running async query.
+
+**Schema:**
+
+```typescript
+{
+  queryId: string;          // Query ID to cancel
+}
+```
+
+**Response:**
+
+```typescript
+{
+  queryId: string;
+  cancelled: true;
+}
+```
+
+---
+
+## Proxy Tools
+
+Request interception, caching, and middleware.
+
+### proxy_cache_get
+
+Retrieve cached HTTP response.
+
+**Schema:**
+
+```typescript
+{
+  key: string;              // Cache key (usually URL)
+}
+```
+
+**Response:**
+
+```typescript
+{
+  key: string;
+  value: any;               // Cached value
+  hit: boolean;
+  ttl?: number;             // Time to live in seconds
+}
+```
+
+---
+
+### proxy_cache_set
+
+Store value in cache with optional TTL.
+
+**Schema:**
+
+```typescript
+{
+  key: string;              // Cache key
+  value: any;               // Value to cache
+  ttl?: number;             // Time to live in seconds
+}
+```
+
+**Response:**
+
+```typescript
+{
+  key: string;
+  cached: true;
+  expiresAt?: string;       // ISO timestamp
+}
+```
+
+---
+
+### proxy_cache_clear
+
+Clear cache entries matching pattern.
+
+**Schema:**
+
+```typescript
+{
+  pattern: string;          // Glob pattern or "*" for all
+}
+```
+
+**Response:**
+
+```typescript
+{
+  pattern: string;
+  cleared: number;          // Number of entries cleared
+}
+```
+
+---
+
+### proxy_add_interceptor
+
+Add request interceptor rule.
+
+**Schema:**
+
+```typescript
+{
+  urlPattern: string;       // URL pattern to match
+  action: "allow" | "block" | "modify";
+  modifications?: {
+    headers?: Record<string, string>;
+    body?: string;
+  };
+}
+```
+
+**Response:**
+
+```typescript
+{
+  interceptorId: string;    // Use with proxy_remove_interceptor
+  urlPattern: string;
+  action: string;
+}
+```
+
+---
+
+### proxy_remove_interceptor
+
+Remove request interceptor.
+
+**Schema:**
+
+```typescript
+{
+  interceptorId: string;    // ID from proxy_add_interceptor
+}
+```
+
+**Response:**
+
+```typescript
+{
+  interceptorId: string;
+  removed: true;
+}
+```
+
+---
+
+## System Tools
+
+### system_dashboard
+
+Get system health and component status.
+
+**Schema:**
+
+```typescript
+{}  // No parameters
+```
+
+**Response:**
+
+```typescript
+{
+  health: {
+    "session-manager": "healthy" | "degraded";
+    "browser-pool": "healthy" | "degraded";
+    "runtime": "healthy" | "degraded";
+  };
+  metrics: {
+    browserx_mcp_active_sessions: number;
+    browserx_mcp_sessions_created_total: number;
+    browserx_mcp_sessions_closed_total: number;
+  };
+  pool: {
+    total: number;
+    idle: number;
+    inUse: number;
+  };
+}
+```
+
+**Example:**
+
+```typescript
+const dashboard = await system_dashboard();
+// → {
+//   health: { "session-manager": "healthy", ... },
+//   metrics: { browserx_mcp_active_sessions: 3, ... },
+//   pool: { total: 10, idle: 7, inUse: 3 }
+// }
+```
+
+---
+
+## Tool Comparison
+
+### When to Use `browserx_query` vs `browser_*` Tools
+
+| Use `browserx_query` when... | Use `browser_*` tools when... |
+|------------------------------|-------------------------------|
+| Extracting data from single page | Multi-step interaction workflow |
+| Simple CSS selector extraction | Complex DOM manipulation |
+| No authentication required | Login/authentication flows |
+| Static content | Dynamic SPAs with async loading |
+| One-shot operation | Need to maintain session state |
+
+### Wait Strategy Comparison
+
+| Strategy | Reliability | Speed | Use Case |
+|----------|-------------|-------|----------|
+| Selector wait | High | Fast | Element appears after load |
+| Function wait | High | Medium | Complex conditions, SPA state |
+| Time wait | Low | Slow | Last resort only |
+
+## Next Steps
+
+- [Session Management](/mcp/sessions) - Session lifecycle patterns
+- [Agent Guide](/mcp/agent-guide) - Tool selection for AI agents
+- [Workflows](/mcp/workflows) - Complete workflow examples
+- [Error Handling](/mcp/errors) - Common errors and recovery
