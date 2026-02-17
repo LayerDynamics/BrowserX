@@ -40,19 +40,6 @@ interface ValidationErrorResponse {
 type ValidationResponse = ValidationSuccessResponse | ValidationErrorResponse;
 
 /**
- * Basic syntax validation rules
- */
-const VALID_KEYWORDS = [
-  'SELECT', 'FROM', 'WHERE', 'ORDER', 'BY', 'LIMIT', 'OFFSET',
-  'NAVIGATE', 'TO', 'WITH', 'CAPTURE', 'SET', 'SHOW',
-  'FOR', 'EACH', 'IN', 'IF', 'THEN', 'ELSE', 'DO', 'END',
-  'INSERT', 'INTO', 'UPDATE', 'DELETE', 'AS',
-  'AND', 'OR', 'NOT', 'LIKE', 'EXISTS', 'BETWEEN',
-  'CLICK', 'WAIT', 'SCREENSHOT', 'PDF', 'TYPE',
-  'CACHE', 'CACHED', 'HEADERS', 'COOKIES', 'PROXY', 'TIMEOUT',
-];
-
-/**
  * Basic query validation (simplified)
  * Returns errors if obvious syntax issues are found
  */

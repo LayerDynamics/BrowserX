@@ -47,57 +47,8 @@ export const Playground: React.FC = () => {
     addConsoleLog({ level: 'info', message: `Starting execution: ${executionId}`, timestamp: Date.now() });
 
     try {
-      // Start execution (sets activeExecution state)
+      // Execute query via API (handles activeExecution, results, history in store)
       await executeQuery(currentQuery);
-
-      // TODO: Replace with actual API call when /api/execute is implemented (Task A9)
-      // For now, simulate execution with mock data
-      setTimeout(() => {
-        // Mock results
-        const mockResults = {
-          columns: ['title', 'url'],
-          rows: [
-            { title: 'Example Page', url: 'https://example.com' },
-            { title: 'Test Page', url: 'https://test.com' },
-          ],
-          timing: {
-            total: 1500,
-            network: 800,
-            parsing: 400,
-            extraction: 300,
-          },
-        };
-
-        setResults(mockResults);
-        addConsoleLog({ level: 'info', message: `Query completed: ${mockResults.rows.length} rows`, timestamp: Date.now() });
-
-        // Add to history
-        const endTime = Date.now();
-        addToHistory({
-          id: executionId,
-          query: currentQuery,
-          timestamp: startTime,
-          status: 'success',
-          duration: endTime - startTime,
-        });
-
-        // Mock screenshot
-        // Create a simple canvas with text as a mock screenshot
-        const canvas = document.createElement('canvas');
-        canvas.width = 800;
-        canvas.height = 600;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, 800, 600);
-          ctx.fillStyle = '#000000';
-          ctx.font = '20px Arial';
-          ctx.fillText('Mock Browser Screenshot', 300, 300);
-          ctx.fillText(`Query: ${currentQuery.substring(0, 40)}...`, 200, 350);
-          const screenshot = canvas.toDataURL('image/png');
-          addScreenshot(screenshot);
-        }
-      }, 1500);
 
       /* Future implementation when API is ready:
       const response = await fetch('/api/execute', {

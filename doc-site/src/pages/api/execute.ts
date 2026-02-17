@@ -33,8 +33,7 @@ const rateLimitBuckets = new Map<string, TokenBucket>();
  */
 const RATE_LIMIT = {
   BURST_CAPACITY: 3,
-  REFILL_RATE: 1 / 6000, // 1 token per 6 seconds (ms)
-  MAX_TOKENS_PER_MINUTE: 10,
+  REFILL_RATE: 1 / 6000, // 1 token per 6 seconds = 10 tokens per minute
 } as const;
 
 /**
