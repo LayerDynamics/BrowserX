@@ -4,7 +4,9 @@
    ============================================================ */
 
 /* ── Fonts ─────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap');
+/* Loaded via <link> tags in astro.config.mjs `head` to avoid
+   render-blocking CSS @import and improve FCP. Font-family
+   declarations below reference Syne, DM Sans, JetBrains Mono. */
 
 /* ── Design Tokens ─────────────────────────────────────────── */
 :root {
@@ -23,6 +25,10 @@
   --bx-ok:        #3dffa0;
   --bx-err:       #ff4d4d;
   --bx-warn:      #ffaa00;
+  /* RGB channel vars for rgba() usage — keeps alpha consistent
+     when hex values change */
+  --bx-err-rgb:   255, 77, 77;
+  --bx-warn-rgb:  255, 170, 0;
 }
 
 /* ── Starlight Overrides — Force black theme ───────────────── */
@@ -106,44 +112,44 @@ h1, h2, h3, h4, h5, h6,
 
 /* ── Starlight nav / header ────────────────────────────────── */
 header.header {
-  background: var(--bx-void) !important;
-  border-bottom: 1px solid var(--bx-border) !important;
-  box-shadow: none !important;
+  background: var(--bx-void);
+  border-bottom: 1px solid var(--bx-border);
+  box-shadow: none;
 }
 
 .site-title,
 .site-title span {
-  font-family: 'Syne', sans-serif !important;
-  font-weight: 800 !important;
-  color: var(--bx-white) !important;
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  color: var(--bx-white);
   letter-spacing: -0.03em;
 }
 
 /* Sidebar */
 nav.sidebar {
-  background: var(--bx-void) !important;
-  border-right: 1px solid var(--bx-border) !important;
+  background: var(--bx-void);
+  border-right: 1px solid var(--bx-border);
 }
 
 .sidebar-content {
-  background: var(--bx-void) !important;
+  background: var(--bx-void);
 }
 
 /* Sidebar links */
 .sidebar a {
-  color: var(--bx-gray-2) !important;
+  color: var(--bx-gray-2);
   border-radius: 2px;
   transition: color 0.1s, background 0.1s;
 }
 
 .sidebar a:hover {
-  color: var(--bx-white) !important;
-  background: var(--bx-raised) !important;
+  color: var(--bx-white);
+  background: var(--bx-raised);
 }
 
 .sidebar a[aria-current='page'] {
-  color: var(--bx-white) !important;
-  background: var(--bx-raised) !important;
+  color: var(--bx-white);
+  background: var(--bx-raised);
   border-left: 2px solid var(--bx-white);
 }
 
@@ -155,16 +161,16 @@ nav.sidebar {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: var(--bx-gray-3) !important;
+  color: var(--bx-gray-3);
 }
 
 /* Main content area */
 .content-panel {
-  background: var(--bx-base) !important;
+  background: var(--bx-base);
 }
 
 main {
-  background: var(--bx-base) !important;
+  background: var(--bx-base);
 }
 
 /* ── Prose / Markdown ──────────────────────────────────────── */
@@ -195,7 +201,7 @@ main {
 }
 
 .sl-markdown-content pre {
-  background: var(--bx-void) !important;
+  background: var(--bx-void);
   border: 1px solid var(--bx-border);
   border-radius: 2px;
 }
@@ -239,21 +245,21 @@ main {
 
 /* ── Search ────────────────────────────────────────────────── */
 .pagefind-ui__search-input {
-  background: var(--bx-raised) !important;
-  border: 1px solid var(--bx-border) !important;
-  color: var(--bx-white) !important;
-  border-radius: 2px !important;
+  background: var(--bx-raised);
+  border: 1px solid var(--bx-border);
+  color: var(--bx-white);
+  border-radius: 2px;
 }
 
 .pagefind-ui__search-input:focus {
-  border-color: var(--bx-border-hi) !important;
-  outline: none !important;
+  border-color: var(--bx-border-hi);
+  outline: none;
 }
 
 /* ── Aside / callout components ────────────────────────────── */
 .starlight-aside {
-  background: var(--bx-raised) !important;
-  border-color: var(--bx-border-hi) !important;
+  background: var(--bx-raised);
+  border-color: var(--bx-border-hi);
 }
 
 /* ── Scrollbar ─────────────────────────────────────────────── */
@@ -283,35 +289,35 @@ main {
 
 /* ── TOC (table of contents) ───────────────────────────────── */
 .right-sidebar a {
-  color: var(--bx-gray-2) !important;
+  color: var(--bx-gray-2);
   font-size: 0.8125rem;
 }
 
 .right-sidebar a:hover,
 .right-sidebar a[aria-current='true'] {
-  color: var(--bx-white) !important;
+  color: var(--bx-white);
 }
 
 /* ── Social icons in header ────────────────────────────────── */
 .social-icons a {
-  color: var(--bx-gray-2) !important;
+  color: var(--bx-gray-2);
 }
 
 .social-icons a:hover {
-  color: var(--bx-white) !important;
+  color: var(--bx-white);
 }
 
 /* ── Pagination links ──────────────────────────────────────── */
 .pagination-links a {
-  background: var(--bx-raised) !important;
-  border: 1px solid var(--bx-border) !important;
-  color: var(--bx-gray-1) !important;
-  border-radius: 2px !important;
+  background: var(--bx-raised);
+  border: 1px solid var(--bx-border);
+  color: var(--bx-gray-1);
+  border-radius: 2px;
 }
 
 .pagination-links a:hover {
-  border-color: var(--bx-border-hi) !important;
-  color: var(--bx-white) !important;
+  border-color: var(--bx-border-hi);
+  color: var(--bx-white);
 }
 
 /* ============================================================

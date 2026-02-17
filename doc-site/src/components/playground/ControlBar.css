@@ -69,11 +69,11 @@
 }
 
 .btn-danger:not(:disabled):hover {
-  background: rgba(255, 77, 77, 0.08);
+  background: rgba(var(--bx-err-rgb), 0.08);
 }
 
 .btn-danger:not(:disabled):active {
-  background: rgba(255, 77, 77, 0.15);
+  background: rgba(var(--bx-err-rgb), 0.15);
 }
 
 /* ── Secondary Buttons ─────────────────────────────────────── */
