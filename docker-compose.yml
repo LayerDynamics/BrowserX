@@ -1,0 +1,71 @@
+# BrowserX Full-Stack Docker Compose
+#
+# Services:
+#   browserx-api  — Deno query engine HTTP service (internal, port 8080)
+#   doc-site      — Astro SSR documentation site (internal, port 3000)
+#   nginx         — Reverse proxy (public, ports 80/443)
+#
+# Usage:
+#   docker compose up -d          # start stack
+#   docker compose logs -f        # stream logs
+#   docker compose down           # stop and remove containers
+
+services:
+  browserx-api:
+    build:
+      context: .
+      dockerfile: services/browserx-api/Dockerfile
+    environment:
+      DENO_ENV: production
+      BROWSERX_API_PORT: "8080"
+    expose:
+      - "8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  doc-site:
+    build:
+      context: .
+      dockerfile: doc-site/Dockerfile
+      args:
+        BROWSERX_API_URL: http://browserx-api:8080
+    environment:
+      BROWSERX_API_URL: http://browserx-api:8080
+      HOST: 0.0.0.0
+      PORT: "3000"
+      NODE_ENV: production
+    expose:
+      - "3000"
+    depends_on:
+      browserx-api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/browserx.conf:/etc/nginx/conf.d/default.conf:ro
+      - nginx_certs:/etc/nginx/certs:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      doc-site:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  nginx_certs:
+  nginx_logs:

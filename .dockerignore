@@ -1,0 +1,33 @@
+# Version control
+.git
+.github
+.worktrees
+
+# Build outputs (large, not needed in Docker context)
+target
+doc-site/dist
+doc-site/.astro
+
+# Dependencies (rebuilt in container)
+node_modules
+doc-site/node_modules
+
+# Deno cache
+.deno
+*/.deno
+
+# Environment files (never send secrets to Docker daemon)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS artifacts
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
