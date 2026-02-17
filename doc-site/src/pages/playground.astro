@@ -1,0 +1,22 @@
+---
+import { Playground } from '../components/playground/Playground';
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+---
+
+<StarlightPage frontmatter={{
+  title: 'Browser Playground',
+  description: 'Interactive BrowserX query editor and browser sandbox',
+  template: 'splash'
+}}>
+  <div class="playground-container">
+    <Playground client:only="react" />
+  </div>
+</StarlightPage>
+
+<style>
+  .playground-container {
+    width: 100%;
+    height: calc(100vh - 200px);
+    min-height: 600px;
+  }
+</style>
