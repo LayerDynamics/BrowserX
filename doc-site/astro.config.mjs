@@ -12,6 +12,7 @@ export default defineConfig({
 		react(),
 		starlight({
 			title: 'BrowserX',
+			customCss: ['./src/styles/global.css'],
 			social: [
 				{
 					icon: 'github',

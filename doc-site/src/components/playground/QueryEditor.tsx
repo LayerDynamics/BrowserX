@@ -54,26 +54,30 @@ export const QueryEditor: React.FC = () => {
       },
     });
 
-    // Define custom theme
+    // Define custom theme — pure black/white palette
     monaco.editor.defineTheme('browserx-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
-        { token: 'keyword', foreground: 'C586C0', fontStyle: 'bold' },
-        { token: 'string', foreground: 'CE9178' },
-        { token: 'number', foreground: 'B5CEA8' },
-        { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-        { token: 'operator', foreground: 'D4D4D4' },
-        { token: 'bracket', foreground: 'FFD700' },
-        { token: 'delimiter', foreground: 'D4D4D4' },
+        { token: 'keyword', foreground: 'ffffff', fontStyle: 'bold' },
+        { token: 'string', foreground: '888888' },
+        { token: 'number', foreground: 'c8c8c8' },
+        { token: 'comment', foreground: '444444', fontStyle: 'italic' },
+        { token: 'operator', foreground: '666666' },
+        { token: 'bracket', foreground: 'c8c8c8' },
+        { token: 'delimiter', foreground: '555555' },
       ],
       colors: {
-        'editor.background': '#1E1E1E',
-        'editor.foreground': '#D4D4D4',
-        'editorLineNumber.foreground': '#858585',
-        'editorCursor.foreground': '#AEAFAD',
-        'editor.selectionBackground': '#264F78',
-        'editor.lineHighlightBackground': '#2A2A2A',
+        'editor.background': '#000000',
+        'editor.foreground': '#c8c8c8',
+        'editorLineNumber.foreground': '#444444',
+        'editorCursor.foreground': '#ffffff',
+        'editor.selectionBackground': '#222222',
+        'editor.lineHighlightBackground': '#0f0f0f',
+        'editorIndentGuide.background': '#1a1a1a',
+        'editorIndentGuide.activeBackground': '#333333',
+        'editorBracketMatch.background': '#222222',
+        'editorBracketMatch.border': '#555555',
       },
     });
 

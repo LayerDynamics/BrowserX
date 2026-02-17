@@ -1,0 +1,546 @@
+/* ============================================================
+   BrowserX Global Design System
+   Modern black website — pure voids, surgical white accents
+   ============================================================ */
+
+/* ── Fonts ─────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap');
+
+/* ── Design Tokens ─────────────────────────────────────────── */
+:root {
+  --bx-void:      #000000;
+  --bx-base:      #0a0a0a;
+  --bx-raised:    #111111;
+  --bx-overlay:   #1a1a1a;
+  --bx-border:    rgba(255, 255, 255, 0.08);
+  --bx-border-hi: rgba(255, 255, 255, 0.16);
+  --bx-white:     #ffffff;
+  --bx-gray-1:    #c8c8c8;
+  --bx-gray-2:    #888888;
+  --bx-gray-3:    #444444;
+  --bx-gray-4:    #222222;
+  --bx-accent:    #ffffff;
+  --bx-ok:        #3dffa0;
+  --bx-err:       #ff4d4d;
+  --bx-warn:      #ffaa00;
+}
+
+/* ── Starlight Overrides — Force black theme ───────────────── */
+:root,
+[data-theme='light'],
+[data-theme='dark'] {
+  /* Core backgrounds */
+  --sl-color-bg:         var(--bx-base);
+  --sl-color-bg-nav:     var(--bx-void);
+  --sl-color-bg-sidebar: var(--bx-void);
+  --sl-color-bg-inline-code: var(--bx-raised);
+
+  /* Text */
+  --sl-color-text:         var(--bx-gray-1);
+  --sl-color-text-accent:  var(--bx-white);
+  --sl-color-text-invert:  var(--bx-void);
+
+  /* Accent */
+  --sl-color-accent:       var(--bx-white);
+  --sl-color-accent-high:  var(--bx-white);
+  --sl-color-accent-low:   rgba(255, 255, 255, 0.08);
+
+  /* Borders / hairlines */
+  --sl-color-hairline:        rgba(255, 255, 255, 0.08);
+  --sl-color-hairline-light:  rgba(255, 255, 255, 0.05);
+  --sl-color-hairline-shade:  rgba(255, 255, 255, 0.04);
+
+  /* Named grays (Starlight uses gray-1…gray-7) */
+  --sl-color-gray-1: var(--bx-white);
+  --sl-color-gray-2: var(--bx-gray-1);
+  --sl-color-gray-3: var(--bx-gray-2);
+  --sl-color-gray-4: var(--bx-gray-3);
+  --sl-color-gray-5: var(--bx-gray-4);
+  --sl-color-gray-6: #181818;
+  --sl-color-gray-7: var(--bx-void);
+
+  /* Black/White */
+  --sl-color-white: var(--bx-white);
+  --sl-color-black: var(--bx-void);
+
+  /* Typography */
+  --sl-font:      'DM Sans', system-ui, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --sl-text-h1:   clamp(1.75rem, 4vw, 2.5rem);
+  --sl-text-h2:   clamp(1.25rem, 3vw, 1.75rem);
+  --sl-text-h3:   1.125rem;
+  --sl-text-body: 0.9375rem;
+  --sl-text-body-sm: 0.8125rem;
+
+  /* Shadows — none, depth via color only */
+  --sl-shadow-sm: none;
+  --sl-shadow-md: none;
+  --sl-shadow-lg: none;
+
+  /* Border radii — very tight */
+  --sl-border-radius: 2px;
+}
+
+/* ── Global Base ───────────────────────────────────────────── */
+html {
+  background: var(--bx-void);
+  color: var(--bx-gray-1);
+}
+
+body {
+  font-family: var(--sl-font);
+  background: var(--bx-void);
+}
+
+/* Headings use Syne */
+h1, h2, h3, h4, h5, h6,
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+  font-family: 'Syne', sans-serif;
+  font-weight: 700;
+  color: var(--bx-white);
+  letter-spacing: -0.02em;
+}
+
+/* ── Starlight nav / header ────────────────────────────────── */
+header.header {
+  background: var(--bx-void) !important;
+  border-bottom: 1px solid var(--bx-border) !important;
+  box-shadow: none !important;
+}
+
+.site-title,
+.site-title span {
+  font-family: 'Syne', sans-serif !important;
+  font-weight: 800 !important;
+  color: var(--bx-white) !important;
+  letter-spacing: -0.03em;
+}
+
+/* Sidebar */
+nav.sidebar {
+  background: var(--bx-void) !important;
+  border-right: 1px solid var(--bx-border) !important;
+}
+
+.sidebar-content {
+  background: var(--bx-void) !important;
+}
+
+/* Sidebar links */
+.sidebar a {
+  color: var(--bx-gray-2) !important;
+  border-radius: 2px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.sidebar a:hover {
+  color: var(--bx-white) !important;
+  background: var(--bx-raised) !important;
+}
+
+.sidebar a[aria-current='page'] {
+  color: var(--bx-white) !important;
+  background: var(--bx-raised) !important;
+  border-left: 2px solid var(--bx-white);
+}
+
+/* Sidebar section labels */
+.sidebar details > summary,
+.sidebar .group-label {
+  font-family: 'Syne', sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--bx-gray-3) !important;
+}
+
+/* Main content area */
+.content-panel {
+  background: var(--bx-base) !important;
+}
+
+main {
+  background: var(--bx-base) !important;
+}
+
+/* ── Prose / Markdown ──────────────────────────────────────── */
+.sl-markdown-content {
+  color: var(--bx-gray-1);
+}
+
+.sl-markdown-content a {
+  color: var(--bx-white);
+  text-decoration: underline;
+  text-decoration-color: var(--bx-gray-3);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.1s;
+}
+
+.sl-markdown-content a:hover {
+  text-decoration-color: var(--bx-white);
+}
+
+.sl-markdown-content code {
+  font-family: var(--sl-font-mono);
+  font-size: 0.875em;
+  background: var(--bx-raised);
+  border: 1px solid var(--bx-border);
+  padding: 0.1em 0.35em;
+  border-radius: 2px;
+  color: var(--bx-white);
+}
+
+.sl-markdown-content pre {
+  background: var(--bx-void) !important;
+  border: 1px solid var(--bx-border);
+  border-radius: 2px;
+}
+
+.sl-markdown-content pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.sl-markdown-content blockquote {
+  border-left: 2px solid var(--bx-gray-3);
+  color: var(--bx-gray-2);
+  background: var(--bx-raised);
+  border-radius: 0 2px 2px 0;
+}
+
+/* Tables */
+.sl-markdown-content table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.sl-markdown-content th {
+  font-family: 'Syne', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--bx-gray-2);
+  border-bottom: 1px solid var(--bx-border-hi);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.sl-markdown-content td {
+  border-bottom: 1px solid var(--bx-border);
+  padding: 0.5rem 0.75rem;
+  color: var(--bx-gray-1);
+}
+
+/* ── Search ────────────────────────────────────────────────── */
+.pagefind-ui__search-input {
+  background: var(--bx-raised) !important;
+  border: 1px solid var(--bx-border) !important;
+  color: var(--bx-white) !important;
+  border-radius: 2px !important;
+}
+
+.pagefind-ui__search-input:focus {
+  border-color: var(--bx-border-hi) !important;
+  outline: none !important;
+}
+
+/* ── Aside / callout components ────────────────────────────── */
+.starlight-aside {
+  background: var(--bx-raised) !important;
+  border-color: var(--bx-border-hi) !important;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bx-void);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bx-gray-4);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bx-gray-3);
+}
+
+/* ── Selection ─────────────────────────────────────────────── */
+::selection {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--bx-white);
+}
+
+/* ── TOC (table of contents) ───────────────────────────────── */
+.right-sidebar a {
+  color: var(--bx-gray-2) !important;
+  font-size: 0.8125rem;
+}
+
+.right-sidebar a:hover,
+.right-sidebar a[aria-current='true'] {
+  color: var(--bx-white) !important;
+}
+
+/* ── Social icons in header ────────────────────────────────── */
+.social-icons a {
+  color: var(--bx-gray-2) !important;
+}
+
+.social-icons a:hover {
+  color: var(--bx-white) !important;
+}
+
+/* ── Pagination links ──────────────────────────────────────── */
+.pagination-links a {
+  background: var(--bx-raised) !important;
+  border: 1px solid var(--bx-border) !important;
+  color: var(--bx-gray-1) !important;
+  border-radius: 2px !important;
+}
+
+.pagination-links a:hover {
+  border-color: var(--bx-border-hi) !important;
+  color: var(--bx-white) !important;
+}
+
+/* ============================================================
+   BrowserPreview Component Styles
+   (These classes are used in BrowserPreview.tsx but were
+   previously missing from any CSS file)
+   ============================================================ */
+
+.browser-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bx-base);
+  overflow: hidden;
+}
+
+/* ── Results section (above tabs) ──────────────────────────── */
+.results-section {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--bx-border);
+  overflow: auto;
+  max-height: 200px;
+}
+
+.results-timing {
+  padding: 0.5rem 0.875rem;
+  font-size: 0.75rem;
+  color: var(--bx-gray-2);
+  font-family: 'JetBrains Mono', monospace;
+  border-bottom: 1px solid var(--bx-border);
+  background: var(--bx-void);
+}
+
+.results-timing strong {
+  color: var(--bx-gray-1);
+}
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.results-table th {
+  font-family: 'Syne', sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--bx-gray-2);
+  padding: 0.4rem 0.875rem;
+  text-align: left;
+  background: var(--bx-void);
+  border-bottom: 1px solid var(--bx-border);
+  position: sticky;
+  top: 0;
+}
+
+.results-table td {
+  padding: 0.4rem 0.875rem;
+  color: var(--bx-gray-1);
+  border-bottom: 1px solid var(--bx-border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+
+.results-table tbody tr:hover td {
+  background: var(--bx-raised);
+}
+
+.results-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--bx-gray-3);
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+/* ── Tab navigation ────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 0;
+  background: var(--bx-void);
+  border-bottom: 1px solid var(--bx-border);
+  flex-shrink: 0;
+}
+
+.tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--bx-gray-2);
+  cursor: pointer;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 0.55rem 1rem;
+  text-transform: uppercase;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.tab:hover {
+  color: var(--bx-white);
+}
+
+.tab-active {
+  color: var(--bx-white);
+  border-bottom-color: var(--bx-white);
+}
+
+/* ── Tab content area ──────────────────────────────────────── */
+.tab-content {
+  flex: 1;
+  overflow: auto;
+}
+
+.tab-empty {
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  color: var(--bx-gray-3);
+  font-size: 0.875rem;
+}
+
+/* ── Screenshot tab ────────────────────────────────────────── */
+.screenshot-container {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.screenshot-timestamp {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--bx-gray-2);
+}
+
+.screenshot-image {
+  max-width: 100%;
+  border: 1px solid var(--bx-border);
+  border-radius: 2px;
+}
+
+/* ── Console tab ───────────────────────────────────────────── */
+.console-container {
+  display: flex;
+  flex-direction: column;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+
+.console-log {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.35rem 0.875rem;
+  border-bottom: 1px solid var(--bx-border);
+  transition: background 0.1s;
+}
+
+.console-log:hover {
+  background: var(--bx-raised);
+}
+
+.log-timestamp {
+  color: var(--bx-gray-3);
+  flex-shrink: 0;
+  font-size: 0.7rem;
+}
+
+.log-icon {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.log-message {
+  color: var(--bx-gray-1);
+  word-break: break-all;
+}
+
+.log-info  { border-left: 2px solid var(--bx-gray-3); }
+.log-warn  { border-left: 2px solid var(--bx-warn); background: rgba(255,170,0,0.03); }
+.log-error { border-left: 2px solid var(--bx-err); background: rgba(255,77,77,0.03); }
+
+.log-warn .log-message  { color: var(--bx-warn); }
+.log-error .log-message { color: var(--bx-err); }
+
+/* ── Network tab ───────────────────────────────────────────── */
+.network-container {
+  overflow-x: auto;
+}
+
+.network-table {
+  white-space: nowrap;
+}
+
+.network-method {
+  font-weight: 600;
+  color: var(--bx-white);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.network-url {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--bx-gray-2);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+}
+
+.network-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.network-duration,
+.network-size {
+  color: var(--bx-gray-2);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+
+.status-ok           { color: var(--bx-ok); }
+.status-redirect     { color: var(--bx-warn); }
+.status-client-error { color: var(--bx-err); }
+.status-server-error { color: var(--bx-err); opacity: 0.7; }
