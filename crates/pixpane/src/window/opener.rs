@@ -47,23 +47,21 @@ thread_local! {
 // ============================================================================
 
 /// Application handler for the winit event loop
-struct PixpaneApp {
-    active_loop: Option<&'static ActiveEventLoop>,
-}
+struct PixpaneApp;
 
 impl PixpaneApp {
     fn new() -> Self {
-        Self {
-            active_loop: None,
-        }
+        Self
     }
 
-    fn process_pending_windows(&mut self) {
-        if let Some(active_loop) = self.active_loop {
-            if let Some(config) = PENDING_WINDOW.lock().take() {
-                let result = self.create_window(active_loop, config);
-                *WINDOW_RESULT.lock() = Some(result);
-            }
+    /// Process any pending window creation requests using the active event loop.
+    ///
+    /// Must be called synchronously within an ApplicationHandler callback —
+    /// the &ActiveEventLoop is only valid for the duration of that callback.
+    fn process_pending_windows(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(config) = PENDING_WINDOW.lock().take() {
+            let result = self.create_window(event_loop, config);
+            *WINDOW_RESULT.lock() = Some(result);
         }
     }
 
@@ -78,19 +76,12 @@ impl PixpaneApp {
 
 impl ApplicationHandler for PixpaneApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // SAFETY: We're storing a reference to the event loop that lives
-        // for the duration of the pump_events call. This is safe because
-        // we only use it within the same pump_events invocation.
-        self.active_loop = Some(unsafe {
-            std::mem::transmute::<&ActiveEventLoop, &'static ActiveEventLoop>(event_loop)
-        });
-
-        self.process_pending_windows();
+        self.process_pending_windows(event_loop);
     }
 
     fn window_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        event_loop: &ActiveEventLoop,
         window_id: WinitWindowId,
         event: WinitWindowEvent,
     ) {
@@ -211,16 +202,11 @@ impl ApplicationHandler for PixpaneApp {
             }
         }
 
-        self.process_pending_windows();
+        self.process_pending_windows(event_loop);
     }
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
-        // Store the active event loop reference
-        self.active_loop = Some(unsafe {
-            std::mem::transmute::<&ActiveEventLoop, &'static ActiveEventLoop>(event_loop)
-        });
-
-        self.process_pending_windows();
+        self.process_pending_windows(event_loop);
     }
 }
 
@@ -302,4 +288,12 @@ pub fn poll_event() -> Option<Event> {
 
     // Return the next event from the queue
     EVENT_QUEUE.lock().pop_front()
+}
+
+/// Drain all pending events for a specific window from the event queue.
+///
+/// Called by window_close to prevent stale events from being returned
+/// after a window has been destroyed.
+pub fn drain_events_for_window(window_id: u64) {
+    EVENT_QUEUE.lock().retain(|event| event.window_id != window_id);
 }

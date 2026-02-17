@@ -75,6 +75,60 @@ const { symbols } = Deno.dlopen(
     "$1 as unknown as BufferSource"
   );
 
+  // Wrap Deno.dlopen in a lazy loader so `deno cache` doesn't execute it at
+  // module load time (required for Docker builds where the .so isn't present
+  // during the cache step).
+  const ffiSectionStart = source.indexOf('\nconst url = new URL(');
+  // End of FFI setup: type exports comment, first export function, or export type
+  let ffiSectionEnd = source.indexOf('\n// ── Type exports');
+  if (ffiSectionEnd === -1) ffiSectionEnd = source.indexOf('\nexport function ');
+  if (ffiSectionEnd === -1) ffiSectionEnd = source.indexOf('\nexport type ');
+
+  if (ffiSectionStart !== -1 && ffiSectionEnd !== -1) {
+    let ffiSection = source.slice(ffiSectionStart + 1, ffiSectionEnd);
+
+    // Indent every non-empty line by 2 spaces
+    ffiSection = ffiSection
+      .split('\n')
+      .map((line) => (line.trim() ? '  ' + line : ''))
+      .join('\n');
+
+    // Replace the destructured const assignment with a plain _lib assignment
+    ffiSection = ffiSection.replace(
+      '  const { symbols } = Deno.dlopen(',
+      '  _lib = Deno.dlopen('
+    );
+
+    // Ensure the closing paren of Deno.dlopen ends with a semicolon
+    ffiSection = ffiSection.replace(/^(\s+\))\s*$/m, (match, paren) =>
+      paren.endsWith(';') ? match : paren + ';'
+    );
+
+    const lazyBlock = [
+      '',
+      '// ── Lazy FFI loader ─────────────────────────────────────────────────────────',
+      'let _lib: Deno.DynamicLibrary<Record<string, Deno.ForeignFunction>> | null = null;',
+      '',
+      'function _loadLib() {',
+      '  if (_lib !== null) return _lib;',
+      ffiSection,
+      '  return _lib;',
+      '}',
+      '',
+      '// Proxy that triggers lazy load on first property access',
+      'const symbols = new Proxy({} as ReturnType<typeof _loadLib>["symbols"], {',
+      '  get(_target, prop: string) {',
+      '    return _loadLib().symbols[prop];',
+      '  },',
+      '});',
+    ].join('\n');
+
+    source = source.slice(0, ffiSectionStart) + lazyBlock + source.slice(ffiSectionEnd);
+    console.log("  Applied lazy FFI loader transformation");
+  } else {
+    console.warn("  WARNING: Could not find FFI section boundaries — lazy loader NOT applied");
+  }
+
   console.log("Writing bindings/bindings.ts...");
   await ensureDir("bindings");
   await Deno.writeTextFile("bindings/bindings.ts", source);
@@ -82,6 +136,6 @@ const { symbols } = Deno.dlopen(
   console.log("✓ Successfully generated bindings/bindings.ts");
   console.log(`  Size: ${source.length} bytes`);
 } catch (error) {
-  console.error("✗ Error:", error.message);
+  console.error("✗ Error:", error instanceof Error ? error.message : String(error));
   Deno.exit(1);
 }

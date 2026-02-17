@@ -4,7 +4,7 @@
 // Call get_last_error() to retrieve the error message after a failure.
 
 use deno_bindgen::deno_bindgen;
-use crate::window::{WindowConfig, Event};
+use crate::window::Event;
 use parking_lot::Mutex;
 use lazy_static::lazy_static;
 
@@ -41,7 +41,14 @@ pub fn get_last_error() -> String {
 /// Returns the window ID on success, or 0 on failure.
 /// Call get_last_error() to get the error message if this returns 0.
 #[deno_bindgen]
-pub fn create_window(config: WindowConfig) -> u64 {
+pub fn create_window(config_json: &str) -> u64 {
+    let config: crate::window::WindowConfig = match serde_json::from_str(config_json) {
+        Ok(c) => c,
+        Err(e) => {
+            set_last_error(format!("Invalid config JSON: {}", e));
+            return 0;
+        }
+    };
     match crate::window::opener::create_window_with_event_loop(config) {
         Ok(id) => {
             clear_last_error();
@@ -325,7 +332,7 @@ pub struct WindowSize {
 ///
 /// Check the success field (1 = success, 0 = failure).
 #[deno_bindgen]
-pub fn window_inner_size(window_id: u64) -> WindowSize {
+pub fn window_inner_size(window_id: u64) -> String {
     match crate::window::system::with_window(window_id, |window| {
         let size = window.inner().inner_size();
         WindowSize {
@@ -336,15 +343,11 @@ pub fn window_inner_size(window_id: u64) -> WindowSize {
     }) {
         Some(size) => {
             clear_last_error();
-            size
+            serde_json::to_string(&size).unwrap_or_default()
         }
         None => {
             set_last_error(format!("Window {} not found", window_id));
-            WindowSize {
-                success: 0,
-                width: 0,
-                height: 0,
-            }
+            serde_json::to_string(&WindowSize { success: 0, width: 0, height: 0 }).unwrap_or_default()
         }
     }
 }
@@ -353,7 +356,7 @@ pub fn window_inner_size(window_id: u64) -> WindowSize {
 ///
 /// Check the success field (1 = success, 0 = failure).
 #[deno_bindgen]
-pub fn window_outer_size(window_id: u64) -> WindowSize {
+pub fn window_outer_size(window_id: u64) -> String {
     match crate::window::system::with_window(window_id, |window| {
         let size = window.inner().outer_size();
         WindowSize {
@@ -364,15 +367,11 @@ pub fn window_outer_size(window_id: u64) -> WindowSize {
     }) {
         Some(size) => {
             clear_last_error();
-            size
+            serde_json::to_string(&size).unwrap_or_default()
         }
         None => {
             set_last_error(format!("Window {} not found", window_id));
-            WindowSize {
-                success: 0,
-                width: 0,
-                height: 0,
-            }
+            serde_json::to_string(&WindowSize { success: 0, width: 0, height: 0 }).unwrap_or_default()
         }
     }
 }
@@ -391,7 +390,7 @@ pub struct WindowPosition {
 ///
 /// Check the success field (1 = success, 0 = failure).
 #[deno_bindgen]
-pub fn window_inner_position(window_id: u64) -> WindowPosition {
+pub fn window_inner_position(window_id: u64) -> String {
     match crate::window::system::with_window(window_id, |window| {
         window
             .inner()
@@ -413,15 +412,11 @@ pub fn window_inner_position(window_id: u64) -> WindowPosition {
             } else {
                 set_last_error("Failed to get window inner position".to_string());
             }
-            pos
+            serde_json::to_string(&pos).unwrap_or_default()
         }
         None => {
             set_last_error(format!("Window {} not found", window_id));
-            WindowPosition {
-                success: 0,
-                x: 0,
-                y: 0,
-            }
+            serde_json::to_string(&WindowPosition { success: 0, x: 0, y: 0 }).unwrap_or_default()
         }
     }
 }
@@ -430,7 +425,7 @@ pub fn window_inner_position(window_id: u64) -> WindowPosition {
 ///
 /// Check the success field (1 = success, 0 = failure).
 #[deno_bindgen]
-pub fn window_outer_position(window_id: u64) -> WindowPosition {
+pub fn window_outer_position(window_id: u64) -> String {
     match crate::window::system::with_window(window_id, |window| {
         window
             .inner()
@@ -452,15 +447,11 @@ pub fn window_outer_position(window_id: u64) -> WindowPosition {
             } else {
                 set_last_error("Failed to get window outer position".to_string());
             }
-            pos
+            serde_json::to_string(&pos).unwrap_or_default()
         }
         None => {
             set_last_error(format!("Window {} not found", window_id));
-            WindowPosition {
-                success: 0,
-                x: 0,
-                y: 0,
-            }
+            serde_json::to_string(&WindowPosition { success: 0, x: 0, y: 0 }).unwrap_or_default()
         }
     }
 }
@@ -635,11 +626,21 @@ pub fn window_focus(window_id: u64) -> u8 {
 
 /// Close the window
 ///
+/// Drains any pending events for this window from the event queue, then
+/// removes it from the registry (dropping the GPU RenderState in the process).
 /// Returns 0 on success, 1 on failure.
 #[deno_bindgen]
 pub fn window_close(window_id: u64) -> u8 {
     match crate::window::system::remove_window(window_id) {
-        Some(_) => {
+        Some(window) => {
+            // Drop the window (and its GPU RenderState) explicitly before clearing error,
+            // ensuring wgpu resources are released before we signal success.
+            drop(window);
+
+            // Drain any queued events that reference this window ID so callers
+            // don't see stale events for a window that no longer exists.
+            crate::window::opener::drain_events_for_window(window_id);
+
             clear_last_error();
             0
         }
@@ -743,8 +744,8 @@ pub fn window_set_cursor_position(window_id: u64, x: f64, y: f64) -> u8 {
 pub struct EventResult {
     /// 0 = no event available, 1 = event available
     pub has_event: u8,
-    /// The event (only valid if has_event == 1)
-    pub event: Event,
+    /// The event — None when has_event == 0; accessing this when None is a caller bug
+    pub event: Option<Event>,
 }
 
 /// Poll for the next window event (non-blocking)
@@ -752,20 +753,16 @@ pub struct EventResult {
 /// Check the has_event field (1 = event available, 0 = no event).
 /// Only read the event field if has_event == 1.
 #[deno_bindgen(non_blocking)]
-pub fn poll_event() -> EventResult {
+pub fn poll_event() -> String {
     match crate::window::opener::poll_event() {
-        Some(event) => EventResult {
-            has_event: 1,
-            event,
-        },
-        None => EventResult {
-            has_event: 0,
-            // Dummy event when no event available (check has_event field!)
-            event: Event {
-                window_id: 0,
-                event: crate::window::WindowEvent::CloseRequested,
-            },
-        },
+        Some(event) => {
+            let result = EventResult { has_event: 1, event: Some(event) };
+            serde_json::to_string(&result).unwrap_or_default()
+        }
+        None => {
+            let result = EventResult { has_event: 0, event: None };
+            serde_json::to_string(&result).unwrap_or_default()
+        }
     }
 }
 
@@ -1078,6 +1075,131 @@ pub fn egui_horizontal_end(window_id: u64) -> u8 {
         None => {
             set_last_error(format!("Window {} not found", window_id));
             1
+        }
+    }
+}
+
+/// Begin a vertical layout
+///
+/// All UI elements added after this (until egui_vertical_end) will be laid out vertically.
+/// Returns 0 on success, 1 on failure.
+#[deno_bindgen]
+pub fn egui_vertical_begin(window_id: u64) -> u8 {
+    match crate::window::system::with_window_mut(window_id, |window| {
+        if let Some(render_state) = &mut window.render_state {
+            render_state.egui_state.ui_commands.push(
+                crate::rendering::egui_state::UICommand::VerticalBegin
+            );
+            clear_last_error();
+            0
+        } else {
+            set_last_error("Window does not have rendering enabled".to_string());
+            1
+        }
+    }) {
+        Some(result) => result,
+        None => {
+            set_last_error(format!("Window {} not found", window_id));
+            1
+        }
+    }
+}
+
+/// End a vertical layout
+///
+/// Returns 0 on success, 1 on failure.
+#[deno_bindgen]
+pub fn egui_vertical_end(window_id: u64) -> u8 {
+    match crate::window::system::with_window_mut(window_id, |window| {
+        if let Some(render_state) = &mut window.render_state {
+            render_state.egui_state.ui_commands.push(
+                crate::rendering::egui_state::UICommand::VerticalEnd
+            );
+            clear_last_error();
+            0
+        } else {
+            set_last_error("Window does not have rendering enabled".to_string());
+            1
+        }
+    }) {
+        Some(result) => result,
+        None => {
+            set_last_error(format!("Window {} not found", window_id));
+            1
+        }
+    }
+}
+
+/// Queue an egui checkbox
+///
+/// `checked`: initial value — 0 = unchecked, 1 = checked.
+/// Returns the current checked state from the last frame (0 = unchecked, 1 = checked).
+#[deno_bindgen]
+pub fn egui_checkbox(window_id: u64, id: &str, label: &str, checked: u8) -> u8 {
+    match crate::window::system::with_window_mut(window_id, |window| {
+        if let Some(render_state) = &mut window.render_state {
+            render_state.egui_state.ui_commands.push(
+                crate::rendering::egui_state::UICommand::Checkbox {
+                    id: id.to_string(),
+                    label: label.to_string(),
+                    checked: checked != 0,
+                }
+            );
+
+            let current = render_state.egui_state.ui_result
+                .checkbox_values
+                .get(id)
+                .copied()
+                .unwrap_or(checked != 0);
+
+            clear_last_error();
+            current as u8
+        } else {
+            set_last_error("Window does not have rendering enabled".to_string());
+            checked
+        }
+    }) {
+        Some(result) => result,
+        None => {
+            set_last_error(format!("Window {} not found", window_id));
+            checked
+        }
+    }
+}
+
+/// Queue an egui slider
+///
+/// Returns the current slider value from the last frame.
+#[deno_bindgen]
+pub fn egui_slider(window_id: u64, id: &str, value: f64, min: f64, max: f64) -> f64 {
+    match crate::window::system::with_window_mut(window_id, |window| {
+        if let Some(render_state) = &mut window.render_state {
+            render_state.egui_state.ui_commands.push(
+                crate::rendering::egui_state::UICommand::Slider {
+                    id: id.to_string(),
+                    value,
+                    min,
+                    max,
+                }
+            );
+
+            let current = render_state.egui_state.ui_result
+                .slider_values
+                .get(id)
+                .copied()
+                .unwrap_or(value);
+
+            clear_last_error();
+            current
+        } else {
+            set_last_error("Window does not have rendering enabled".to_string());
+            value
+        }
+    }) {
+        Some(result) => result,
+        None => {
+            set_last_error(format!("Window {} not found", window_id));
+            value
         }
     }
 }

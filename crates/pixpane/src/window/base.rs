@@ -1,5 +1,6 @@
 // Core window types and configuration
 
+use std::sync::Arc;
 use winit::window::Window as WinitWindow;
 use crate::rendering::RenderState;
 
@@ -8,10 +9,25 @@ use crate::rendering::RenderState;
 /// This wraps a winit Window and maintains additional state needed
 /// for the deno_bindgen FFI layer. Windows are stored in a global
 /// registry and referenced by their u64 ID.
+///
+/// The winit window is wrapped in Arc so that Window can be cloned
+/// for `get_window()` read-only access. Cloned windows share the
+/// underlying OS window handle but do not share render_state (GPU state
+/// belongs exclusively to the registry entry).
 pub struct Window {
     pub(crate) id: u64,
-    pub(crate) inner: WinitWindow,
+    pub(crate) inner: Arc<WinitWindow>,
     pub(crate) render_state: Option<RenderState>,
+}
+
+impl Clone for Window {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            inner: Arc::clone(&self.inner),
+            render_state: None, // GPU state belongs to the registry entry only
+        }
+    }
 }
 
 impl Window {
@@ -25,9 +41,12 @@ impl Window {
         &self.inner
     }
 
-    /// Get a mutable reference to the underlying winit window
-    pub fn inner_mut(&mut self) -> &mut WinitWindow {
-        &mut self.inner
+    /// Get a reference to the underlying winit window for mutation.
+    ///
+    /// winit 0.30 uses &self (interior mutability) for all window operations,
+    /// so shared Arc access is sufficient for setting title, visibility, etc.
+    pub fn inner_mut(&mut self) -> &WinitWindow {
+        &self.inner
     }
 }
 
@@ -35,8 +54,7 @@ impl Window {
 ///
 /// This struct is fully serializable and can be passed across the
 /// FFI boundary from Deno/TypeScript to Rust.
-#[derive(Debug, Clone)]
-#[deno_bindgen::deno_bindgen]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WindowConfig {
     /// Window title
     pub title: String,

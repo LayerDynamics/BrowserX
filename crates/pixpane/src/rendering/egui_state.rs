@@ -17,6 +17,8 @@ pub enum UICommand {
     Button { label: String },
     Label { text: String },
     TextInput { id: String, value: String },
+    Checkbox { id: String, label: String, checked: bool },
+    Slider { id: String, value: f64, min: f64, max: f64 },
     HorizontalBegin,
     HorizontalEnd,
     VerticalBegin,
@@ -32,6 +34,8 @@ pub enum UICommand {
 pub struct UIResult {
     pub button_clicked: HashMap<String, bool>,
     pub text_values: HashMap<String, String>,
+    pub checkbox_values: HashMap<String, bool>,
+    pub slider_values: HashMap<String, f64>,
     pub context_menu_clicked: HashMap<String, String>, // menu_id -> clicked item_id
 }
 
@@ -53,6 +57,12 @@ pub struct EguiState {
 
     /// Persistent state for text inputs (id -> current text value)
     pub text_state: HashMap<String, String>,
+
+    /// Persistent state for checkboxes (id -> current checked value)
+    pub checkbox_state: HashMap<String, bool>,
+
+    /// Persistent state for sliders (id -> current value)
+    pub slider_state: HashMap<String, f64>,
 }
 
 impl EguiState {
@@ -90,6 +100,8 @@ impl EguiState {
             ui_commands: Vec::new(),
             ui_result: UIResult::default(),
             text_state: HashMap::new(),
+            checkbox_state: HashMap::new(),
+            slider_state: HashMap::new(),
         }
     }
 
@@ -98,9 +110,11 @@ impl EguiState {
         let mut result = UIResult::default();
         let commands = std::mem::take(&mut self.ui_commands);
         let text_state = &mut self.text_state;
+        let checkbox_state = &mut self.checkbox_state;
+        let slider_state = &mut self.slider_state;
 
         egui::CentralPanel::default().show(&self.ctx, |ui| {
-            Self::execute_commands_recursive(ui, &commands, 0, &mut result, text_state);
+            Self::execute_commands_recursive(ui, &commands, 0, &mut result, text_state, checkbox_state, slider_state);
         });
 
         self.ui_result = result;
@@ -112,6 +126,8 @@ impl EguiState {
         mut index: usize,
         result: &mut UIResult,
         text_state: &mut HashMap<String, String>,
+        checkbox_state: &mut HashMap<String, bool>,
+        slider_state: &mut HashMap<String, f64>,
     ) -> usize {
         while index < commands.len() {
             match &commands[index] {
@@ -135,9 +151,29 @@ impl EguiState {
                     }
                     index += 1;
                 }
+                UICommand::Checkbox { id, label, checked } => {
+                    // Initialize state only if not present (don't overwrite user interactions!)
+                    checkbox_state.entry(id.clone()).or_insert(*checked);
+
+                    if let Some(val) = checkbox_state.get_mut(id) {
+                        ui.checkbox(val, label);
+                        result.checkbox_values.insert(id.clone(), *val);
+                    }
+                    index += 1;
+                }
+                UICommand::Slider { id, value, min, max } => {
+                    // Initialize state only if not present (don't overwrite user interactions!)
+                    slider_state.entry(id.clone()).or_insert(*value);
+
+                    if let Some(val) = slider_state.get_mut(id) {
+                        ui.add(egui::Slider::new(val, *min..=*max));
+                        result.slider_values.insert(id.clone(), *val);
+                    }
+                    index += 1;
+                }
                 UICommand::HorizontalBegin => {
                     ui.horizontal(|ui| {
-                        index = Self::execute_commands_recursive(ui, commands, index + 1, result, text_state);
+                        index = Self::execute_commands_recursive(ui, commands, index + 1, result, text_state, checkbox_state, slider_state);
                     });
                 }
                 UICommand::HorizontalEnd => {
@@ -145,7 +181,7 @@ impl EguiState {
                 }
                 UICommand::VerticalBegin => {
                     ui.vertical(|ui| {
-                        index = Self::execute_commands_recursive(ui, commands, index + 1, result, text_state);
+                        index = Self::execute_commands_recursive(ui, commands, index + 1, result, text_state, checkbox_state, slider_state);
                     });
                 }
                 UICommand::VerticalEnd => {
@@ -156,18 +192,21 @@ impl EguiState {
                     let available_size = ui.available_size();
                     let response = ui.allocate_response(available_size, egui::Sense::click());
 
+                    // Locate the ContextMenuBegin block whose menu_id matches this area's id
+                    let area_id = id.clone();
                     response.context_menu(|ui| {
-                        // Find and execute the corresponding context menu items
-                        let menu_index = index + 1;
-                        if menu_index < commands.len() {
-                            if let UICommand::ContextMenuBegin { menu_id } = &commands[menu_index] {
-                                Self::execute_context_menu_items(
-                                    ui,
-                                    commands,
-                                    menu_index + 1,
-                                    menu_id,
-                                    result,
-                                );
+                        for i in (index + 1)..commands.len() {
+                            if let UICommand::ContextMenuBegin { menu_id } = &commands[i] {
+                                if menu_id == &area_id {
+                                    Self::execute_context_menu_items(
+                                        ui,
+                                        commands,
+                                        i + 1,
+                                        menu_id,
+                                        result,
+                                    );
+                                    break;
+                                }
                             }
                         }
                     });
@@ -294,7 +333,7 @@ impl EguiState {
 
         // Render egui
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("egui_render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,

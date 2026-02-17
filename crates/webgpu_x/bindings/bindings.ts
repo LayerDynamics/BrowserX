@@ -20,21 +20,28 @@ function readPointer(v: any): Uint8Array {
   return buf
 }
 
-const url = new URL("../../target/release", import.meta.url)
+// ── Lazy FFI loader ──────────────────────────────────────────────────────────
 
-let uri = url.pathname
-if (!uri.endsWith("/")) uri += "/"
+let _lib: Deno.DynamicLibrary<Record<string, Deno.ForeignFunction>> | null = null;
 
-// https://docs.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya#parameters
-if (Deno.build.os === "windows") {
-  uri = uri.replace(/\//g, "\\")
-  // Remove leading slash
-  if (uri.startsWith("\\")) {
-    uri = uri.slice(1)
+function _loadLib() {
+  if (_lib !== null) return _lib;
+
+  const url = new URL("../../target/release", import.meta.url)
+
+  let uri = url.pathname
+  if (!uri.endsWith("/")) uri += "/"
+
+  // https://docs.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya#parameters
+  if (Deno.build.os === "windows") {
+    uri = uri.replace(/\//g, "\\")
+    // Remove leading slash
+    if (uri.startsWith("\\")) {
+      uri = uri.slice(1)
+    }
   }
-}
 
-const libPaths: Record<string, string> = {
+  const libPaths: Record<string, string> = {
     darwin: uri + "libwebgpu_x.dylib",
     windows: uri + "webgpu_x.dll",
     linux: uri + "libwebgpu_x.so",
@@ -44,755 +51,768 @@ const libPaths: Record<string, string> = {
     solaris: uri + "libwebgpu_x.so",
     illumos: uri + "libwebgpu_x.so",
     android: uri + "libwebgpu_x.so",
-};
-const { symbols } = Deno.dlopen(
-  libPaths[Deno.build.os] ?? libPaths.linux,
-  {
-    buffer_calculate_aligned_size: {
-      parameters: ["u64", "u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    buffer_calculate_texture_buffer_size: {
-      parameters: ["u32", "u32", "u32"],
-      result: "u64",
-      nonblocking: false,
-    },
-    buffer_get_alignment: {
-      parameters: ["u32"],
-      result: "u64",
-      nonblocking: false,
-    },
-    buffer_get_padded_row_size: {
-      parameters: ["u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    buffer_get_row_padding: {
-      parameters: ["u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    buffer_pool_acquire: {
-      parameters: ["u64", "u32"],
-      result: "u64",
-      nonblocking: false,
-    },
-    buffer_pool_add: {
-      parameters: ["u64", "u64", "u32"],
-      result: "void",
-      nonblocking: false,
-    },
-    buffer_pool_clear: { parameters: [], result: "void", nonblocking: false },
-    buffer_pool_evict: { parameters: [], result: "void", nonblocking: false },
-    buffer_pool_release: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    buffer_pool_remove: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    cuda_calculate_occupancy: {
-      parameters: ["u32", "u64", "u32"],
-      result: "f64",
-      nonblocking: false,
-    },
-    cuda_has_tensor_cores: {
-      parameters: ["u32", "u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    cuda_optimal_workgroup_size: {
-      parameters: ["u32", "u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    cuda_shared_memory_bank_size: {
-      parameters: ["u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    darwin_is_apple_silicon: {
-      parameters: [],
-      result: "u8",
-      nonblocking: false,
-    },
-    darwin_preferred_backend: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    darwin_recommended_memory_strategy: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    detect_gpu_vendor: {
-      parameters: ["u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    framework_device_config_default: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    framework_matrix_model: {
-      parameters: ["buffer", "usize", "buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    framework_matrix_opengl_to_wgpu: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    framework_matrix_orthographic: {
-      parameters: ["f32", "f32", "f32", "f32", "f32", "f32"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    framework_matrix_perspective: {
-      parameters: ["f32", "f32", "f32", "f32"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    framework_matrix_view: {
-      parameters: ["buffer", "usize", "buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    get_optimal_workgroup_size: {
-      parameters: ["u32", "u32", "u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    gpu_cleanup_all: { parameters: [], result: "void", nonblocking: false },
-    gpu_create_bind_group_layout: {
-      parameters: ["u64", "buffer", "usize", "buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_create_empty_bind_group_layout: {
-      parameters: ["u64", "buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_create_empty_pipeline_layout: {
-      parameters: ["u64", "buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_create_pipeline_layout: {
-      parameters: ["u64", "buffer", "usize", "buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_create_texture: {
-      parameters: [
-        "u64",
-        "buffer",
-        "usize",
-        "u32",
-        "u32",
-        "u32",
-        "u32",
-        "u32",
-        "u32",
-        "u32",
-        "u32",
-        "buffer",
-        "usize",
-      ],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_destroy_adapter: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_destroy_bind_group_layout: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_destroy_device: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_destroy_pipeline_layout: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_destroy_texture: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_init: { parameters: [], result: "u8", nonblocking: false },
-    gpu_request_adapter: {
-      parameters: ["u32"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_request_device: {
-      parameters: ["u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    kernel_generate_from_template: {
-      parameters: ["u32", "u32", "u32", "u32"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    linux_get_cpu_count: { parameters: [], result: "u32", nonblocking: false },
-    linux_get_page_size: { parameters: [], result: "u64", nonblocking: false },
-    linux_get_total_memory: {
-      parameters: [],
-      result: "u64",
-      nonblocking: false,
-    },
-    linux_has_intel_gpu: { parameters: [], result: "u8", nonblocking: false },
-    linux_has_nvidia_driver: {
-      parameters: [],
-      result: "u8",
-      nonblocking: false,
-    },
-    linux_has_rocm_driver: { parameters: [], result: "u8", nonblocking: false },
-    linux_is_arm: { parameters: [], result: "u8", nonblocking: false },
-    linux_preferred_backend: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    linux_recommended_memory_strategy: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    metal_max_threadgroup_memory: {
-      parameters: ["u32"],
-      result: "u64",
-      nonblocking: false,
-    },
-    metal_optimal_workgroup_size: {
-      parameters: ["u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    metal_simd_group_size: {
-      parameters: ["u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    metal_supports_raytracing: {
-      parameters: ["u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    metal_supports_tier2_argument_buffers: {
-      parameters: ["u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    opencl_optimal_workgroup_size: {
-      parameters: ["u32", "u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    opencl_supports_fp64: {
-      parameters: ["u32", "u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    opencl_supports_version: {
-      parameters: ["u32", "u32", "u32", "u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    rocm_calculate_occupancy: {
-      parameters: ["u32", "u64", "u32"],
-      result: "f64",
-      nonblocking: false,
-    },
-    rocm_has_matrix_cores: {
-      parameters: ["u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    rocm_lds_size_per_cu: {
-      parameters: ["u32"],
-      result: "u64",
-      nonblocking: false,
-    },
-    rocm_optimal_workgroup_size: {
-      parameters: ["u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    rocm_supports_fp64: {
-      parameters: ["u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    rocm_wavefront_size: {
-      parameters: ["u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    shader_cache_clear: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    shader_cache_create: { parameters: [], result: "u64", nonblocking: false },
-    shader_cache_destroy: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    shader_cache_has_changed: {
-      parameters: ["u64", "buffer", "usize"],
-      result: "u8",
-      nonblocking: false,
-    },
-    shader_cache_load: {
-      parameters: ["u64", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    shader_cache_load_from_string: {
-      parameters: ["u64", "buffer", "usize", "u32", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    shader_cache_stats: {
-      parameters: ["u64"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    shader_detect_stage: {
-      parameters: ["buffer", "usize"],
-      result: "u32",
-      nonblocking: false,
-    },
-    staging_belt_create: {
-      parameters: ["u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    staging_belt_destroy: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    staging_belt_finish: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    staging_belt_stats: {
-      parameters: ["u64"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    staging_belt_write: {
-      parameters: ["u64", "u64"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    tensor_create: {
-      parameters: ["u64", "buffer", "usize", "u32", "u32"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    tensor_get_shape: {
-      parameters: ["buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    tensor_get_strides: {
-      parameters: ["buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    tensor_is_contiguous: {
-      parameters: ["buffer", "usize"],
-      result: "u8",
-      nonblocking: false,
-    },
-    tensor_rank: {
-      parameters: ["buffer", "usize"],
-      result: "u32",
-      nonblocking: false,
-    },
-    tensor_reshape: {
-      parameters: ["buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    tensor_size_bytes: {
-      parameters: ["buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    tensor_total_elements: {
-      parameters: ["buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    tensor_transpose_2d: {
-      parameters: ["buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    tensor_view: {
-      parameters: ["buffer", "usize", "u64"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    texture_calculate_mip_levels: {
-      parameters: ["u32", "u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    texture_get_mip_size: {
-      parameters: ["u32", "u32", "u32"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    texture_get_mip_size_3d: {
-      parameters: ["u32", "u32", "u32", "u32"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    vulkan_optimal_workgroup_size: {
-      parameters: ["u32", "u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    vulkan_recommended_descriptor_sets: {
-      parameters: [],
-      result: "u32",
-      nonblocking: false,
-    },
-    vulkan_supports_raytracing: {
-      parameters: ["u32", "u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    vulkan_supports_version: {
-      parameters: ["u32", "u32", "u32", "u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    webgpu_x_get_last_error: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    webgpu_x_init: { parameters: [], result: "u8", nonblocking: false },
-    webgpu_x_version: { parameters: [], result: "buffer", nonblocking: false },
-    wgsl_binding_buffer: {
-      parameters: ["u32", "u32", "buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_binding_sampler: {
-      parameters: ["u32", "u32", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_binding_texture: {
-      parameters: ["u32", "u32", "buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_binding_uniform: {
-      parameters: ["u32", "u32", "buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_builtin: {
-      parameters: ["buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_compute_entry: {
-      parameters: [
-        "buffer",
-        "usize",
-        "u32",
-        "u32",
-        "u32",
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-      ],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_extract_functions: {
-      parameters: ["buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_fragment_entry: {
-      parameters: [
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-      ],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_function: {
-      parameters: [
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-      ],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_line_count: {
-      parameters: ["buffer", "usize"],
-      result: "u32",
-      nonblocking: false,
-    },
-    wgsl_location: {
-      parameters: ["buffer", "usize", "u32", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_minify: {
-      parameters: ["buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_struct: {
-      parameters: ["buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_struct_field: {
-      parameters: ["buffer", "usize", "buffer", "usize"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    wgsl_vertex_entry: {
-      parameters: [
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-        "buffer",
-        "usize",
-      ],
-      result: "buffer",
-      nonblocking: false,
-    },
-    windows_get_logical_processor_count: {
-      parameters: [],
-      result: "u32",
-      nonblocking: false,
-    },
-    windows_get_page_size: {
-      parameters: [],
-      result: "u64",
-      nonblocking: false,
-    },
-    windows_has_amd_driver: {
-      parameters: [],
-      result: "u8",
-      nonblocking: false,
-    },
-    windows_has_dx12: { parameters: [], result: "u8", nonblocking: false },
-    windows_has_intel_driver: {
-      parameters: [],
-      result: "u8",
-      nonblocking: false,
-    },
-    windows_has_nvidia_driver: {
-      parameters: [],
-      result: "u8",
-      nonblocking: false,
-    },
-    windows_is_arm: { parameters: [], result: "u8", nonblocking: false },
-    windows_preferred_backend: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    windows_recommended_memory_strategy: {
-      parameters: [],
-      result: "buffer",
-      nonblocking: false,
-    },
-    // GPU Texture Readback
-    gpu_create_readback_buffer: {
-      parameters: ["u64", "u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_copy_texture_to_buffer: {
-      parameters: ["u64", "u64", "u64", "u32", "u32", "u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    gpu_map_and_read_buffer: {
-      parameters: ["u64", "u64"],
-      result: "buffer",
-      nonblocking: false,
-    },
-    gpu_destroy_readback_buffer: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_calculate_aligned_bytes_per_row: {
-      parameters: ["u32", "u32"],
-      result: "u32",
-      nonblocking: false,
-    },
-    gpu_calculate_readback_buffer_size: {
-      parameters: ["u32", "u32", "u32"],
-      result: "u64",
-      nonblocking: false,
-    },
-    // GPU Bind Groups
-    gpu_create_buffer: {
-      parameters: ["u64", "u64", "u32", "u8"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_destroy_buffer: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_create_texture_view: {
-      parameters: ["u64", "buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_destroy_texture_view: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_create_sampler: {
-      parameters: ["u64", "buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_destroy_sampler: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_create_bind_group: {
-      parameters: ["u64", "u64", "buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_destroy_bind_group: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_cleanup_bind_groups: {
-      parameters: [],
-      result: "void",
-      nonblocking: false,
-    },
-    // GPU Command Encoding
-    gpu_create_command_encoder: {
-      parameters: ["u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_begin_render_pass: {
-      parameters: ["u64", "buffer", "usize"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_render_pass_set_pipeline: {
-      parameters: ["u64", "u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_render_pass_set_bind_group: {
-      parameters: ["u64", "u32", "u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_render_pass_set_vertex_buffer: {
-      parameters: ["u64", "u32", "u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_render_pass_draw: {
-      parameters: ["u64", "u32", "u32", "u32", "u32"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_end_render_pass: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_finish_command_encoder: {
-      parameters: ["u64"],
-      result: "u64",
-      nonblocking: false,
-    },
-    gpu_queue_submit: {
-      parameters: ["u64", "u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_destroy_command_buffer: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_execute_render_pass: {
-      parameters: ["u64", "buffer", "usize", "u64", "u64", "u32", "u32"],
-      result: "u8",
-      nonblocking: false,
-    },
-    gpu_destroy_render_pipeline: {
-      parameters: ["u64"],
-      result: "void",
-      nonblocking: false,
-    },
-    gpu_cleanup_command_resources: {
-      parameters: [],
-      result: "void",
-      nonblocking: false,
-    },
+  };
+
+  _lib = Deno.dlopen(
+    libPaths[Deno.build.os] ?? libPaths.linux,
+    {
+      buffer_calculate_aligned_size: {
+        parameters: ["u64", "u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      buffer_calculate_texture_buffer_size: {
+        parameters: ["u32", "u32", "u32"],
+        result: "u64",
+        nonblocking: false,
+      },
+      buffer_get_alignment: {
+        parameters: ["u32"],
+        result: "u64",
+        nonblocking: false,
+      },
+      buffer_get_padded_row_size: {
+        parameters: ["u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      buffer_get_row_padding: {
+        parameters: ["u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      buffer_pool_acquire: {
+        parameters: ["u64", "u32"],
+        result: "u64",
+        nonblocking: false,
+      },
+      buffer_pool_add: {
+        parameters: ["u64", "u64", "u32"],
+        result: "void",
+        nonblocking: false,
+      },
+      buffer_pool_clear: { parameters: [], result: "void", nonblocking: false },
+      buffer_pool_evict: { parameters: [], result: "void", nonblocking: false },
+      buffer_pool_release: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      buffer_pool_remove: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      cuda_calculate_occupancy: {
+        parameters: ["u32", "u64", "u32"],
+        result: "f64",
+        nonblocking: false,
+      },
+      cuda_has_tensor_cores: {
+        parameters: ["u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      cuda_optimal_workgroup_size: {
+        parameters: ["u32", "u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      cuda_shared_memory_bank_size: {
+        parameters: ["u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      darwin_is_apple_silicon: {
+        parameters: [],
+        result: "u8",
+        nonblocking: false,
+      },
+      darwin_preferred_backend: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      darwin_recommended_memory_strategy: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      detect_gpu_vendor: {
+        parameters: ["u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      framework_device_config_default: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      framework_matrix_model: {
+        parameters: ["buffer", "usize", "buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      framework_matrix_opengl_to_wgpu: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      framework_matrix_orthographic: {
+        parameters: ["f32", "f32", "f32", "f32", "f32", "f32"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      framework_matrix_perspective: {
+        parameters: ["f32", "f32", "f32", "f32"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      framework_matrix_view: {
+        parameters: ["buffer", "usize", "buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      get_optimal_workgroup_size: {
+        parameters: ["u32", "u32", "u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      gpu_cleanup_all: { parameters: [], result: "void", nonblocking: false },
+      gpu_create_bind_group_layout: {
+        parameters: ["u64", "buffer", "usize", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_empty_bind_group_layout: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_empty_pipeline_layout: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_pipeline_layout: {
+        parameters: ["u64", "buffer", "usize", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_texture: {
+        parameters: [
+          "u64",
+          "buffer",
+          "usize",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "buffer",
+          "usize",
+        ],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_destroy_adapter: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_bind_group_layout: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_device: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_pipeline_layout: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_texture: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_init: { parameters: [], result: "u8", nonblocking: false },
+      gpu_request_adapter: {
+        parameters: ["u32"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_request_device: {
+        parameters: ["u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      kernel_generate_from_template: {
+        parameters: ["u32", "u32", "u32", "u32"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      linux_get_cpu_count: { parameters: [], result: "u32", nonblocking: false },
+      linux_get_page_size: { parameters: [], result: "u64", nonblocking: false },
+      linux_get_total_memory: {
+        parameters: [],
+        result: "u64",
+        nonblocking: false,
+      },
+      linux_has_intel_gpu: { parameters: [], result: "u8", nonblocking: false },
+      linux_has_nvidia_driver: {
+        parameters: [],
+        result: "u8",
+        nonblocking: false,
+      },
+      linux_has_rocm_driver: { parameters: [], result: "u8", nonblocking: false },
+      linux_is_arm: { parameters: [], result: "u8", nonblocking: false },
+      linux_preferred_backend: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      linux_recommended_memory_strategy: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      metal_max_threadgroup_memory: {
+        parameters: ["u32"],
+        result: "u64",
+        nonblocking: false,
+      },
+      metal_optimal_workgroup_size: {
+        parameters: ["u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      metal_simd_group_size: {
+        parameters: ["u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      metal_supports_raytracing: {
+        parameters: ["u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      metal_supports_tier2_argument_buffers: {
+        parameters: ["u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      opencl_optimal_workgroup_size: {
+        parameters: ["u32", "u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      opencl_supports_fp64: {
+        parameters: ["u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      opencl_supports_version: {
+        parameters: ["u32", "u32", "u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      rocm_calculate_occupancy: {
+        parameters: ["u32", "u64", "u32"],
+        result: "f64",
+        nonblocking: false,
+      },
+      rocm_has_matrix_cores: {
+        parameters: ["u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      rocm_lds_size_per_cu: {
+        parameters: ["u32"],
+        result: "u64",
+        nonblocking: false,
+      },
+      rocm_optimal_workgroup_size: {
+        parameters: ["u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      rocm_supports_fp64: {
+        parameters: ["u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      rocm_wavefront_size: {
+        parameters: ["u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      shader_cache_clear: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      shader_cache_create: { parameters: [], result: "u64", nonblocking: false },
+      shader_cache_destroy: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      shader_cache_has_changed: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u8",
+        nonblocking: false,
+      },
+      shader_cache_load: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      shader_cache_load_from_string: {
+        parameters: ["u64", "buffer", "usize", "u32", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      shader_cache_stats: {
+        parameters: ["u64"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      shader_detect_stage: {
+        parameters: ["buffer", "usize"],
+        result: "u32",
+        nonblocking: false,
+      },
+      staging_belt_create: {
+        parameters: ["u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      staging_belt_destroy: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      staging_belt_finish: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      staging_belt_stats: {
+        parameters: ["u64"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      staging_belt_write: {
+        parameters: ["u64", "u64"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      tensor_create: {
+        parameters: ["u64", "buffer", "usize", "u32", "u32"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      tensor_get_shape: {
+        parameters: ["buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      tensor_get_strides: {
+        parameters: ["buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      tensor_is_contiguous: {
+        parameters: ["buffer", "usize"],
+        result: "u8",
+        nonblocking: false,
+      },
+      tensor_rank: {
+        parameters: ["buffer", "usize"],
+        result: "u32",
+        nonblocking: false,
+      },
+      tensor_reshape: {
+        parameters: ["buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      tensor_size_bytes: {
+        parameters: ["buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      tensor_total_elements: {
+        parameters: ["buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      tensor_transpose_2d: {
+        parameters: ["buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      tensor_view: {
+        parameters: ["buffer", "usize", "u64"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      texture_calculate_mip_levels: {
+        parameters: ["u32", "u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      texture_get_mip_size: {
+        parameters: ["u32", "u32", "u32"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      texture_get_mip_size_3d: {
+        parameters: ["u32", "u32", "u32", "u32"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      vulkan_optimal_workgroup_size: {
+        parameters: ["u32", "u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      vulkan_recommended_descriptor_sets: {
+        parameters: [],
+        result: "u32",
+        nonblocking: false,
+      },
+      vulkan_supports_raytracing: {
+        parameters: ["u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      vulkan_supports_version: {
+        parameters: ["u32", "u32", "u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      webgpu_x_get_last_error: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      webgpu_x_init: { parameters: [], result: "u8", nonblocking: false },
+      webgpu_x_version: { parameters: [], result: "buffer", nonblocking: false },
+      wgsl_binding_buffer: {
+        parameters: ["u32", "u32", "buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_binding_sampler: {
+        parameters: ["u32", "u32", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_binding_texture: {
+        parameters: ["u32", "u32", "buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_binding_uniform: {
+        parameters: ["u32", "u32", "buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_builtin: {
+        parameters: ["buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_compute_entry: {
+        parameters: [
+          "buffer",
+          "usize",
+          "u32",
+          "u32",
+          "u32",
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+        ],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_extract_functions: {
+        parameters: ["buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_fragment_entry: {
+        parameters: [
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+        ],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_function: {
+        parameters: [
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+        ],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_line_count: {
+        parameters: ["buffer", "usize"],
+        result: "u32",
+        nonblocking: false,
+      },
+      wgsl_location: {
+        parameters: ["buffer", "usize", "u32", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_minify: {
+        parameters: ["buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_struct: {
+        parameters: ["buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_struct_field: {
+        parameters: ["buffer", "usize", "buffer", "usize"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      wgsl_vertex_entry: {
+        parameters: [
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+          "buffer",
+          "usize",
+        ],
+        result: "buffer",
+        nonblocking: false,
+      },
+      windows_get_logical_processor_count: {
+        parameters: [],
+        result: "u32",
+        nonblocking: false,
+      },
+      windows_get_page_size: {
+        parameters: [],
+        result: "u64",
+        nonblocking: false,
+      },
+      windows_has_amd_driver: {
+        parameters: [],
+        result: "u8",
+        nonblocking: false,
+      },
+      windows_has_dx12: { parameters: [], result: "u8", nonblocking: false },
+      windows_has_intel_driver: {
+        parameters: [],
+        result: "u8",
+        nonblocking: false,
+      },
+      windows_has_nvidia_driver: {
+        parameters: [],
+        result: "u8",
+        nonblocking: false,
+      },
+      windows_is_arm: { parameters: [], result: "u8", nonblocking: false },
+      windows_preferred_backend: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      windows_recommended_memory_strategy: {
+        parameters: [],
+        result: "buffer",
+        nonblocking: false,
+      },
+      // GPU Texture Readback
+      gpu_create_readback_buffer: {
+        parameters: ["u64", "u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_copy_texture_to_buffer: {
+        parameters: ["u64", "u64", "u64", "u32", "u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      gpu_map_and_read_buffer: {
+        parameters: ["u64", "u64"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      gpu_destroy_readback_buffer: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_calculate_aligned_bytes_per_row: {
+        parameters: ["u32", "u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      gpu_calculate_readback_buffer_size: {
+        parameters: ["u32", "u32", "u32"],
+        result: "u64",
+        nonblocking: false,
+      },
+      // GPU Bind Groups
+      gpu_create_buffer: {
+        parameters: ["u64", "u64", "u32", "u8"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_destroy_buffer: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_create_texture_view: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_destroy_texture_view: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_create_sampler: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_destroy_sampler: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_create_bind_group: {
+        parameters: ["u64", "u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_destroy_bind_group: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_cleanup_bind_groups: {
+        parameters: [],
+        result: "void",
+        nonblocking: false,
+      },
+      // GPU Command Encoding
+      gpu_create_command_encoder: {
+        parameters: ["u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_begin_render_pass: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_render_pass_set_pipeline: {
+        parameters: ["u64", "u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_render_pass_set_bind_group: {
+        parameters: ["u64", "u32", "u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_render_pass_set_vertex_buffer: {
+        parameters: ["u64", "u32", "u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_render_pass_draw: {
+        parameters: ["u64", "u32", "u32", "u32", "u32"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_end_render_pass: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_finish_command_encoder: {
+        parameters: ["u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_queue_submit: {
+        parameters: ["u64", "u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_command_buffer: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_execute_render_pass: {
+        parameters: ["u64", "buffer", "usize", "u64", "u64", "u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      gpu_destroy_render_pipeline: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_cleanup_command_resources: {
+        parameters: [],
+        result: "void",
+        nonblocking: false,
+      },
+    },
+  );
+  return _lib;
+}
+
+// Proxy that triggers lazy load on first property access
+const symbols = new Proxy({} as ReturnType<typeof _loadLib>["symbols"], {
+  get(_target, prop: string) {
+    return _loadLib().symbols[prop];
   },
-)
+});
+
+// ── Type exports ─────────────────────────────────────────────────────────────
+
 /**
  * macOS system information
  */

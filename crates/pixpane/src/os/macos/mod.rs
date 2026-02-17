@@ -2,5 +2,3 @@
 
 pub mod macos;
 pub mod helper;
-
-pub use macos::*;

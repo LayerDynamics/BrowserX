@@ -22,17 +22,14 @@ pub fn register_window(window: Window) -> u64 {
     id
 }
 
-/// Get a reference to a window by ID
+/// Get a cloned handle to a window by ID
 ///
-/// Note: This clones the Window, which is currently expensive since
-/// Window contains a WinitWindow. In the future, we may want to use
-/// Arc or another shared ownership pattern.
+/// Returns a cloned Window sharing the Arc<WinitWindow> handle. The clone's
+/// render_state is None — use with_window_mut() to access or modify GPU state.
+/// For read-only window property queries (size, title, etc.), the returned
+/// Window is sufficient.
 pub fn get_window(id: u64) -> Option<Window> {
-    // Note: We can't return a reference here because the RwLockReadGuard
-    // would need to outlive this function. For now, we don't support
-    // cloning windows, so this will always return None.
-    // In phase 6, we'll access windows differently.
-    None
+    WINDOWS.read().get(&id).cloned()
 }
 
 /// Remove a window from the registry

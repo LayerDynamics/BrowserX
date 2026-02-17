@@ -84,7 +84,7 @@ impl WindowBuilder {
 
         Ok(Window {
             id,
-            inner: winit_window,
+            inner: std::sync::Arc::new(winit_window),
             render_state,
         })
     }
