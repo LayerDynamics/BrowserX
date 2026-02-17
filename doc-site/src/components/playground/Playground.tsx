@@ -292,15 +292,39 @@ export const Playground: React.FC = () => {
    * Generate a shareable link for the current query.
    */
   const handleShare = () => {
-    // TODO: Implement share logic (encode query in URL or create short link)
     const encodedQuery = encodeURIComponent(currentQuery);
     const shareUrl = `${window.location.origin}/playground?q=${encodedQuery}`;
 
-    navigator.clipboard.writeText(shareUrl).then(() => {
-      addConsoleLog({ level: 'info', message: 'Share link copied to clipboard', timestamp: Date.now() });
-    }).catch(() => {
-      addConsoleLog({ level: 'warn', message: `Share link: ${shareUrl}`, timestamp: Date.now() });
-    });
+    try {
+      // Guard against environments where navigator.clipboard is unavailable or throws synchronously
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+        throw new Error('Clipboard API not available');
+      }
+
+      navigator.clipboard
+        .writeText(shareUrl)
+        .then(() => {
+          addConsoleLog({
+            level: 'info',
+            message: 'Share link copied to clipboard',
+            timestamp: Date.now(),
+          });
+        })
+        .catch(() => {
+          addConsoleLog({
+            level: 'warn',
+            message: `Share link: ${shareUrl}`,
+            timestamp: Date.now(),
+          });
+        });
+    } catch {
+      // Fallback when clipboard access is not available or throws synchronously
+      addConsoleLog({
+        level: 'warn',
+        message: `Share link: ${shareUrl}`,
+        timestamp: Date.now(),
+      });
+    }
   };
 
   return (
