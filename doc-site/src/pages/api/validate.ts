@@ -137,8 +137,7 @@ function validateQueryBasic(query: string): ValidationError[] {
 }
 
 // Mark this route as server-rendered (not statically prerendered)
-// Note: Commented out for static builds. Uncomment when deploying with an adapter.
-// export const prerender = false;
+export const prerender = false;
 
 export const POST: APIRoute = async ({ request }) => {
   try {
@@ -162,6 +161,27 @@ export const POST: APIRoute = async ({ request }) => {
           headers: { 'Content-Type': 'application/json' },
         }
       );
+    }
+
+    // Proxy to BrowserX API service if available
+    const apiUrl = import.meta.env.BROWSERX_API_URL;
+    if (apiUrl) {
+      try {
+        const upstream = await fetch(`${apiUrl}/validate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: body.query }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (upstream.ok) {
+          return new Response(await upstream.text(), {
+            status: upstream.status,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      } catch {
+        // Fall through to local validation
+      }
     }
 
     const { query } = body;

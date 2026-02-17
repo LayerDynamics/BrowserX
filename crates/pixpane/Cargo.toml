@@ -2,10 +2,10 @@
 name = "pixpane"
 version = "0.1.0"
 edition = "2021"
-authors = ["geoprox"]
+authors = ["LayerDynamics"]
 license = "MIT OR Apache-2.0"
 description = "Cross-platform windowing library for Deno via FFI"
-repository = "https://github.com/geoprox/geoprox"
+repository = "https://github.com/LayerDynamics/BrowserX"
 readme = "README.md"
 keywords = ["deno", "ffi", "windowing", "winit"]
 categories = ["gui", "api-bindings"]
