@@ -84,7 +84,7 @@ export function ControlBar({
         >
           🔗 Share
         </button>
-        <div className="export-dropdown">
+        <div className="dropdown">
           <button
             className="btn btn-secondary"
             onClick={() => setShowExportMenu(!showExportMenu)}
@@ -94,7 +94,7 @@ export function ControlBar({
             📥 Export
           </button>
           {showExportMenu && (
-            <div className="export-menu">
+            <div className="dropdown-menu">
               <button
                 className="export-option"
                 onClick={() => handleExport('json')}
