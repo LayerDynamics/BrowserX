@@ -120,10 +120,17 @@ jobs:
             docker compose -f docker-compose.yml -f docker-compose.override.yml \
               up -d --no-deps doc-site
 
-            # --force-recreate stops any existing nginx (releases port 80) then
-            # starts the new container, preventing "port is already allocated" errors
+            # Stop any container (from any compose project or standalone) that has
+            # port 80 published — prevents "port is already allocated" on redeploy
+            docker ps -q --filter "publish=80" | xargs -r docker stop 2>/dev/null || true
+
+            # Explicitly remove the tracked nginx container so Docker releases the port
+            # binding before we try to allocate it again
             docker compose -f docker-compose.yml -f docker-compose.override.yml \
-              up -d --no-deps --force-recreate nginx
+              rm -sf nginx 2>/dev/null || true
+
+            docker compose -f docker-compose.yml -f docker-compose.override.yml \
+              up -d --no-deps nginx
 
             docker system prune -f
             echo "Deploy complete!"
