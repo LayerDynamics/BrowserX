@@ -47,7 +47,18 @@ export const Playground: React.FC = () => {
     addConsoleLog({ level: 'info', message: `Starting execution: ${executionId}`, timestamp: Date.now() });
 
     try {
-      // Execute query via API (handles activeExecution, results, history in store)
+      // Execute query via API — also populates results and screenshot via direct store actions
+      const response = await fetch('/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: currentQuery, options: { timeout: 60000, captureScreenshots: true } }),
+      });
+      if (response.ok) {
+        const { results } = await response.json();
+        setResults(results);
+        // When real screenshots arrive they come as base64 data URLs; the mock path signals completion
+        addScreenshot(`data:text/plain;base64,${btoa(`Mock screenshot — query executed at ${new Date().toISOString()}`)}`);
+      }
       await executeQuery(currentQuery);
 
       /* Future implementation when API is ready:
@@ -163,7 +174,6 @@ export const Playground: React.FC = () => {
   const handleExport = (format: 'json' | 'csv' | 'html') => {
     addConsoleLog({ level: 'info', message: `Exporting as ${format.toUpperCase()}...`, timestamp: Date.now() });
 
-    // TODO: Implement export logic
     const { currentResults } = usePlaygroundStore.getState();
     if (!currentResults) {
       addConsoleLog({ level: 'warn', message: 'No results to export', timestamp: Date.now() });

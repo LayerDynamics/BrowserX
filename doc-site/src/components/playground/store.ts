@@ -56,6 +56,24 @@ export interface Screenshot {
 }
 
 /**
+ * Network request captured during query execution.
+ */
+export interface NetworkRequest {
+  /** Unique request ID */
+  id: string;
+  /** Request URL */
+  url: string;
+  /** HTTP method (GET, POST, etc.) */
+  method: string;
+  /** HTTP response status code */
+  status: number;
+  /** Request duration in milliseconds */
+  duration: number;
+  /** Response size in bytes */
+  size: number;
+}
+
+/**
  * Saved query entry.
  */
 export interface SavedQuery {
@@ -117,6 +135,8 @@ export interface PlaygroundStore {
   screenshots: Screenshot[];
   /** Console logs from browser (max 100 entries, FIFO) */
   consoleLogs: ConsoleLog[];
+  /** Network requests captured during execution (max 100 entries, FIFO) */
+  networkRequests: NetworkRequest[];
 
   // ===== Saved Queries =====
   /** User-saved queries */
@@ -149,7 +169,9 @@ export interface PlaygroundStore {
   addScreenshot: (data: string) => void;
   /** Add a console log */
   addConsoleLog: (log: ConsoleLog) => void;
-  /** Clear all results (screenshots, logs, current results) */
+  /** Add a captured network request */
+  addNetworkRequest: (request: NetworkRequest) => void;
+  /** Clear all results (screenshots, logs, current results, network requests) */
   clearResults: () => void;
   /** Save the current query with a name */
   saveQuery: (name: string) => void;
@@ -226,6 +248,7 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
   currentResults: null,
   screenshots: [],
   consoleLogs: [],
+  networkRequests: [],
   savedQueries: [],
   queryTemplates: DEFAULT_TEMPLATES,
   previewMode: 'screenshot',
@@ -306,6 +329,13 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
           },
         };
         get().setResults(results);
+
+        // Populate network requests returned from the API
+        if (Array.isArray(data.results.networkRequests)) {
+          for (const req of data.results.networkRequests as NetworkRequest[]) {
+            get().addNetworkRequest(req);
+          }
+        }
       }
 
       // Clear active execution on success
@@ -336,7 +366,12 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
           status: 'cancelling',
         },
       });
-      // TODO: Implement actual cancellation when API is ready
+      // Mock cancellation path: complete the cancellation after a brief delay.
+      // When the real API is wired up, this will call AbortController.abort()
+      // on the in-flight fetch and await the abort acknowledgement from the server.
+      setTimeout(() => {
+        set({ activeExecution: null });
+      }, 100);
     }
   },
 
@@ -380,11 +415,23 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
     });
   },
 
+  addNetworkRequest: (request: NetworkRequest) => {
+    set((state) => {
+      const newRequests = [...state.networkRequests, request];
+      // Enforce 100-item limit (FIFO)
+      if (newRequests.length > 100) {
+        newRequests.splice(0, newRequests.length - 100);
+      }
+      return { networkRequests: newRequests };
+    });
+  },
+
   clearResults: () => {
     set({
       currentResults: null,
       screenshots: [],
       consoleLogs: [],
+      networkRequests: [],
     });
   },
 

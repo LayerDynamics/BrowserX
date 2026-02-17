@@ -78,6 +78,6 @@ END
 
 ## Next Steps
 
-- [Query Language Reference](/guides/query/query-language)
-- [API Documentation](/api/endpoints)
-- [Examples](/guides/query/examples)
+- [Query Language Reference](/query/syntax/)
+- [API Documentation](/query/api-reference/)
+- [Examples](/query/examples/)

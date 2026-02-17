@@ -11,6 +11,7 @@ export const BrowserPreview: React.FC = () => {
     setPreviewMode,
     screenshots,
     consoleLogs,
+    networkRequests,
     currentResults,
   } = usePlaygroundStore();
 
@@ -153,11 +154,55 @@ export const BrowserPreview: React.FC = () => {
     );
   };
 
-  // Render network tab content (stub)
+  // Get CSS class for HTTP status code
+  const getStatusClass = (status: number): string => {
+    if (status >= 200 && status < 300) return 'status-ok';
+    if (status >= 300 && status < 400) return 'status-redirect';
+    if (status >= 400 && status < 500) return 'status-client-error';
+    return 'status-server-error';
+  };
+
+  // Format byte size for display
+  const formatSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // Render network tab content
   const renderNetworkTab = () => {
+    if (networkRequests.length === 0) {
+      return (
+        <div className="tab-empty">
+          No network requests captured.
+        </div>
+      );
+    }
+
     return (
-      <div className="tab-empty">
-        Network monitoring coming soon.
+      <div className="network-container">
+        <table className="results-table network-table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>URL</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            {networkRequests.map((req) => (
+              <tr key={req.id}>
+                <td className="network-method">{req.method}</td>
+                <td className="network-url" title={req.url}>{req.url}</td>
+                <td className={`network-status ${getStatusClass(req.status)}`}>{req.status}</td>
+                <td className="network-duration">{req.duration}ms</td>
+                <td className="network-size">{formatSize(req.size)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     );
   };
