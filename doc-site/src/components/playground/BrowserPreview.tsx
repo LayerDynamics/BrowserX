@@ -142,7 +142,7 @@ export const BrowserPreview: React.FC = () => {
     return (
       <div className="console-container">
         {consoleLogs.map((log, index) => (
-          <div key={index} className={`console-log ${getLogLevelClass(log.level)}`}>
+          <div key={`${log.timestamp}-${index}`} className={`console-log ${getLogLevelClass(log.level)}`}>
             <span className="log-timestamp">{formatTimestamp(log.timestamp)}</span>
             <span className="log-icon">{getLogLevelIcon(log.level)}</span>
             <span className="log-message">{log.message}</span>
