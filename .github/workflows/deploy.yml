@@ -7,7 +7,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+  # GHCR requires lowercase image names
+  IMAGE_PREFIX: ghcr.io/layerdynamics
 
 jobs:
   build-and-push:
