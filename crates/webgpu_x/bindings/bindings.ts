@@ -806,8 +806,8 @@ function _loadLib() {
 
 // Proxy that triggers lazy load on first property access
 const symbols = new Proxy({} as ReturnType<typeof _loadLib>["symbols"], {
-  get(_target, prop: string) {
-    return _loadLib().symbols[prop];
+  get(_target, prop: string | symbol) {
+    return Reflect.get(_loadLib().symbols, prop);
   },
 });
 

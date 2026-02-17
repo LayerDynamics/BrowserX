@@ -78,13 +78,33 @@ const { symbols } = Deno.dlopen(
   // Wrap Deno.dlopen in a lazy loader so `deno cache` doesn't execute it at
   // module load time (required for Docker builds where the .so isn't present
   // during the cache step).
-  const ffiSectionStart = source.indexOf('\nconst url = new URL(');
-  // End of FFI setup: type exports comment, first export function, or export type
-  let ffiSectionEnd = source.indexOf('\n// ── Type exports');
-  if (ffiSectionEnd === -1) ffiSectionEnd = source.indexOf('\nexport function ');
-  if (ffiSectionEnd === -1) ffiSectionEnd = source.indexOf('\nexport type ');
+  //
+  // Use small regexes so minor whitespace/comment changes don't break detection.
+  const ffiSectionStartMatch = source.match(/\nconst\s+url\s*=\s*new\s+URL\s*\(/);
+  const ffiSectionStart = ffiSectionStartMatch?.index ?? -1;
 
-  if (ffiSectionStart !== -1 && ffiSectionEnd !== -1) {
+  const typeExportsMatch = source.match(/\n\/\/\s*──\s*Type exports/);
+  let ffiSectionEnd = typeExportsMatch?.index ?? -1;
+  if (ffiSectionEnd === -1) {
+    const exportFunctionMatch = source.match(/\nexport\s+function\s+/);
+    ffiSectionEnd = exportFunctionMatch?.index ?? -1;
+  }
+  if (ffiSectionEnd === -1) {
+    const exportTypeMatch = source.match(/\nexport\s+type\s+/);
+    ffiSectionEnd = exportTypeMatch?.index ?? -1;
+  }
+
+  if (ffiSectionStart === -1 || ffiSectionEnd === -1 || ffiSectionStart >= ffiSectionEnd) {
+    throw new Error(
+      `Failed to locate FFI section for lazy dlopen transform ` +
+        `(ffiSectionStart=${ffiSectionStart}, ffiSectionEnd=${ffiSectionEnd}). ` +
+        `The generator relies on finding the 'const url = new URL(...)' declaration ` +
+        `and the first type export/export function/export type. Please update the ` +
+        `FFI section detection logic if the bindings layout has changed.`
+    );
+  }
+
+  {
     let ffiSection = source.slice(ffiSectionStart + 1, ffiSectionEnd);
 
     // Indent every non-empty line by 2 spaces
@@ -95,8 +115,8 @@ const { symbols } = Deno.dlopen(
 
     // Replace the destructured const assignment with a plain _lib assignment
     ffiSection = ffiSection.replace(
-      '  const { symbols } = Deno.dlopen(',
-      '  _lib = Deno.dlopen('
+      /\s+const \{ symbols \} = Deno\.dlopen\(/,
+      '\n  _lib = Deno.dlopen('
     );
 
     // Ensure the closing paren of Deno.dlopen ends with a semicolon
@@ -117,16 +137,14 @@ const { symbols } = Deno.dlopen(
       '',
       '// Proxy that triggers lazy load on first property access',
       'const symbols = new Proxy({} as ReturnType<typeof _loadLib>["symbols"], {',
-      '  get(_target, prop: string) {',
-      '    return _loadLib().symbols[prop];',
+      '  get(_target, prop: string | symbol) {',
+      '    return Reflect.get(_loadLib().symbols, prop);',
       '  },',
       '});',
     ].join('\n');
 
     source = source.slice(0, ffiSectionStart) + lazyBlock + source.slice(ffiSectionEnd);
     console.log("  Applied lazy FFI loader transformation");
-  } else {
-    console.warn("  WARNING: Could not find FFI section boundaries — lazy loader NOT applied");
   }
 
   console.log("Writing bindings/bindings.ts...");
