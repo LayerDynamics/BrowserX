@@ -1,84 +1,99 @@
-/* Control Bar */
+/* ============================================================
+   ControlBar — Modern Black/White Theme
+   ============================================================ */
+
+/* ── Control Bar Container ─────────────────────────────────── */
 .control-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  background: #2d2d2d;
-  border-bottom: 1px solid #3d3d3d;
-  gap: 16px;
+  padding: 10px 14px;
+  background: var(--bx-void);
+  border-bottom: 1px solid var(--bx-border);
+  gap: 12px;
+  flex-shrink: 0;
 }
 
-/* Button Groups */
+/* ── Button Groups ─────────────────────────────────────────── */
 .control-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-/* Base Button Styles */
+/* ── Base Button ───────────────────────────────────────────── */
 .btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 2px;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.1s, color 0.1s, border-color 0.1s, opacity 0.1s;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   white-space: nowrap;
-}
-
-.btn:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-.btn:active {
-  transform: translateY(0);
-  box-shadow: none;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  line-height: 1.4;
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.35;
   cursor: not-allowed;
-  transform: none;
 }
 
-/* Primary Button (Execute) */
+/* ── Primary Button (Execute) ──────────────────────────────── */
 .btn-primary {
-  background: #007acc;
-  color: #ffffff;
+  background: var(--bx-white);
+  color: var(--bx-void);
+  border-color: var(--bx-white);
 }
 
-.btn-primary:hover {
-  background: #005a9e;
+.btn-primary:not(:disabled):hover {
+  background: var(--bx-gray-1);
+  border-color: var(--bx-gray-1);
 }
 
-/* Danger Button (Cancel) */
+.btn-primary:not(:disabled):active {
+  background: var(--bx-gray-2);
+  border-color: var(--bx-gray-2);
+}
+
+/* ── Danger Button (Cancel) ────────────────────────────────── */
 .btn-danger {
-  background: #d13438;
-  color: #ffffff;
+  background: transparent;
+  color: var(--bx-err);
+  border-color: var(--bx-err);
 }
 
-.btn-danger:hover {
-  background: #a02729;
+.btn-danger:not(:disabled):hover {
+  background: rgba(var(--bx-err-rgb), 0.08);
 }
 
-/* Secondary Buttons */
+.btn-danger:not(:disabled):active {
+  background: rgba(var(--bx-err-rgb), 0.15);
+}
+
+/* ── Secondary Buttons ─────────────────────────────────────── */
 .btn-secondary {
-  background: #3e3e42;
-  color: #cccccc;
+  background: var(--bx-raised);
+  color: var(--bx-gray-1);
+  border-color: var(--bx-border);
 }
 
-.btn-secondary:hover {
-  background: #4e4e52;
+.btn-secondary:not(:disabled):hover {
+  background: var(--bx-overlay);
+  color: var(--bx-white);
+  border-color: var(--bx-border-hi);
 }
 
-/* Dropdown Menu */
+.btn-secondary:not(:disabled):active {
+  background: var(--bx-raised);
+}
+
+/* ── Dropdown Menu ─────────────────────────────────────────── */
 .dropdown {
   position: relative;
   display: inline-block;
@@ -89,13 +104,13 @@
   position: absolute;
   top: 100%;
   left: 0;
-  margin-top: 4px;
-  background: #2d2d2d;
-  border: 1px solid #3d3d3d;
-  border-radius: 4px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  margin-top: 3px;
+  background: var(--bx-overlay);
+  border: 1px solid var(--bx-border-hi);
+  border-radius: 2px;
   z-index: 1000;
-  min-width: 120px;
+  min-width: 130px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
 
 .dropdown:hover .dropdown-menu {
@@ -105,23 +120,32 @@
 .dropdown-menu button {
   display: block;
   width: 100%;
-  padding: 8px 16px;
+  padding: 7px 14px;
   background: none;
   border: none;
-  color: #cccccc;
+  border-bottom: 1px solid var(--bx-border);
+  color: var(--bx-gray-1);
   text-align: left;
   cursor: pointer;
-  font-size: 14px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8125rem;
+  transition: background 0.1s, color 0.1s;
+}
+
+.dropdown-menu button:last-child {
+  border-bottom: none;
 }
 
 .dropdown-menu button:hover {
-  background: #3e3e42;
+  background: var(--bx-raised);
+  color: var(--bx-white);
 }
 
-/* Responsive */
+/* ── Responsive ────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .control-bar {
     flex-wrap: wrap;
+    padding: 8px 10px;
   }
 
   .control-group {

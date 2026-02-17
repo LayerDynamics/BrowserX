@@ -12,6 +12,24 @@ export default defineConfig({
 		react(),
 		starlight({
 			title: 'BrowserX',
+			customCss: ['./src/styles/global.css'],
+			head: [
+				{
+					tag: 'link',
+					attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
+				},
+				{
+					tag: 'link',
+					attrs: { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
+				},
+				{
+					tag: 'link',
+					attrs: {
+						rel: 'stylesheet',
+						href: 'https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap',
+					},
+				},
+			],
 			social: [
 				{
 					icon: 'github',
@@ -27,6 +45,7 @@ export default defineConfig({
 					label: 'Interactive Tools',
 					items: [
 						{ label: 'Browser Playground', link: '/playground' },
+						{ label: 'Pipeline Visualizer', link: '/how-it-works' },
 					],
 				},
 				{
