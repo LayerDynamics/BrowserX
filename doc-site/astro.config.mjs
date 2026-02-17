@@ -2,12 +2,12 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import react from '@astrojs/react';
+import node from '@astrojs/node';
 
-// https://astro.build/config
 export default defineConfig({
 	site: 'https://browserx.dev',
-	// Note: API routes require server/hybrid mode with an adapter (e.g., @astrojs/vercel)
-	// For static build, API routes are stubbed with mock responses
+	output: 'server',
+	adapter: node({ mode: 'standalone' }),
 	integrations: [
 		react(),
 		starlight({
@@ -20,7 +20,7 @@ export default defineConfig({
 				},
 			],
 			editLink: {
-				baseUrl: 'https://github.com/LayerDynamics/BrowserX/edit/comprehensive-docs/doc-site/',
+				baseUrl: 'https://github.com/LayerDynamics/BrowserX/edit/main/doc-site/',
 			},
 			sidebar: [
 				{
@@ -28,6 +28,10 @@ export default defineConfig({
 					items: [
 						{ label: 'Browser Playground', link: '/playground' },
 					],
+				},
+				{
+					label: 'Guides',
+					autogenerate: { directory: 'guides' },
 				},
 				{
 					label: 'Browser Engine',
