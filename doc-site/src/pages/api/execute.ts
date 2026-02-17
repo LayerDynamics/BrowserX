@@ -147,6 +147,14 @@ interface ExecuteSuccessResponse {
       cacheHits: number;
       cacheMisses: number;
     };
+    networkRequests: Array<{
+      id: string;
+      url: string;
+      method: string;
+      status: number;
+      duration: number;
+      size: number;
+    }>;
   };
 }
 
@@ -211,14 +219,45 @@ function validateRequestBody(body: unknown): body is ExecuteRequestBody {
  * Mock query execution (placeholder until BrowserX integration is resolved).
  * Returns a sample result that matches the expected schema.
  */
-async function executeMockQuery(query: string, timeout: number): Promise<unknown> {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 500));
+async function executeMockQuery(query: string, timeout: number): Promise<ExecuteSuccessResponse['results']> {
+  // Simulate network delay, capped by the caller's timeout
+  await new Promise((resolve) => setTimeout(resolve, Math.min(500, timeout)));
 
   // Parse basic query info for mock response
   const queryLower = query.toLowerCase();
   const isSelect = queryLower.includes('select');
   const hasUrl = query.match(/"(https?:\/\/[^"]+)"/);
+
+  // Build mock network requests based on the URL extracted from the query
+  const targetUrl = hasUrl ? hasUrl[1] : 'https://example.com';
+  const urlOrigin = (() => {
+    try {
+      return new URL(targetUrl).origin;
+    } catch {
+      return targetUrl;
+    }
+  })();
+
+  const networkRequests = hasUrl
+    ? [
+        {
+          id: `req_${Date.now()}_1`,
+          url: targetUrl,
+          method: 'GET',
+          status: 200,
+          duration: 312,
+          size: 1256,
+        },
+        {
+          id: `req_${Date.now()}_2`,
+          url: `${urlOrigin}/favicon.ico`,
+          method: 'GET',
+          status: 200,
+          duration: 48,
+          size: 318,
+        },
+      ]
+    : [];
 
   return {
     queryId: `query_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
@@ -230,6 +269,7 @@ async function executeMockQuery(query: string, timeout: number): Promise<unknown
           },
         ]
       : { success: true },
+    networkRequests,
     timing: {
       lexerTime: 2.5,
       parserTime: 3.1,
@@ -314,12 +354,12 @@ export const POST: APIRoute = async ({ request }) => {
 
     // 3. Execute query (mock for now)
     const timeout = body.options?.timeout ?? 30000;
-    const result = await executeMockQuery(body.query, timeout);
+    const results = await executeMockQuery(body.query, timeout);
 
     // 4. Return success response
     const response: ExecuteSuccessResponse = {
       executionId,
-      results: result,
+      results,
     };
 
     return new Response(JSON.stringify(response), {

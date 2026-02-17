@@ -1,40 +1,71 @@
 ---
-title: Welcome to Starlight
-description: Get started building your docs site with Starlight.
-template: splash # Remove or comment out this line to display the site sidebar on this page.
+title: BrowserX
+description: A composable browser toolkit for TypeScript/Deno
+template: splash
 hero:
-  tagline: Congrats on setting up a new Starlight project!
+  tagline: A composable browser toolkit for TypeScript/Deno
   image:
     file: ../../assets/houston.webp
   actions:
-    - text: Example Guide
-      link: /guides/example/
+    - text: Get Started
+      link: /browser/
       icon: right-arrow
-    - text: Read the Starlight docs
-      link: https://starlight.astro.build
+    - text: View on GitHub
+      link: https://github.com/LayerDynamics/BrowserX
       icon: external
       variant: minimal
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-## Next steps
+## Core Modules
 
 <CardGrid stagger>
-	<Card title="Update content" icon="pencil">
-		Edit `src/content/docs/index.mdx` to see this page change.
-	</Card>
-	<Card title="Change page layout" icon="document">
-		Delete `template: splash` in `src/content/docs/index.mdx` to display a
-		sidebar on this page.
-	</Card>
-	<Card title="Add new content" icon="add-document">
-		Add Markdown or MDX files to `src/content/docs` to create new pages.
-	</Card>
-	<Card title="Configure your site" icon="setting">
-		Edit your `sidebar` and other config in `astro.config.mjs`.
-	</Card>
-	<Card title="Read the docs" icon="open-book">
-		Learn more in [the Starlight Docs](https://starlight.astro.build/).
-	</Card>
+  <Card title="Browser Engine" icon="laptop">
+    Full page load pipeline from DNS to pixels. HTML/CSS parsing, JavaScript execution via V8, network stack (TCP/TLS/HTTP), and WebGPU-accelerated rendering.
+
+    [Browser Engine docs](/browser/)
+  </Card>
+  <Card title="Proxy Engine" icon="random">
+    Traffic routing with a layered middleware pipeline. Supports reverse proxying, load balancing, caching (LRU/LFU/FIFO), connection pooling, and distributed tracing.
+
+    [Proxy Engine docs](/proxy/)
+  </Card>
+  <Card title="Query Engine" icon="magnifier">
+    SQL-like interface for browser and proxy operations — readable by humans and AI agents alike.
+
+    [Query Engine docs](/query/)
+  </Card>
+  <Card title="Runtime" icon="puzzle">
+    Unified orchestration layer that composes the browser, proxy, and query engines into coordinated workflows with lifecycle management, plugin system, and health checking.
+
+    [Runtime docs](/runtime/)
+  </Card>
+  <Card title="MCP Server" icon="robot">
+    Model Context Protocol server for AI-driven browser control. Exposes browser tools, resources, and prompts over stdio or HTTP for LLM integration.
+
+    [MCP Server docs](/mcp/)
+  </Card>
 </CardGrid>
+
+## Query Syntax at a Glance
+
+BrowserX provides a SQL-like query language for browser automation:
+
+```sql
+-- Extract data from a page
+SELECT title, description FROM "https://example.com"
+
+-- Navigate with custom headers and capture the response
+NAVIGATE TO "https://api.example.com"
+  WITH { headers: { "Authorization": "Bearer token" } }
+  CAPTURE response.body, dom.title
+
+-- Conditional form interaction
+IF EXISTS("#login-form") THEN
+  INSERT "user@example.com" INTO "#email"
+  CLICK "#submit"
+END
+```
+
+See the [Query Engine docs](/query/) for the full syntax reference.
