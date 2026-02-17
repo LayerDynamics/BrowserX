@@ -45,6 +45,7 @@ export default defineConfig({
 					label: 'Interactive Tools',
 					items: [
 						{ label: 'Browser Playground', link: '/playground' },
+						{ label: 'Pipeline Visualizer', link: '/how-it-works' },
 					],
 				},
 				{
