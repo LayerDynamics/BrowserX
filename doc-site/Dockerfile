@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies first for better layer caching
 COPY doc-site/package.json doc-site/package-lock.json ./
-RUN npm ci --prefer-offline
+RUN npm ci
 
 # Copy all doc-site source files
 COPY doc-site/ .
