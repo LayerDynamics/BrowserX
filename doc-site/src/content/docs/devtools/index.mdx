@@ -1,0 +1,242 @@
+---
+title: DevTools
+description: Chrome DevTools Protocol (CDP) implementation for debugging BrowserX browser instances — 14 domain agents, a WebSocket server, and a programmatic client.
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+The BrowserX DevTools module is a Chrome DevTools Protocol (CDP) compatible implementation that exposes debugging capabilities for any BrowserX `Browser` instance. It provides 14 domain agents, a WebSocket server for external tooling connections, and a programmatic TypeScript client for automation.
+
+## Architecture Overview
+
+The DevTools system is organized into five layers:
+
+```
+┌──────────────────────────────────────────────────┐
+│  DevTools Client                                 │
+│  DevToolsClient + typed domain accessors         │
+└─────────────────────┬────────────────────────────┘
+                      │ WebSocket / JSON-RPC
+┌─────────────────────▼────────────────────────────┐
+│  WebSocket Server (DevToolsServer)               │
+│  /json  /json/version  /devtools/page/{targetId} │
+└─────────────────────┬────────────────────────────┘
+                      │
+┌─────────────────────▼────────────────────────────┐
+│  Router + DevToolsSession                        │
+│  Method routing, session lifecycle               │
+└─────────────────────┬────────────────────────────┘
+                      │
+┌─────────────────────▼────────────────────────────┐
+│  14 Domain Agents (extend BaseDomain)            │
+│  DOM, CSS, Network, Runtime, Debugger,           │
+│  Console, Page, Storage, Security,               │
+│  Performance, Memory, Rendering,                 │
+│  Overlay, Emulation                              │
+└─────────────────────┬────────────────────────────┘
+                      │ pub/sub
+┌─────────────────────▼────────────────────────────┐
+│  EventBus                                        │
+│  Cross-domain communication                      │
+└──────────────────────────────────────────────────┘
+```
+
+### Core Concepts
+
+<CardGrid>
+  <Card title="BaseDomain" icon="seti:config">
+    Abstract base class all 14 domain agents extend. Provides method registration, event emission, enable/disable lifecycle, and EventBus integration.
+  </Card>
+  <Card title="EventBus" icon="seti:pipeline">
+    Internal pub/sub hub for cross-domain communication. Domains publish and subscribe to events without direct imports, maintaining loose coupling.
+  </Card>
+  <Card title="DevToolsServer" icon="rocket">
+    CDP-compatible WebSocket server. Exposes HTTP discovery endpoints at `/json`, `/json/version`, and `/json/protocol`. Upgrades connections at `/devtools/page/{targetId}`.
+  </Card>
+  <Card title="DevToolsClient" icon="seti:javascript">
+    Promise-based TypeScript client for the WebSocket protocol. Provides typed domain accessors (`client.dom`, `client.network`, etc.) and event subscription.
+  </Card>
+</CardGrid>
+
+## Quick Start
+
+### Attaching DevTools to a Browser
+
+```typescript
+import { Browser } from "../browser/src/main.ts";
+import { attachDevTools } from "../dev-tools/mod.ts";
+
+const browser = new Browser({ width: 1280, height: 720 });
+
+// Attach DevTools — starts WebSocket server on port 9222 by default
+const devtools = attachDevTools(browser, { port: 9222 });
+
+console.log(`DevTools URL: ${devtools.getUrl()}`);
+// => ws://127.0.0.1:9222
+
+// Connect Chrome DevTools or use the programmatic client:
+// devtools://devtools/bundled/inspector.html?ws=127.0.0.1:9222/devtools/page/default
+
+// Cleanup when done
+await devtools.dispose();
+```
+
+### Configuration Options
+
+```typescript
+export interface BrowserDevToolsConfig {
+  /** Port for the WebSocket server (default: 9222) */
+  port?: number;
+  /** Host to bind to (default: "127.0.0.1") */
+  host?: string;
+  /** Whether to auto-start the server (default: true) */
+  autoStart?: boolean;
+}
+
+// Example: bind to all interfaces, defer server start
+const devtools = attachDevTools(browser, {
+  port: 9333,
+  host: "0.0.0.0",
+  autoStart: false,
+});
+
+// Start manually later
+devtools.start();
+```
+
+### Connecting the Programmatic Client
+
+```typescript
+import { DevToolsClient } from "../dev-tools/mod.ts";
+
+const client = new DevToolsClient("ws://localhost:9222/devtools/page/default");
+await client.connect();
+
+// Send a CDP command
+const { root } = await client.send("DOM.getDocument", { depth: 2 });
+console.log(root.nodeName); // => "#document"
+
+// Subscribe to events
+client.on("Network.requestWillBeSent", (params) => {
+  console.log("Request:", params.request.url);
+});
+
+// Enable domains
+await client.send("Network.enable", {});
+await client.send("DOM.enable", {});
+
+// Use typed domain shortcuts
+await client.dom.call("getDocument", { depth: 1 });
+await client.network.enable();
+
+await client.disconnect();
+```
+
+### Accessing Individual Domains Programmatically
+
+When using `BrowserDevTools` directly (server-side), you can access domain instances without a WebSocket connection:
+
+```typescript
+import { attachDevTools } from "../dev-tools/mod.ts";
+import type { DebuggerDomain } from "../dev-tools/mod.ts";
+
+const devtools = attachDevTools(browser, { autoStart: false });
+
+// Get a specific domain agent
+const debugger = devtools.getDomain<DebuggerDomain>("Debugger");
+await debugger?.enable();
+
+// List all registered domain names
+console.log(devtools.getDomainNames());
+// => ["DOM", "Page", "Network", "CSS", "Runtime", "Console",
+//     "Storage", "Security", "Performance", "Memory",
+//     "Rendering", "Debugger", "Overlay", "Emulation"]
+```
+
+## HTTP Discovery Endpoints
+
+The DevTools server exposes CDP-compatible HTTP endpoints for tool discovery:
+
+| Endpoint | Description |
+|---|---|
+| `GET /json` | List all active debugging targets |
+| `GET /json/list` | Same as `/json` |
+| `GET /json/version` | Browser and protocol version info |
+| `GET /json/protocol` | Full protocol schema (domains, methods, events) |
+| `WS /devtools/page/{targetId}` | WebSocket upgrade for a DevTools session |
+
+Example response from `/json`:
+
+```json
+[
+  {
+    "targetId": "default",
+    "type": "page",
+    "title": "https://example.com",
+    "url": "https://example.com",
+    "attached": false,
+    "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/default",
+    "devtoolsFrontendUrl": "devtools://devtools/bundled/inspector.html?ws=127.0.0.1:9222/devtools/page/default"
+  }
+]
+```
+
+## Protocol Overview
+
+BrowserX DevTools uses CDP-style JSON-RPC over WebSocket:
+
+```typescript
+// Request (client -> server)
+interface ProtocolRequest {
+  id: number;            // Unique request ID
+  method: string;        // "Domain.methodName"
+  params?: Record<string, unknown>;
+  sessionId?: string;    // For multi-session debugging
+}
+
+// Response (server -> client)
+interface ProtocolResponse {
+  id: number;            // Matches request id
+  result?: Record<string, unknown>;
+  error?: ProtocolError;
+}
+
+// Event (server -> client, no id)
+interface ProtocolEvent {
+  method: string;        // "Domain.eventName"
+  params?: Record<string, unknown>;
+}
+```
+
+### Error Codes
+
+| Code | Name | Meaning |
+|---|---|---|
+| `-32700` | PARSE_ERROR | Invalid JSON |
+| `-32600` | INVALID_REQUEST | Malformed request |
+| `-32601` | METHOD_NOT_FOUND | Domain or method not found |
+| `-32602` | INVALID_PARAMS | Bad parameters |
+| `-32001` | DOMAIN_NOT_ENABLED | Domain must be enabled first |
+| `-32002` | NODE_NOT_FOUND | DOM node ID not found |
+| `-32004` | BREAKPOINT_NOT_FOUND | Breakpoint ID not found |
+
+## Test Coverage
+
+The DevTools module has 847 tests across 24+ test files organized by category:
+
+```
+dev-tools/tests/
+├── unit/domains/        # Per-domain unit tests (14 files)
+├── unit/protocol/       # Protocol types, session, router tests
+├── unit/client/         # Client and domain client tests
+├── integration/         # Multi-domain, event propagation, session lifecycle
+├── e2e/                 # CDP compatibility, full protocol, server startup
+├── performance/         # Message throughput, event broadcast benchmarks
+└── verify/              # Export verification, getter checks
+```
+
+Run the full test suite:
+
+```bash
+deno test --allow-all dev-tools/tests/
+```

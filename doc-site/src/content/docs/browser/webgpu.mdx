@@ -1,0 +1,501 @@
+---
+title: WebGPU Rendering
+description: GPU-accelerated rendering with WebGPU compositor and WGSL shaders
+---
+
+BrowserX supports GPU-accelerated rendering via WebGPU when running in Deno with GPU support. This provides real GPU rendering with actual pixel output, falling back gracefully to headless mode when GPU is unavailable.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────┐
+│        RenderingPipeline                │
+│  Orchestrates rendering flow            │
+└─────────────────────────────────────────┘
+                 ↓
+┌─────────────────────────────────────────┐
+│       OffscreenWebGPU                   │
+│  Headless GPU rendering                 │
+│  No display canvas required             │
+└─────────────────────────────────────────┘
+                 ↓
+┌─────────────────────────────────────────┐
+│    WebGPUCompositorThread               │
+│  Layer management & compositing         │
+└─────────────────────────────────────────┘
+                 ↓
+┌─────────────────────────────────────────┐
+│    WebGPUCompositorLayer                │
+│  Individual layer rendering             │
+│  Transforms, opacity, tiling            │
+└─────────────────────────────────────────┘
+                 ↓
+┌─────────────────────────────────────────┐
+│      WGSL Shaders                       │
+│  Vertex & fragment shaders              │
+└─────────────────────────────────────────┘
+                 ↓
+┌─────────────────────────────────────────┐
+│      webgpu_x Crate (Rust FFI)          │
+│  Texture readback, command encoding     │
+└─────────────────────────────────────────┘
+```
+
+## OffscreenWebGPU
+
+Offscreen WebGPU rendering without display canvas.
+
+```typescript
+import { OffscreenWebGPU } from "@browserx/browser";
+
+// Initialize WebGPU
+const offscreen = new OffscreenWebGPU();
+await offscreen.initialize(1920, 1080);
+
+// Check if GPU is available
+if (offscreen.state === "initialized") {
+  console.log("GPU rendering enabled");
+} else {
+  console.log("GPU unavailable, using fallback");
+}
+
+// Access GPU resources
+const device = offscreen.gpuDevice;
+const texture = offscreen.texture;
+const textureView = offscreen.textureView;
+
+// Create render pass
+const encoder = device.createCommandEncoder();
+const renderPass = encoder.beginRenderPass({
+  colorAttachments: [{
+    view: textureView,
+    loadOp: "clear",
+    storeOp: "store",
+    clearValue: { r: 0, g: 0, b: 0, a: 1 },
+  }],
+});
+
+// Render commands...
+renderPass.end();
+
+// Submit commands
+device.queue.submit([encoder.finish()]);
+
+// Read pixels back to CPU
+const pixels = await offscreen.getPixels();
+// Uint8Array of RGBA pixels
+
+// Resize texture
+offscreen.resize(2560, 1440);
+
+// Cleanup
+offscreen.dispose();
+```
+
+**State Machine:**
+
+```typescript
+enum OffscreenWebGPUState {
+  UNINITIALIZED = "uninitialized",
+  INITIALIZING = "initializing",
+  INITIALIZED = "initialized",
+  ERROR = "error",
+  DISPOSED = "disposed",
+}
+```
+
+**Statistics:**
+
+```typescript
+const stats = offscreen.getStatistics();
+console.log(stats);
+// {
+//   state: "initialized",
+//   width: 1920,
+//   height: 1080,
+//   format: "rgba8unorm",
+//   adapterInfo: {
+//     vendor: "Apple",
+//     architecture: "M1",
+//     device: "Apple M1",
+//     description: "Metal"
+//   }
+// }
+```
+
+## WebGPU Compositor
+
+### WebGPUCompositorLayer
+
+Individual layer with transforms and opacity.
+
+```typescript
+import { WebGPUCompositorLayer, LayerType } from "@browserx/browser";
+
+const layer = new WebGPUCompositorLayer(device, {
+  width: 1920,
+  height: 1080,
+  displayList,           // Paint commands
+  type: LayerType.CONTENT,
+  blendMode: LayerBlendMode.NORMAL,
+  transform: {
+    x: 0,
+    y: 100,
+    scaleX: 1.0,
+    scaleY: 1.0,
+    rotation: 0,
+  },
+  opacity: 0.9,
+});
+
+// Upload display list to GPU texture
+await layer.upload();
+
+// Composite layer to target texture
+await layer.composite(targetTexture);
+
+// Update transform (GPU-accelerated)
+layer.updateTransform({
+  x: 100,
+  y: 200,
+  scaleX: 1.2,
+  scaleY: 1.2,
+  rotation: Math.PI / 4,
+});
+
+// Update opacity
+layer.updateOpacity(0.5);
+
+// Get statistics
+const stats = layer.getStatistics();
+console.log(stats);
+// {
+//   width: 1920,
+//   height: 1080,
+//   tileCount: 48,
+//   uploadedBytes: 8294400,
+//   renderTime: 15.2
+// }
+```
+
+**Layer Types:**
+
+```typescript
+enum LayerType {
+  BACKGROUND,  // Background layer (lowest)
+  CONTENT,     // Main content
+  OVERLAY,     // Overlays (highest)
+}
+
+enum LayerBlendMode {
+  NORMAL,      // Standard alpha blending
+  MULTIPLY,    // Multiply blend
+  SCREEN,      // Screen blend
+  OVERLAY,     // Overlay blend
+}
+```
+
+### Layer Tiling
+
+Large layers split into 256x256 tiles for efficiency:
+
+```typescript
+// Automatic tiling for layers > 256x256
+const TILE_SIZE = 256;
+
+// Layer 1920x1080 becomes 8x5 grid = 40 tiles
+const tiles = layer.getTiles();
+
+for (const tile of tiles) {
+  console.log(tile);
+  // {
+  //   x: 0,
+  //   y: 0,
+  //   width: 256,
+  //   height: 256,
+  //   texture: GPUTexture,
+  //   view: GPUTextureView
+  // }
+}
+```
+
+## WGSL Shaders
+
+### Compositor Shader
+
+Vertex and fragment shaders for layer compositing:
+
+```wgsl
+// Vertex shader
+struct VertexInput {
+    @location(0) position: vec2<f32>,
+    @location(1) texcoord: vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) texcoord: vec2<f32>,
+};
+
+struct Uniforms {
+    transform: mat4x4<f32>,
+    opacity: f32,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = uniforms.transform * vec4<f32>(input.position, 0.0, 1.0);
+    output.texcoord = input.texcoord;
+    return output;
+}
+
+// Fragment shader
+@group(0) @binding(1) var layer_texture: texture_2d<f32>;
+@group(0) @binding(2) var layer_sampler: sampler;
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let color = textureSample(layer_texture, layer_sampler, input.texcoord);
+    return color * uniforms.opacity;
+}
+```
+
+### Custom Shaders
+
+Create custom shaders for effects:
+
+```typescript
+const shader = device.createShaderModule({
+  code: `
+    @fragment
+    fn fs_blur(input: VertexOutput) -> @location(0) vec4<f32> {
+      // 3x3 Gaussian blur
+      let offsets = array<vec2<f32>, 9>(
+        vec2(-1, -1), vec2(0, -1), vec2(1, -1),
+        vec2(-1,  0), vec2(0,  0), vec2(1,  0),
+        vec2(-1,  1), vec2(0,  1), vec2(1,  1)
+      );
+
+      let kernel = array<f32, 9>(
+        1.0/16.0, 2.0/16.0, 1.0/16.0,
+        2.0/16.0, 4.0/16.0, 2.0/16.0,
+        1.0/16.0, 2.0/16.0, 1.0/16.0
+      );
+
+      var color = vec4<f32>(0.0);
+      for (var i = 0; i < 9; i++) {
+        let offset = offsets[i] / vec2<f32>(1920.0, 1080.0);
+        let sample = textureSample(layer_texture, layer_sampler, input.texcoord + offset);
+        color += sample * kernel[i];
+      }
+
+      return color;
+    }
+  `
+});
+```
+
+## Rust FFI Integration
+
+The `webgpu_x` crate provides FFI bindings for operations not exposed by Deno's WebGPU.
+
+### Texture Readback
+
+Read GPU texture data back to CPU:
+
+```typescript
+import { WebGPUX } from "./crates/webgpu_x/webgpu_x.ts";
+
+const gpux = new WebGPUX();
+
+// Create readback buffer
+const buffer = gpux.createReadbackBuffer(deviceHandle, byteSize);
+
+// Copy texture to buffer
+gpux.copyTextureToBuffer(
+  encoder,
+  textureHandle,
+  bufferHandle,
+  width,
+  height,
+  4  // RGBA channels
+);
+
+// Submit and wait
+const cmdBuffer = gpux.finishCommandEncoder(encoder);
+gpux.queueSubmit(deviceHandle, cmdBuffer);
+
+// Map buffer and read data
+const pixels = gpux.mapAndReadBuffer(deviceHandle, bufferHandle);
+// Uint8Array of pixel data
+
+// Cleanup
+gpux.destroyReadbackBuffer(bufferHandle);
+```
+
+### Command Encoding
+
+Encode render commands:
+
+```typescript
+// Create command encoder
+const encoder = gpux.createCommandEncoder(deviceHandle);
+
+// Begin render pass
+const pass = gpux.beginRenderPass(encoder, JSON.stringify({
+  view: textureViewHandle,
+  load_op: "clear",
+  store_op: "store",
+  clear_value: [0.0, 0.0, 0.0, 1.0]
+}));
+
+// Set pipeline and bindings
+gpux.renderPassSetPipeline(pass, pipelineHandle);
+gpux.renderPassSetBindGroup(pass, 0, bindGroupHandle);
+
+// Draw
+gpux.renderPassDraw(pass, 6, 1, 0, 0);
+
+// End pass
+gpux.endRenderPass(pass);
+
+// Finish and submit
+const cmdBuffer = gpux.finishCommandEncoder(encoder);
+gpux.queueSubmit(deviceHandle, cmdBuffer);
+```
+
+## RenderingPipeline Integration
+
+WebGPU is automatically used when available:
+
+```typescript
+import { RenderingPipeline } from "@browserx/browser";
+
+const pipeline = new RenderingPipeline({
+  width: 1920,
+  height: 1080,
+  enableGpu: true,  // Enable WebGPU
+});
+
+await pipeline.initialize();
+
+// Check if WebGPU is active
+if (pipeline.isWebGPUActive()) {
+  console.log("GPU rendering enabled");
+  console.log("GPU:", pipeline.getGPUInfo());
+  // {
+  //   vendor: "Apple",
+  //   renderer: "Apple M1",
+  //   backend: "Metal"
+  // }
+} else {
+  console.log("Headless mode (CPU fallback)");
+}
+
+// Render page
+const result = await pipeline.render(html);
+
+// Get pixels (from GPU if available)
+const pixels = await pipeline.getPixels();
+```
+
+## Fallback Behavior
+
+When WebGPU is unavailable, the pipeline falls back gracefully:
+
+```typescript
+// WebGPU unavailable scenarios:
+// 1. No GPU hardware
+// 2. Deno without WebGPU support
+// 3. CI/headless environment
+// 4. Initialization failure
+
+// Fallback to CompositorThread
+const compositor = new CompositorThread(canvas, {
+  width: 1920,
+  height: 1080,
+});
+
+// Returns white pixels in headless mode
+const pixels = await compositor.getPixels();
+// All pixels: (255, 255, 255, 255)
+
+// All browser features still work:
+// - DOM manipulation
+// - Layout computation
+// - Navigation
+// - Screenshots (white pixels)
+```
+
+## Performance Comparison
+
+GPU vs CPU rendering performance:
+
+| Operation | CPU (Canvas 2D) | GPU (WebGPU) | Speedup |
+|-----------|-----------------|--------------|---------|
+| Composite (1920x1080) | 50-100ms | 5-20ms | 5-10x |
+| Layer transform | 30-60ms | 1-5ms | 10-30x |
+| Blur effect | 200-500ms | 10-30ms | 20x |
+| Pixel readback | 10ms | 5ms | 2x |
+
+## Testing
+
+Integration tests verify WebGPU functionality:
+
+```bash
+# Run WebGPU tests
+deno test --allow-all browser/tests/integration/webgpu_rendering.test.ts
+
+# Tests cover:
+# - Initialization
+# - Pixel buffer size
+# - Resize operations
+# - Clear/render operations
+# - Availability detection
+# - Fallback behavior
+```
+
+## Requirements
+
+- **Deno 2.0+** with stable WebGPU support
+- **GPU Hardware** with Vulkan/Metal/DX12 support
+
+### Platform Support
+
+| Platform | Backend | Status |
+|----------|---------|--------|
+| macOS | Metal | ✅ Supported |
+| Linux | Vulkan | ✅ Supported (requires drivers) |
+| Windows | DX12 / Vulkan | ✅ Supported |
+| CI/Headless | N/A | ✅ Fallback mode |
+
+### Enable WebGPU
+
+```bash
+# Deno 2.0+ (stable)
+deno run --allow-all your-script.ts
+
+# Older Deno versions
+deno run --unstable-webgpu --allow-all your-script.ts
+```
+
+## Known Issues
+
+See `/resource/devdocs/WEBGPU_FIXES.md` for known Deno WebGPU bugs and workarounds.
+
+### Common Issue: Texture Readback Panic
+
+```
+thread 'main' panicked at 'range end index out of bounds'
+```
+
+**Workaround**: This is a Deno runtime bug. Restart and retry. Does not affect production usage.
+
+## Next Steps
+
+- [Rendering Pipeline](/browser/rendering-pipeline) - Complete rendering flow
+- [Compositor](/browser/rendering-pipeline#compositor) - Layer compositing details
+- [Page Load Pipeline](/browser/page-load-pipeline) - Full page load sequence

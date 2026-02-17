@@ -1,0 +1,782 @@
+---
+title: Debugging Guide
+description: Practical debugging workflows with BrowserX DevTools — breakpoints, DOM inspection, network monitoring, performance profiling, memory analysis, and console capture.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This guide covers the most common debugging tasks using the BrowserX DevTools. Each section shows how to use the relevant domain agents to accomplish a specific debugging goal.
+
+## Setup
+
+All examples assume a connected `DevToolsClient`. See the [DevTools overview](/devtools) for setup instructions.
+
+```typescript
+import { Browser } from "../browser/src/main.ts";
+import { attachDevTools } from "../dev-tools/mod.ts";
+import { DevToolsClient } from "../dev-tools/mod.ts";
+
+const browser = new Browser({ width: 1280, height: 720 });
+const devtools = attachDevTools(browser, { port: 9222 });
+
+const client = new DevToolsClient("ws://127.0.0.1:9222/devtools/page/default");
+await client.connect();
+```
+
+---
+
+## Setting Breakpoints (Debugger Domain)
+
+The Debugger domain provides full breakpoint control: set, remove, step, inspect call frames, and evaluate expressions at pause.
+
+### Basic Breakpoint Workflow
+
+<Steps>
+1. Enable the Debugger domain.
+2. Set a breakpoint by URL and line number.
+3. Handle the `Debugger.paused` event.
+4. Inspect variables and step through code.
+5. Resume execution.
+</Steps>
+
+```typescript
+await client.send("Debugger.enable", {});
+
+// Set a breakpoint at line 42 of app.js
+const { breakpointId, locations } = await client.send("Debugger.setBreakpointByUrl", {
+  url: "https://example.com/app.js",
+  lineNumber: 42,
+  columnNumber: 0,
+});
+console.log("Breakpoint set:", breakpointId, "resolved to:", locations);
+
+// Handle the pause
+client.on("Debugger.paused", async ({ callFrames, reason, hitBreakpoints }) => {
+  const topFrame = callFrames[0];
+  console.log(`Paused at ${topFrame.location.lineNumber}:${topFrame.location.columnNumber}`);
+  console.log(`Function: ${topFrame.functionName}`);
+  console.log(`File: ${topFrame.url}`);
+
+  // Print the full call stack
+  callFrames.forEach((frame, i) => {
+    console.log(`  #${i} ${frame.functionName} (${frame.url}:${frame.location.lineNumber})`);
+  });
+});
+```
+
+### Setting Breakpoints by Script ID
+
+When you know the exact script ID from a `scriptParsed` event, use `setBreakpoint` for precision:
+
+```typescript
+// Collect script IDs when scripts parse
+const scripts = new Map();
+client.on("Debugger.scriptParsed", ({ scriptId, url }) => {
+  scripts.set(url, scriptId);
+  console.log(`Script parsed: ${url} (id: ${scriptId})`);
+});
+
+// After page loads, set a breakpoint using the resolved script ID
+client.on("Debugger.scriptParsed", async ({ scriptId, url }) => {
+  if (url.includes("checkout.js")) {
+    const { breakpointId } = await client.send("Debugger.setBreakpoint", {
+      location: {
+        scriptId,
+        lineNumber: 10,
+        columnNumber: 0,
+      },
+      condition: "amount > 100", // Conditional breakpoint
+    });
+    console.log("Conditional breakpoint set:", breakpointId);
+  }
+});
+```
+
+### Evaluating Variables at a Breakpoint
+
+```typescript
+client.on("Debugger.paused", async ({ callFrames }) => {
+  const frameId = callFrames[0].callFrameId;
+
+  // Evaluate an expression in the paused frame's scope
+  const { result } = await client.send("Debugger.evaluateOnCallFrame", {
+    callFrameId: frameId,
+    expression: "JSON.stringify(requestData)",
+    returnByValue: true,
+  });
+
+  if (result.type === "string") {
+    console.log("requestData:", JSON.parse(result.value));
+  } else {
+    console.log("Result:", result.description);
+  }
+
+  // Check a variable
+  const { result: userResult } = await client.send("Debugger.evaluateOnCallFrame", {
+    callFrameId: frameId,
+    expression: "currentUser.id",
+    returnByValue: true,
+  });
+  console.log("User ID:", userResult.value);
+});
+```
+
+### Stepping Through Code
+
+```typescript
+client.on("Debugger.paused", async ({ callFrames, reason }) => {
+  console.log(`Paused (${reason}) at line ${callFrames[0].location.lineNumber}`);
+
+  if (reason === "breakpoint") {
+    // Step over the next statement
+    await client.send("Debugger.stepOver", {});
+    // The next "paused" event will fire with reason "step"
+  }
+});
+
+// Or step into a function call
+await client.send("Debugger.stepInto", {});
+
+// Or step out of the current function
+await client.send("Debugger.stepOut", {});
+
+// Resume normal execution
+await client.send("Debugger.resume", {});
+```
+
+### Getting Possible Breakpoint Locations
+
+Before setting a breakpoint, query valid positions in a source range:
+
+```typescript
+const { locations } = await client.send("Debugger.getPossibleBreakpoints", {
+  start: { scriptId: "script-1", lineNumber: 10 },
+  end: { scriptId: "script-1", lineNumber: 20 },
+});
+
+locations.forEach(({ lineNumber, columnNumber, type }) => {
+  console.log(`  Line ${lineNumber}:${columnNumber} (${type})`);
+});
+```
+
+### Getting Script Source
+
+```typescript
+const { scriptSource } = await client.send("Debugger.getScriptSource", {
+  scriptId: "script-1",
+});
+console.log("Source:\n", scriptSource);
+```
+
+### Removing Breakpoints
+
+```typescript
+await client.send("Debugger.removeBreakpoint", { breakpointId });
+```
+
+---
+
+## Inspecting the DOM (DOM Domain)
+
+The DOM domain provides live access to the rendered DOM tree.
+
+### Getting the Document
+
+```typescript
+await client.send("DOM.enable", {});
+
+// Get the document tree with depth 3
+const { root } = await client.send("DOM.getDocument", { depth: 3 });
+console.log("Document node ID:", root.nodeId);
+console.log("Children:", root.childNodeCount);
+```
+
+### Finding Elements
+
+```typescript
+// Find a single element
+const { nodeId } = await client.send("DOM.querySelector", {
+  nodeId: root.nodeId,
+  selector: "#main-nav",
+});
+
+// Find all elements matching a selector
+const { nodeIds } = await client.send("DOM.querySelectorAll", {
+  nodeId: root.nodeId,
+  selector: "a[href]",
+});
+console.log(`Found ${nodeIds.length} links`);
+```
+
+### Searching the DOM
+
+```typescript
+// Text search across the entire tree
+const { searchId, resultCount } = await client.send("DOM.performSearch", {
+  query: "login",
+  includeUserAgentShadowDOM: false,
+});
+console.log(`Found ${resultCount} nodes containing "login"`);
+
+// Get the first 10 results
+const { nodeIds: results } = await client.send("DOM.getSearchResults", {
+  searchId,
+  fromIndex: 0,
+  toIndex: Math.min(10, resultCount),
+});
+```
+
+### Inspecting Box Model
+
+```typescript
+const { model } = await client.send("DOM.getBoxModel", { nodeId });
+
+console.log(`Content: ${model.width}x${model.height}`);
+// model.content, model.padding, model.border, model.margin
+// are arrays of 8 numbers: [x1, y1, x2, y2, x3, y3, x4, y4]
+// representing the four corners of each box
+```
+
+### Modifying the DOM
+
+```typescript
+// Set an attribute
+await client.send("DOM.setAttributeValue", {
+  nodeId,
+  name: "data-debug",
+  value: "highlighted",
+});
+
+// Remove an attribute
+await client.send("DOM.removeAttribute", {
+  nodeId,
+  name: "data-debug",
+});
+
+// Remove a node entirely
+await client.send("DOM.removeNode", { nodeId });
+```
+
+### Watching for DOM Changes
+
+```typescript
+client.on("DOM.documentUpdated", () => {
+  // Full DOM refresh occurred — re-query the document
+  client.send("DOM.getDocument", { depth: 1 }).then(({ root }) => {
+    console.log("DOM updated, new root:", root.nodeId);
+  });
+});
+
+client.on("DOM.childNodeInserted", ({ parentNodeId, node }) => {
+  console.log(`Node inserted into ${parentNodeId}:`, node.nodeName);
+});
+
+client.on("DOM.attributeModified", ({ nodeId, name, value }) => {
+  console.log(`Attribute ${name}="${value}" on node ${nodeId}`);
+});
+```
+
+### Combining DOM and CSS
+
+```typescript
+await client.send("DOM.enable", {});
+await client.send("CSS.enable", {});
+
+// Find an element
+const { nodeId } = await client.send("DOM.querySelector", {
+  nodeId: root.nodeId,
+  selector: ".hero-banner",
+});
+
+// Get all computed styles
+const { computedStyle } = await client.send("CSS.getComputedStyleForNode", { nodeId });
+const display = computedStyle.find((p) => p.name === "display");
+const color = computedStyle.find((p) => p.name === "color");
+console.log(`display: ${display?.value}, color: ${color?.value}`);
+
+// Get matched CSS rules
+const { matchedCSSRules, inlineStyle } = await client.send("CSS.getMatchedStylesForNode", { nodeId });
+console.log(`Matched ${matchedCSSRules?.length} rules`);
+```
+
+---
+
+## Monitoring Network Requests (Network Domain)
+
+The Network domain captures all HTTP requests and responses made by the browser.
+
+### Monitoring All Requests
+
+```typescript
+await client.send("Network.enable", {});
+
+// Track requests as they are initiated
+client.on("Network.requestWillBeSent", ({ requestId, request, type, timestamp }) => {
+  console.log(`[${requestId}] ${request.method} ${request.url} (${type})`);
+});
+
+// Capture response headers
+client.on("Network.responseReceived", ({ requestId, response }) => {
+  console.log(`[${requestId}] ${response.status} ${response.statusText}`);
+  console.log("Content-Type:", response.headers["content-type"]);
+});
+
+// Capture completion timing
+client.on("Network.loadingFinished", ({ requestId, encodedDataLength, timestamp }) => {
+  console.log(`[${requestId}] finished: ${encodedDataLength} bytes`);
+});
+
+// Capture failures
+client.on("Network.loadingFailed", ({ requestId, errorText, canceled }) => {
+  console.error(`[${requestId}] FAILED: ${errorText} (canceled: ${canceled})`);
+});
+```
+
+### Getting Response Bodies
+
+<Aside type="note">
+Response bodies are available after `Network.loadingFinished` fires for the request.
+</Aside>
+
+```typescript
+client.on("Network.loadingFinished", async ({ requestId }) => {
+  try {
+    const { body, base64Encoded } = await client.send("Network.getResponseBody", { requestId });
+
+    if (base64Encoded) {
+      // Binary response
+      const bytes = atob(body);
+      console.log(`Binary response: ${bytes.length} bytes`);
+    } else {
+      // Text response
+      console.log("Response body:", body.slice(0, 500));
+    }
+  } catch (error) {
+    // Body not available (e.g. cached, redirected)
+    console.warn("Could not get body for request:", requestId, error.message);
+  }
+});
+```
+
+### Cookie Management via Network Domain
+
+```typescript
+// Get cookies for a specific URL
+const { cookies } = await client.send("Network.getCookies", {
+  urls: ["https://example.com"],
+});
+
+// Set a cookie
+const { success } = await client.send("Network.setCookie", {
+  name: "auth_token",
+  value: "eyJhbGci...",
+  domain: "example.com",
+  path: "/",
+  secure: true,
+  httpOnly: true,
+});
+
+// Clear all cookies
+await client.send("Network.clearBrowserCookies", {});
+
+// Disable cache for reproducible testing
+await client.send("Network.setCacheDisabled", { cacheDisabled: true });
+```
+
+### Getting Request Statistics
+
+```typescript
+const { totalRequests, successfulRequests, failedRequests, cachedRequests } =
+  await client.send("Network.getRequestStats", {});
+
+console.log(`Total: ${totalRequests}`);
+console.log(`Success: ${successfulRequests}, Failed: ${failedRequests}, Cached: ${cachedRequests}`);
+```
+
+---
+
+## Profiling Performance (Performance Domain)
+
+The Performance domain collects timing metrics, Core Web Vitals, CPU profiles, and rendering statistics.
+
+### Getting Current Metrics
+
+```typescript
+await client.send("Performance.enable", {});
+
+// Get all performance metrics in one call
+const { metrics } = await client.send("Performance.getMetrics", {});
+metrics.forEach(({ name, value }) => {
+  console.log(`${name}: ${value}`);
+});
+// Metrics include: Timestamp, Documents, Nodes, JSEventListeners,
+// UsedJSHeapSize, TotalJSHeapSize, LayoutCount, RecalcStyleCount, etc.
+```
+
+### Navigation Timing
+
+```typescript
+const { timing } = await client.send("Performance.getNavigationTiming", {});
+
+console.log("Navigation timing breakdown:");
+console.log(`  DNS lookup:     ${timing.dnsLookup}ms`);
+console.log(`  TCP connect:    ${timing.tcpConnect}ms`);
+console.log(`  TLS handshake:  ${timing.tlsHandshake}ms`);
+console.log(`  Request:        ${timing.request}ms`);
+console.log(`  Response:       ${timing.response}ms`);
+console.log(`  DOM processing: ${timing.domProcessing}ms`);
+console.log(`  Total:          ${timing.totalTime}ms`);
+```
+
+### Core Web Vitals
+
+```typescript
+const { vitals } = await client.send("Performance.getWebVitals", {});
+
+console.log("Core Web Vitals:");
+console.log(`  LCP (Largest Contentful Paint): ${vitals.lcp}ms`);
+console.log(`  FID (First Input Delay):        ${vitals.fid}ms`);
+console.log(`  CLS (Cumulative Layout Shift):  ${vitals.cls}`);
+console.log(`  FCP (First Contentful Paint):   ${vitals.fcp}ms`);
+console.log(`  TTFB (Time to First Byte):      ${vitals.ttfb}ms`);
+```
+
+### Rendering Metrics
+
+```typescript
+const { metrics: renderMetrics } = await client.send("Performance.getRenderingMetrics", {});
+
+console.log("Rendering pipeline timing:");
+console.log(`  HTML parsing:       ${renderMetrics.htmlParseTime}ms`);
+console.log(`  CSS parsing:        ${renderMetrics.cssParseTime}ms`);
+console.log(`  Style resolution:   ${renderMetrics.styleResolutionTime}ms`);
+console.log(`  Layout:             ${renderMetrics.layoutTime}ms`);
+console.log(`  Paint:              ${renderMetrics.paintTime}ms`);
+console.log(`  Compositing:        ${renderMetrics.compositingTime}ms`);
+```
+
+### CPU Profiling
+
+```typescript
+// Start profiling
+await client.send("Performance.startProfiling", { samplingInterval: 1000 });
+
+// ... navigate to a page or trigger page interactions ...
+await client.send("Page.navigate", { url: "https://example.com" });
+
+// Wait for load
+await new Promise((resolve) => {
+  client.on("Page.loadEventFired", resolve);
+});
+
+// Stop and collect the profile
+const { profile } = await client.send("Performance.stopProfiling", {});
+
+// Analyze the profile tree
+function printProfile(node, depth = 0) {
+  const indent = "  ".repeat(depth);
+  console.log(`${indent}${node.functionName || "(anonymous)"} - ${node.callCount} calls`);
+  (node.children || []).forEach((child) => printProfile(child, depth + 1));
+}
+printProfile(profile.head);
+```
+
+### Periodic Metrics Monitoring
+
+```typescript
+await client.send("Performance.enable", {});
+
+// Receive periodic metric snapshots (emitted every ~1s while enabled)
+client.on("Performance.metrics", ({ metrics, title }) => {
+  const heapMetric = metrics.find((m) => m.name === "UsedJSHeapSize");
+  const nodeMetric = metrics.find((m) => m.name === "Nodes");
+
+  console.log(`[${new Date().toISOString()}] Heap: ${heapMetric?.value} bytes, Nodes: ${nodeMetric?.value}`);
+});
+```
+
+### Performance Score
+
+```typescript
+const { score } = await client.send("Performance.getPerformanceScore", {});
+console.log(`Performance score: ${score.overall}/100`);
+console.log(`  Loading:     ${score.loading}/100`);
+console.log(`  Interaction: ${score.interaction}/100`);
+console.log(`  Rendering:   ${score.rendering}/100`);
+```
+
+---
+
+## Analyzing Memory (Memory Domain)
+
+The Memory domain provides heap statistics, snapshots, allocation sampling, and garbage collection control.
+
+### Getting Heap Statistics
+
+```typescript
+await client.send("Memory.enable", {});
+
+const { heapStats } = await client.send("Memory.getHeapStats", {});
+const usedMB = (heapStats.usedHeapSize / 1024 / 1024).toFixed(2);
+const totalMB = (heapStats.totalHeapSize / 1024 / 1024).toFixed(2);
+const externalMB = (heapStats.externalMemory / 1024 / 1024).toFixed(2);
+
+console.log(`Heap: ${usedMB} MB used / ${totalMB} MB total`);
+console.log(`External: ${externalMB} MB`);
+```
+
+### Taking a Heap Snapshot
+
+Heap snapshots are streamed in chunks via `Memory.addHeapSnapshotChunk` events:
+
+```typescript
+const snapshotChunks: string[] = [];
+
+client.on("Memory.addHeapSnapshotChunk", ({ chunk }) => {
+  snapshotChunks.push(chunk);
+});
+
+// Take the snapshot — will stream chunk events, then return
+await client.send("Memory.takeHeapSnapshot", { reportProgress: false });
+
+// Assemble the full snapshot
+const snapshotJSON = snapshotChunks.join("");
+const snapshot = JSON.parse(snapshotJSON);
+
+console.log("Snapshot nodes:", snapshot.nodes?.length ?? 0);
+console.log("Snapshot edges:", snapshot.edges?.length ?? 0);
+```
+
+<Aside type="tip">
+Heap snapshots can be large. For production pages, a snapshot can contain hundreds of thousands of nodes. Consider using allocation sampling instead for ongoing monitoring.
+</Aside>
+
+### Allocation Sampling
+
+Allocation sampling is lower-overhead than full snapshots and suitable for ongoing monitoring:
+
+```typescript
+// Start sampling (interval in bytes — sample every 32KB of allocation)
+await client.send("Memory.startSampling", { samplingInterval: 32768 });
+
+// ... do page work ...
+await client.send("Page.navigate", { url: "https://example.com" });
+
+// Wait for load event
+await new Promise((resolve) => client.on("Page.loadEventFired", resolve));
+
+// Stop sampling
+await client.send("Memory.stopSampling", {});
+
+// Get the allocation profile tree
+const { profile } = await client.send("Memory.getAllocationProfile", {});
+
+// Walk the allocation tree
+function printAllocations(node, depth = 0) {
+  const indent = "  ".repeat(depth);
+  const sizeMB = (node.selfSize / 1024 / 1024).toFixed(3);
+  console.log(`${indent}${node.callFrame?.functionName || "(root)"}: ${sizeMB} MB`);
+  (node.children || []).forEach((child) => printAllocations(child, depth + 1));
+}
+printAllocations(profile.head);
+```
+
+### DOM Counters
+
+```typescript
+const { documents, nodes, jsEventListeners } = await client.send("Memory.getDOMCounters", {});
+console.log(`Documents: ${documents}`);
+console.log(`DOM nodes: ${nodes}`);
+console.log(`Event listeners: ${jsEventListeners}`);
+```
+
+### Forcing Garbage Collection
+
+Useful when measuring memory leak patterns — force GC then compare heap sizes:
+
+```typescript
+const before = await client.send("Memory.getHeapStats", {});
+console.log("Before GC:", before.heapStats.usedHeapSize, "bytes");
+
+await client.send("Memory.forceGarbageCollection", {});
+
+const after = await client.send("Memory.getHeapStats", {});
+console.log("After GC:", after.heapStats.usedHeapSize, "bytes");
+console.log("Freed:", before.heapStats.usedHeapSize - after.heapStats.usedHeapSize, "bytes");
+```
+
+---
+
+## Capturing Console Messages (Console Domain)
+
+The Console domain captures all JavaScript console output and unhandled exceptions.
+
+### Capturing All Console Output
+
+```typescript
+// Enable Runtime first — Console depends on Runtime events
+await client.send("Runtime.enable", {});
+await client.send("Console.enable", {});
+
+client.on("Console.messageAdded", ({ message }) => {
+  const { level, text, url, line, source, timestamp } = message;
+
+  switch (level) {
+    case "error":
+      console.error(`[ERROR] ${text}`, url ? `(${url}:${line})` : "");
+      break;
+    case "warning":
+      console.warn(`[WARN] ${text}`);
+      break;
+    default:
+      console.log(`[${level.toUpperCase()}] ${text}`);
+  }
+});
+```
+
+### Reading Buffered Messages
+
+Messages are buffered internally even before you subscribe. Read them retroactively:
+
+```typescript
+await client.send("Console.enable", {});
+
+// Navigate to a page
+await client.send("Page.navigate", { url: "https://example.com" });
+
+// After load, read all buffered console messages
+await new Promise((resolve) => client.on("Page.loadEventFired", resolve));
+
+const { messages } = await client.send("Console.getMessages", {});
+console.log(`Captured ${messages.length} console messages`);
+
+// Filter by level
+const errors = messages.filter((m) => m.level === "error");
+const warnings = messages.filter((m) => m.level === "warning");
+console.log(`Errors: ${errors.length}, Warnings: ${warnings.length}`);
+
+// Clear for the next test
+await client.send("Console.clearMessages", {});
+```
+
+### Capturing Unhandled Exceptions
+
+The Console domain automatically captures `Runtime.exceptionThrown` events and converts them to console error messages:
+
+```typescript
+client.on("Console.messageAdded", ({ message }) => {
+  if (message.level === "error" && message.source === "javascript") {
+    console.error("JavaScript exception:", message.text);
+    if (message.stackTrace) {
+      message.stackTrace.callFrames.forEach((frame) => {
+        console.error(`  at ${frame.functionName} (${frame.url}:${frame.lineNumber})`);
+      });
+    }
+  }
+});
+```
+
+---
+
+## Full Debugging Session Example
+
+Here is a complete end-to-end debugging workflow that combines multiple domains:
+
+```typescript
+import { Browser } from "../browser/src/main.ts";
+import { attachDevTools } from "../dev-tools/mod.ts";
+import { DevToolsClient } from "../dev-tools/mod.ts";
+
+async function debugPage(url: string) {
+  // Set up browser and DevTools
+  const browser = new Browser({ width: 1280, height: 720 });
+  const devtools = attachDevTools(browser, { port: 9222 });
+  const client = new DevToolsClient("ws://127.0.0.1:9222/devtools/page/default");
+  await client.connect();
+
+  // Enable all relevant domains
+  await client.send("Runtime.enable", {});
+  await client.send("Console.enable", {});
+  await client.send("Network.enable", {});
+  await client.send("Performance.enable", {});
+  await client.send("DOM.enable", {});
+  await client.send("Debugger.enable", {});
+  await client.send("Page.enable", {});
+
+  const networkLog: Array<{ url: string; status?: number; duration?: number }> = [];
+  const requestTimestamps = new Map<string, number>();
+
+  // Collect console output
+  const consoleMessages: string[] = [];
+  client.on("Console.messageAdded", ({ message }) => {
+    consoleMessages.push(`[${message.level}] ${message.text}`);
+  });
+
+  // Track network requests
+  client.on("Network.requestWillBeSent", ({ requestId, request, timestamp }) => {
+    requestTimestamps.set(requestId, timestamp);
+    networkLog.push({ url: request.url });
+  });
+
+  client.on("Network.responseReceived", ({ requestId, response }) => {
+    const entry = networkLog.find((e) => e.url === response.url);
+    if (entry) entry.status = response.status;
+  });
+
+  client.on("Network.loadingFinished", ({ requestId, timestamp }) => {
+    const startTime = requestTimestamps.get(requestId);
+    if (startTime) {
+      const entry = networkLog[networkLog.length - 1];
+      if (entry) entry.duration = (timestamp - startTime) * 1000;
+    }
+  });
+
+  // Set a breakpoint at a critical path
+  await client.send("Debugger.setBreakpointByUrl", {
+    url: url,
+    lineNumber: 0, // First line
+  });
+
+  // Navigate to the page
+  console.log("Navigating to", url);
+  await client.send("Page.navigate", { url });
+
+  // Wait for load
+  await new Promise<void>((resolve) => {
+    client.on("Page.loadEventFired", () => resolve());
+    // Timeout after 30 seconds
+    setTimeout(resolve, 30000);
+  });
+
+  // Collect results
+  const { metrics } = await client.send("Performance.getMetrics", {});
+  const { vitals } = await client.send("Performance.getWebVitals", {});
+  const { heapStats } = await client.send("Memory.getHeapStats", {});
+  const { root } = await client.send("DOM.getDocument", { depth: 1 });
+
+  // Print report
+  console.log("\n=== Debug Report ===");
+  console.log(`URL: ${url}`);
+  console.log(`DOM nodes: ${root.childNodeCount}`);
+  console.log(`Network requests: ${networkLog.length}`);
+  console.log(`Console messages: ${consoleMessages.length}`);
+
+  const errors = consoleMessages.filter((m) => m.startsWith("[error]"));
+  if (errors.length > 0) {
+    console.log(`Console errors: ${errors.length}`);
+    errors.forEach((e) => console.log("  ", e));
+  }
+
+  console.log(`\nWeb Vitals:`);
+  console.log(`  LCP: ${vitals.lcp}ms, FCP: ${vitals.fcp}ms, TTFB: ${vitals.ttfb}ms`);
+
+  const heapMB = (heapStats.usedHeapSize / 1024 / 1024).toFixed(2);
+  console.log(`\nHeap usage: ${heapMB} MB`);
+
+  // Cleanup
+  await client.disconnect();
+  await devtools.dispose();
+}
+
+await debugPage("https://example.com");
+```

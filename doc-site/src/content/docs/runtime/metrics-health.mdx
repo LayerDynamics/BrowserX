@@ -1,0 +1,477 @@
+---
+title: Metrics & Health
+description: Observability, metrics collection, and health monitoring
+---
+
+The Runtime provides comprehensive metrics collection and health monitoring through the **Unified Metrics Collector** and **Health Checker**.
+
+## Metrics Collection
+
+### Configuration
+
+```typescript
+{
+  metrics: {
+    enabled: true,
+    port: 9090,
+    host: "0.0.0.0",
+    healthCheckInterval: 30000,      // 30 seconds
+    exportFormat: "prometheus",      // "prometheus" | "json"
+  }
+}
+```
+
+### Metrics Server
+
+When enabled, metrics are exposed via HTTP:
+
+- **Prometheus format**: `http://localhost:9090/metrics`
+- **JSON format**: `http://localhost:9090/metrics/json`
+
+```bash
+# Fetch metrics
+curl http://localhost:9090/metrics
+
+# JSON format
+curl http://localhost:9090/metrics/json
+```
+
+## Built-in Metrics
+
+### Counters
+
+```
+browserx_requests_total            # Total requests processed
+browserx_errors_total              # Total errors encountered
+browserx_browser_sessions_created_total  # Browser sessions created
+browserx_browser_sessions_closed_total   # Browser sessions closed
+```
+
+### Gauges
+
+```
+browserx_runtime_state            # Runtime state (0=stopped, 1=starting, 2=running, 3=stopping, 4=error)
+browserx_uptime_seconds           # Runtime uptime in seconds
+browserx_browser_instances        # Current browser instance count
+browserx_active_sessions          # Active browser sessions
+browserx_event_loops_active       # Active browser event loops
+browserx_memory_heap_used_bytes   # Heap memory used
+browserx_memory_heap_total_bytes  # Total heap memory
+browserx_memory_rss_bytes         # Resident set size
+```
+
+### Histograms
+
+```
+browserx_request_duration_seconds  # Request duration distribution
+```
+
+## Custom Metrics
+
+### Counters
+
+```typescript
+// Increment a counter
+runtime.metricsCollector.incrementCounter("custom_events_total");
+
+// Increment by value
+runtime.metricsCollector.incrementCounter("custom_bytes_processed", 1024);
+
+// With labels
+runtime.metricsCollector.incrementCounter(
+  "custom_requests_total",
+  1,
+  { method: "GET", path: "/api" }
+);
+```
+
+### Gauges
+
+```typescript
+// Set a gauge value
+runtime.metricsCollector.setGauge("custom_active_users", 42);
+
+// With labels
+runtime.metricsCollector.setGauge(
+  "custom_queue_size",
+  100,
+  { queue: "priority" }
+);
+```
+
+### Histograms
+
+```typescript
+// Observe a histogram value
+runtime.metricsCollector.observeHistogram(
+  "browserx_request_duration_seconds",
+  0.153  // Duration in seconds
+);
+```
+
+## Component Metrics
+
+Components can register custom metrics collectors:
+
+```typescript
+// Register component metrics
+runtime.metricsCollector.registerComponentMetrics(
+  "my-component",
+  () => ({
+    custom_metric_1: {
+      name: "my_component_metric_1",
+      type: "counter",
+      value: 123,
+      labels: { component: "my-component" },
+      timestamp: Date.now(),
+    },
+    custom_metric_2: {
+      name: "my_component_metric_2",
+      type: "gauge",
+      value: 456,
+      labels: { component: "my-component" },
+      timestamp: Date.now(),
+    },
+  })
+);
+```
+
+## Health Checks
+
+### Configuration
+
+```typescript
+{
+  metrics: {
+    healthCheckInterval: 30000,  // Check every 30 seconds
+  }
+}
+```
+
+### Health Status
+
+Three health levels:
+
+- **healthy**: Component is operational
+- **degraded**: Component is operational but performance is reduced
+- **unhealthy**: Component is not operational
+
+### Built-in Health Checks
+
+The Runtime automatically monitors:
+
+- **Event Coordinator**: Checks if event loops are running
+- **Browser Pool**: Checks pool capacity (degraded if at capacity)
+- **Plugin Manager**: Checks if running
+- **Metrics Collector**: Checks if running
+
+### Custom Health Checks
+
+Register custom health checks:
+
+```typescript
+// Simple boolean check
+runtime.healthChecker.registerHandler(
+  "my-service",
+  HealthChecker.createBooleanHandler(
+    () => myService.isHealthy(),
+    "Service is healthy",
+    "Service is unhealthy"
+  )
+);
+
+// Custom check
+runtime.healthChecker.registerHandler(
+  "database",
+  async () => {
+    try {
+      await db.ping();
+      return {
+        status: "healthy",
+        message: "Database connection OK",
+      };
+    } catch (error) {
+      return {
+        status: "unhealthy",
+        message: `Database error: ${error.message}`,
+      };
+    }
+  }
+);
+```
+
+### Health Check Results
+
+```typescript
+// Get last health check result
+const lastResult = runtime.healthChecker.getLastCheckResult();
+
+if (lastResult) {
+  console.log(`Overall status: ${lastResult.status}`);
+
+  for (const component of lastResult.components) {
+    console.log(`${component.componentId}: ${component.status}`);
+    if (component.message) {
+      console.log(`  ${component.message}`);
+    }
+    console.log(`  Latency: ${component.latency}ms`);
+  }
+}
+
+// Force a health check
+const result = await runtime.healthChecker.getHealthStatus();
+```
+
+### Health Check Interface
+
+```typescript
+interface HealthCheckResult {
+  status: HealthStatus;              // Overall status
+  components: ComponentHealthCheck[]; // Per-component results
+  timestamp: number;                 // Check timestamp
+}
+
+interface ComponentHealthCheck {
+  componentId: ComponentId;
+  status: HealthStatus;
+  message?: string;
+  latency?: number;       // Check duration in ms
+  lastCheck: number;      // Timestamp of last check
+}
+```
+
+## Prometheus Integration
+
+### Scrape Configuration
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'browserx'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+```
+
+### Example Queries
+
+```promql
+# Request rate
+rate(browserx_requests_total[5m])
+
+# Error rate
+rate(browserx_errors_total[5m]) / rate(browserx_requests_total[5m])
+
+# Memory usage
+browserx_memory_heap_used_bytes / browserx_memory_heap_total_bytes
+
+# Browser instance utilization
+browserx_active_sessions / browserx_browser_instances
+
+# Request latency p95
+histogram_quantile(0.95, browserx_request_duration_seconds)
+```
+
+## Grafana Dashboards
+
+### Example Dashboard JSON
+
+```json
+{
+  "dashboard": {
+    "title": "BrowserX Runtime",
+    "panels": [
+      {
+        "title": "Runtime State",
+        "targets": [{
+          "expr": "browserx_runtime_state"
+        }]
+      },
+      {
+        "title": "Browser Pool Utilization",
+        "targets": [{
+          "expr": "browserx_active_sessions / browserx_browser_instances * 100"
+        }]
+      },
+      {
+        "title": "Memory Usage",
+        "targets": [{
+          "expr": "browserx_memory_heap_used_bytes"
+        }]
+      },
+      {
+        "title": "Request Rate",
+        "targets": [{
+          "expr": "rate(browserx_requests_total[5m])"
+        }]
+      }
+    ]
+  }
+}
+```
+
+## Runtime Statistics
+
+Get comprehensive runtime statistics:
+
+```typescript
+const stats = runtime.getStats();
+
+console.log(`State: ${stats.state}`);
+console.log(`Uptime: ${stats.uptime}ms`);
+console.log(`Started at: ${new Date(stats.startedAt)}`);
+
+// Component states
+for (const component of stats.components) {
+  console.log(`${component.id}: ${component.state}`);
+}
+
+// Memory
+console.log(`Heap used: ${stats.memory.heapUsed} bytes`);
+console.log(`RSS: ${stats.memory.rss} bytes`);
+
+// Resources
+console.log(`Browser instances: ${stats.resources.browserInstances}`);
+console.log(`Active sessions: ${stats.resources.activeSessions}`);
+
+// Event loops
+console.log(`Proxy loop running: ${stats.eventLoops.proxyLoopRunning}`);
+console.log(`Browser loops active: ${stats.eventLoops.browserLoopsActive}`);
+
+// Health
+console.log(`Overall health: ${stats.health.status}`);
+```
+
+## Best Practices
+
+### 1. Enable Metrics in Production
+
+```typescript
+{
+  environment: "production",
+  metrics: {
+    enabled: true,
+    port: 9090,
+    exportFormat: "prometheus",
+  }
+}
+```
+
+### 2. Monitor Key Metrics
+
+Set up alerts for:
+
+- High error rate: `browserx_errors_total`
+- Memory leaks: `browserx_memory_heap_used_bytes` trending up
+- Pool exhaustion: `browserx_active_sessions == browserx_browser_instances`
+- Health degradation: `browserx_health_status != "healthy"`
+
+### 3. Use Health Checks for Critical Dependencies
+
+```typescript
+// Database
+healthChecker.registerHandler("database", async () => {
+  const healthy = await db.ping();
+  return { status: healthy ? "healthy" : "unhealthy" };
+});
+
+// External API
+healthChecker.registerHandler("api", async () => {
+  const response = await fetch("https://api.example.com/health");
+  return {
+    status: response.ok ? "healthy" : "degraded",
+    message: `Status: ${response.status}`,
+  };
+});
+```
+
+### 4. Log Health Check Failures
+
+```typescript
+runtime.addEventListener((event) => {
+  if (event.type === "health_check" && event.status !== "healthy") {
+    console.error("Health check failed:", event.details);
+
+    // Send alert
+    sendAlert({
+      severity: event.status === "unhealthy" ? "critical" : "warning",
+      message: "BrowserX health degraded",
+      details: event.details,
+    });
+  }
+});
+```
+
+## API Reference
+
+### UnifiedMetricsCollector
+
+```typescript
+class UnifiedMetricsCollector {
+  // Lifecycle
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  isRunning(): boolean;
+
+  // Metrics
+  incrementCounter(name: string, value?: number, labels?: Record<string, string>): void;
+  setGauge(name: string, value: number, labels?: Record<string, string>): void;
+  observeHistogram(name: string, value: number): void;
+
+  // Updates
+  updateMemoryMetrics(): void;
+  updateRuntimeState(state: RuntimeState): void;
+  updateUptime(uptimeMs: number): void;
+
+  // Component metrics
+  registerComponentMetrics(componentId: ComponentId, collector: () => Record<string, MetricValue>): void;
+
+  // Export
+  exportPrometheus(): string;
+  exportJSON(): Record<string, MetricValue[]>;
+
+  // Configuration
+  getConfig(): MetricsConfig;
+}
+```
+
+### HealthChecker
+
+```typescript
+class HealthChecker {
+  // Lifecycle
+  start(): void;
+  stop(): void;
+  isRunning(): boolean;
+
+  // Health checks
+  registerHandler(componentId: ComponentId, handler: HealthCheckHandler): void;
+  unregisterHandler(componentId: ComponentId): void;
+  performHealthCheck(): Promise<HealthCheckResult>;
+  getHealthStatus(): Promise<HealthCheckResult>;
+  getLastCheckResult(): HealthCheckResult | null;
+  isComponentHealthy(componentId: ComponentId): Promise<boolean>;
+
+  // Helper factories
+  static createSimpleHandler(status: HealthStatus): HealthCheckHandler;
+  static createBooleanHandler(
+    check: () => boolean | Promise<boolean>,
+    healthyMessage?: string,
+    unhealthyMessage?: string
+  ): HealthCheckHandler;
+
+  // Configuration
+  getConfig(): MetricsConfig;
+
+  // Events
+  addEventListener(listener: RuntimeEventListener): void;
+  removeEventListener(listener: RuntimeEventListener): void;
+}
+```
+
+## Next Steps
+
+- [Configuration](./configuration) - Metrics configuration options
+- [Events](./events) - Health check events
+- [Plugin System](./plugins) - Plugin health checks
+- [Integration Patterns](./integration) - Monitoring in production

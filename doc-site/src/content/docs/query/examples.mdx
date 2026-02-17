@@ -1,0 +1,716 @@
+---
+title: Real-World Query Examples
+description: Practical examples for common automation scenarios
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide provides real-world examples of using the Query Engine for common automation tasks.
+
+## Web Scraping
+
+### E-commerce Price Monitoring
+
+Monitor competitor prices across multiple stores:
+
+```sql
+-- Extract product prices from multiple stores
+WITH stores AS (
+  VALUES
+    ('Store A', 'https://store-a.com/product/123'),
+    ('Store B', 'https://store-b.com/item/456'),
+    ('Store C', 'https://store-c.com/p/789')
+)
+FOR EACH (name, url) IN stores
+  NAVIGATE TO url
+  CAPTURE {
+    store: name,
+    price: PARSE_NUMBER(TEXT('.price')),
+    inStock: EXISTS('.in-stock'),
+    rating: PARSE_NUMBER(ATTR('.rating', 'data-rating')),
+    reviewCount: COUNT('.review'),
+    lastUpdated: NOW()
+  }
+ORDER BY price ASC
+```
+
+**Expected Output:**
+```json
+[
+  {
+    "store": "Store C",
+    "price": 299.99,
+    "inStock": true,
+    "rating": 4.5,
+    "reviewCount": 127,
+    "lastUpdated": "2024-02-16T10:30:00Z"
+  },
+  {
+    "store": "Store A",
+    "price": 329.99,
+    "inStock": true,
+    "rating": 4.7,
+    "reviewCount": 89,
+    "lastUpdated": "2024-02-16T10:30:01Z"
+  }
+]
+```
+
+### Paginated Product Scraping
+
+Extract data across multiple pages:
+
+```sql
+-- Scrape all products with pagination
+WITH RECURSIVE pages AS (
+  -- Base case: First page
+  SELECT 1 AS pageNum, 'https://store.com/products?page=1' AS url
+
+  UNION ALL
+
+  -- Recursive case: Next pages
+  SELECT
+    pageNum + 1,
+    'https://store.com/products?page=' || (pageNum + 1)
+  FROM pages
+  WHERE pageNum < 10
+    AND EXISTS(
+      NAVIGATE TO url
+      SELECT EXISTS('.pagination .next')
+    )
+)
+FOR EACH page IN pages
+  NAVIGATE TO page.url
+  CAPTURE {
+    page: page.pageNum,
+    products: ARRAY(
+      FOR EACH product IN QUERYSELECTORALL('.product')
+        {
+          name: TEXT(product, '.name'),
+          price: PARSE_NUMBER(TEXT(product, '.price')),
+          image: ATTR(product, 'img', 'src'),
+          url: ATTR(product, 'a', 'href'),
+          rating: PARSE_NUMBER(ATTR(product, '.rating', 'data-rating'))
+        }
+    )
+  }
+FLATTEN products
+```
+
+### News Aggregation
+
+Aggregate headlines from multiple news sources:
+
+```sql
+-- Fetch top headlines from multiple sources
+WITH sources AS (
+  VALUES
+    ('TechNews', 'https://technews.com'),
+    ('ScienceDaily', 'https://sciencedaily.com'),
+    ('WorldNews', 'https://worldnews.com')
+)
+PARALLEL 3 {
+  FOR EACH (name, url) IN sources
+    NAVIGATE TO url
+    CAPTURE {
+      source: name,
+      articles: ARRAY(
+        FOR EACH article IN QUERYSELECTORALL('.article')
+          {
+            title: TEXT(article, '.title'),
+            url: ATTR(article, 'a', 'href'),
+            date: TEXT(article, '.date'),
+            category: TEXT(article, '.category'),
+            excerpt: TEXT(article, '.excerpt')
+          }
+      )
+    }
+}
+FLATTEN articles
+ORDER BY date DESC
+LIMIT 50
+```
+
+## Browser Automation
+
+### Login Flow
+
+Automate login with error handling:
+
+```sql
+-- Automated login with comprehensive error handling
+NAVIGATE TO "https://app.example.com/login"
+
+-- Check if already logged in
+IF EXISTS("#user-menu") THEN
+  SELECT {
+    status: "already_logged_in",
+    user: TEXT("#user-menu .username")
+  }
+ELSE
+  -- Fill login form
+  INSERT "user@example.com" INTO "#email"
+  INSERT "password123" INTO "#password"
+
+  -- Optional: Remember me
+  IF EXISTS("#remember-me") THEN
+    CLICK "#remember-me"
+
+  -- Submit form
+  CLICK "#login-button"
+
+  -- Wait for either success or error
+  WAIT 5s FOR (EXISTS("#user-menu") OR EXISTS(".error-message"))
+
+  -- Check result
+  IF EXISTS(".error-message") THEN
+    -- Login failed
+    SELECT {
+      status: "login_failed",
+      error: TEXT(".error-message")
+    }
+  ELSE IF EXISTS("#user-menu") THEN
+    -- Login successful
+    CAPTURE cookies, localStorage
+    SELECT {
+      status: "login_successful",
+      user: TEXT("#user-menu .username"),
+      cookies: SHOW COOKIES,
+      redirectUrl: url
+    }
+  ELSE
+    -- Timeout
+    SELECT {
+      status: "timeout",
+      error: "Login did not complete within timeout"
+    }
+```
+
+### Form Filling
+
+Fill complex multi-step forms:
+
+```sql
+-- Fill multi-step registration form
+NAVIGATE TO "https://app.example.com/register"
+
+-- Step 1: Personal Information
+INSERT "John" INTO "#firstName"
+INSERT "Doe" INTO "#lastName"
+INSERT "john.doe@example.com" INTO "#email"
+INSERT "555-0123" INTO "#phone"
+CLICK "#next-step"
+
+-- Wait for step 2
+WAIT FOR EXISTS("#address-form")
+
+-- Step 2: Address
+INSERT "123 Main St" INTO "#street"
+INSERT "New York" INTO "#city"
+INSERT "NY" INTO "#state"
+INSERT "10001" INTO "#zipCode"
+CLICK "#next-step"
+
+-- Wait for step 3
+WAIT FOR EXISTS("#preferences-form")
+
+-- Step 3: Preferences
+CLICK "input[name='newsletter']"
+CLICK "input[name='terms']"
+
+-- Submit
+CLICK "#submit"
+
+-- Wait for confirmation
+WAIT FOR EXISTS(".success-message")
+
+-- Capture result
+SELECT {
+  success: true,
+  message: TEXT(".success-message"),
+  userId: ATTR("#user-id", "data-id")
+}
+```
+
+### File Download
+
+Download files with verification:
+
+```sql
+-- Download file and verify
+NAVIGATE TO "https://example.com/downloads"
+
+-- Wait for download button
+WAIT FOR EXISTS("a.download-button")
+
+-- Capture download URL
+WITH downloadUrl AS (
+  SELECT ATTR("a.download-button", "href") AS url
+)
+
+-- Trigger download
+CLICK "a.download-button"
+
+-- Wait for download to complete
+WAIT 10s FOR DOWNLOAD_COMPLETE
+
+-- Verify download
+SELECT {
+  downloadUrl: downloadUrl.url,
+  fileName: DOWNLOAD_FILENAME,
+  fileSize: DOWNLOAD_SIZE,
+  success: DOWNLOAD_SUCCESS
+}
+```
+
+## Testing & QA
+
+### Visual Regression Testing
+
+Capture and compare screenshots across viewports:
+
+```sql
+-- Capture screenshots at different viewports
+WITH viewports AS (
+  VALUES
+    ('desktop', {width: 1920, height: 1080}),
+    ('laptop', {width: 1366, height: 768}),
+    ('tablet', {width: 768, height: 1024}),
+    ('mobile', {width: 375, height: 667})
+)
+FOR EACH (device, viewport) IN viewports
+  NAVIGATE TO "https://example.com"
+    WITH {
+      browser: {
+        viewport: viewport,
+        deviceScaleFactor: IF(device = "mobile", 2, 1)
+      }
+    }
+  CAPTURE {
+    device: device,
+    viewport: viewport,
+    screenshot: SCREENSHOT({
+      fullPage: true,
+      format: "png"
+    }),
+    timestamp: NOW()
+  }
+
+-- Compare with baseline
+FOR EACH result IN results
+  WITH diff AS (
+    SELECT COMPARE_IMAGES(
+      result.screenshot,
+      BASELINE_IMAGE(result.device)
+    ) AS difference
+  )
+  IF diff.difference > 0.01 THEN
+    SELECT {
+      device: result.device,
+      status: "regression_detected",
+      difference: diff.difference,
+      diffImage: diff.image
+    }
+  ELSE
+    SELECT {
+      device: result.device,
+      status: "passed"
+    }
+```
+
+### Performance Monitoring
+
+Monitor page performance metrics:
+
+```sql
+-- Measure page load performance
+NAVIGATE TO "https://example.com"
+  WITH {
+    proxy: {
+      intercept: { urls: ["*"] },
+      metrics: true
+    }
+  }
+  CAPTURE
+    performance.timing,
+    performance.navigation,
+    performance.resources,
+    proxy.metrics
+
+-- Analyze performance
+SELECT {
+  -- Core Web Vitals
+  LCP: performance.timing.largestContentfulPaint,
+  FID: performance.timing.firstInputDelay,
+  CLS: performance.timing.cumulativeLayoutShift,
+
+  -- Navigation Timing
+  domContentLoaded: timing.domContentLoadedEventEnd - timing.navigationStart,
+  pageLoad: timing.loadEventEnd - timing.navigationStart,
+  domInteractive: timing.domInteractive - timing.navigationStart,
+
+  -- Resource Summary
+  totalRequests: COUNT(resources),
+  totalBytes: SUM(resources.transferSize),
+  largestResource: MAX(resources.transferSize),
+  slowestResource: MAX(resources.duration),
+
+  -- Resource Breakdown
+  byType: {
+    scripts: COUNT(resources WHERE type = "script"),
+    stylesheets: COUNT(resources WHERE type = "stylesheet"),
+    images: COUNT(resources WHERE type = "image"),
+    fonts: COUNT(resources WHERE type = "font")
+  },
+
+  -- Cache Performance
+  cacheHitRate: proxy.metrics.cacheHits / proxy.metrics.totalRequests,
+
+  -- Pass/Fail
+  passed: (
+    performance.timing.largestContentfulPaint < 2500 AND
+    performance.timing.firstInputDelay < 100 AND
+    performance.timing.cumulativeLayoutShift < 0.1
+  )
+}
+```
+
+### Broken Link Checker
+
+Find and report broken links:
+
+```sql
+-- Check all links on a page
+NAVIGATE TO "https://example.com"
+
+WITH links AS (
+  SELECT ARRAY(ATTR("a[href]", "href")) AS urls
+)
+
+FOR EACH url IN links.urls
+  WITH response AS (
+    NAVIGATE TO url
+      WITH {
+        proxy: { timeout: 5000 },
+        browser: { waitUntil: "domcontentloaded" }
+      }
+      CAPTURE response.status, response.redirected
+  )
+  SELECT {
+    url: url,
+    status: response.status,
+    broken: response.status >= 400,
+    redirected: response.redirected,
+    message: CASE response.status
+      WHEN 200 THEN "OK"
+      WHEN 301 THEN "Moved Permanently"
+      WHEN 302 THEN "Found (Redirect)"
+      WHEN 404 THEN "Not Found"
+      WHEN 500 THEN "Internal Server Error"
+      ELSE "Unknown Status"
+    END
+  }
+  WHERE response.status >= 400  -- Only report errors
+```
+
+## API Testing
+
+### REST API Testing
+
+Test API endpoints through proxy:
+
+```sql
+-- Test API endpoints
+WITH endpoints AS (
+  VALUES
+    ('GET', '/api/users', null),
+    ('POST', '/api/users', '{"name":"John","email":"john@example.com"}'),
+    ('GET', '/api/users/123', null),
+    ('PUT', '/api/users/123', '{"name":"Jane"}'),
+    ('DELETE', '/api/users/123', null)
+)
+
+FOR EACH (method, path, body) IN endpoints
+  NAVIGATE TO "https://api.example.com" || path
+    WITH {
+      proxy: {
+        method: method,
+        headers: {
+          "Authorization": "Bearer test-token",
+          "Content-Type": "application/json"
+        },
+        body: body,
+        intercept: { urls: ["*"] }
+      }
+    }
+    CAPTURE proxy.requests, proxy.responses
+
+  -- Analyze response
+  WITH response AS (SELECT proxy.responses[0])
+  SELECT {
+    method: method,
+    path: path,
+    status: response.status,
+    success: response.status >= 200 AND response.status < 300,
+    responseTime: response.timing.total,
+    body: PARSE_JSON(response.body),
+    headers: response.headers
+  }
+```
+
+### GraphQL Testing
+
+Test GraphQL queries:
+
+```sql
+-- Test GraphQL endpoint
+WITH query AS (
+  SELECT '{"query": "{ users { id name email } }"}' AS body
+)
+
+NAVIGATE TO "https://api.example.com/graphql"
+  WITH {
+    proxy: {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer token"
+      },
+      body: query.body
+    }
+  }
+  CAPTURE response
+
+SELECT {
+  success: response.status = 200,
+  data: PARSE_JSON(response.body).data,
+  errors: PARSE_JSON(response.body).errors,
+  responseTime: response.timing.total
+}
+```
+
+## Data Collection
+
+### AI/ML Training Data
+
+Collect diverse web content for ML training:
+
+```sql
+-- Collect training data from various sources
+WITH categories AS (
+  VALUES
+    ('news', 'https://news.example.com/latest'),
+    ('blog', 'https://blog.example.com/posts'),
+    ('forum', 'https://forum.example.com/discussions'),
+    ('wiki', 'https://wiki.example.com/pages')
+)
+
+PARALLEL 4 {
+  FOR EACH (category, url) IN categories
+    NAVIGATE TO url
+
+    -- Get sample URLs from category
+    WITH samples AS (
+      SELECT ARRAY(ATTR("a.content-link", "href")) AS urls
+      LIMIT 100
+    )
+
+    -- Process each sample
+    FOR EACH sampleUrl IN samples.urls
+      NAVIGATE TO sampleUrl
+      CAPTURE {
+        category: category,
+        url: sampleUrl,
+        title: TEXT("title"),
+        content: TEXT("body"),
+        headings: ARRAY(TEXT("h1, h2, h3")),
+        paragraphs: ARRAY(TEXT("p")),
+        links: COUNT("a[href]"),
+        images: COUNT("img[src]"),
+        wordCount: WORD_COUNT(TEXT("body")),
+        language: DETECT_LANGUAGE(TEXT("body")),
+        metadata: {
+          description: META("description"),
+          keywords: META("keywords"),
+          author: META("author"),
+          publishDate: META("article:published_time")
+        },
+        timestamp: NOW()
+      }
+      STREAM RESULT  -- Stream to avoid memory issues
+}
+```
+
+### Competitive Intelligence
+
+Monitor competitor websites:
+
+```sql
+-- Monitor competitor changes
+WITH competitors AS (
+  VALUES
+    ('Competitor A', 'https://competitor-a.com'),
+    ('Competitor B', 'https://competitor-b.com'),
+    ('Competitor C', 'https://competitor-c.com')
+)
+
+FOR EACH (name, url) IN competitors
+  NAVIGATE TO url
+  CAPTURE {
+    competitor: name,
+    url: url,
+    snapshot: {
+      title: TEXT("title"),
+      products: ARRAY(
+        FOR EACH product IN QUERYSELECTORALL('.product')
+          {
+            name: TEXT(product, '.name'),
+            price: PARSE_NUMBER(TEXT(product, '.price')),
+            availability: TEXT(product, '.availability')
+          }
+      ),
+      promotions: ARRAY(TEXT(".promotion")),
+      screenshot: SCREENSHOT({ fullPage: true })
+    },
+    timestamp: NOW()
+  }
+
+-- Compare with previous snapshot
+WITH previous AS (
+  SELECT LOAD_SNAPSHOT(name, DATE_SUB(NOW(), INTERVAL 1 DAY))
+)
+SELECT DIFF(current.snapshot, previous.snapshot) AS changes
+```
+
+## Monitoring
+
+### Website Change Detection
+
+Detect changes on monitored pages:
+
+```sql
+-- Monitor page for changes
+NAVIGATE TO "https://example.com/important-page"
+
+WITH current AS (
+  SELECT {
+    html: HTML("body"),
+    text: TEXT("body"),
+    hash: SHA256(HTML("body"))
+  }
+),
+previous AS (
+  SELECT LOAD_PREVIOUS_STATE() AS state
+)
+
+SELECT {
+  changed: current.hash != previous.state.hash,
+  diff: IF(
+    current.hash != previous.state.hash,
+    DIFF_HTML(current.html, previous.state.html),
+    null
+  ),
+  timestamp: NOW()
+}
+
+-- Save current state
+IF changed THEN
+  SAVE_STATE(current)
+  ALERT "Page changed at https://example.com/important-page"
+```
+
+### Uptime Monitoring
+
+Monitor service availability:
+
+```sql
+-- Check service health
+WITH RETRY(maxAttempts: 3, backoff: "exponential") {
+  NAVIGATE TO "https://service.example.com/health"
+    WITH {
+      proxy: { timeout: 5000 },
+      browser: { waitUntil: "domcontentloaded" }
+    }
+    CAPTURE response.status, response.timing
+
+  SELECT {
+    url: "https://service.example.com/health",
+    status: response.status,
+    online: response.status >= 200 AND response.status < 300,
+    responseTime: response.timing.total,
+    timestamp: NOW()
+  }
+}
+CATCH error
+  SELECT {
+    url: "https://service.example.com/health",
+    online: false,
+    error: error.message,
+    timestamp: NOW()
+  }
+  ALERT "Service down: " || error.message
+```
+
+## Best Practices
+
+### Error Handling Pattern
+
+```sql
+-- Robust error handling
+WITH RETRY(maxAttempts: 3, backoff: "exponential") {
+  NAVIGATE TO url
+    WITH {
+      proxy: { timeout: 30000, rotate: true },
+      browser: { waitUntil: "networkidle" }
+    }
+
+  -- Verify page loaded
+  IF NOT EXISTS(".content-loaded") THEN
+    THROW "Content not loaded"
+
+  -- Extract data
+  SELECT { /* data */ }
+}
+CATCH error
+  SELECT {
+    success: false,
+    error: error.message,
+    url: url,
+    timestamp: NOW()
+  }
+```
+
+### Rate Limiting Pattern
+
+```sql
+-- Respect rate limits
+WITH rateLimiter AS (
+  SET rateLimit = 10 PER SECOND
+)
+
+FOR EACH url IN urls
+  -- Wait if necessary
+  WAIT_FOR_RATE_LIMIT
+
+  -- Execute request
+  SELECT data FROM url
+```
+
+### Caching Pattern
+
+```sql
+-- Use caching effectively
+IF CACHED(url) AND CACHE_AGE(url) < 3600 THEN
+  -- Use cached version
+  SELECT data FROM CACHE(url)
+ELSE
+  -- Fetch fresh
+  SELECT data FROM url
+  CACHE RESULT WITH { ttl: 3600 }
+```
+
+## Next Steps
+
+- Learn about [Query Optimization](/query/optimization)
+- Explore [API Reference](/query/api-reference)
+- Study [Performance Tuning](/query/performance)

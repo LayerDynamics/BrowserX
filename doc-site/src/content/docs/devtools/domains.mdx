@@ -1,0 +1,926 @@
+---
+title: Domain Reference
+description: Complete reference for all 14 Chrome DevTools Protocol domain agents in BrowserX — methods, events, and dependencies for each domain.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+BrowserX DevTools implements 14 CDP domain agents. Every domain extends `BaseDomain` and is initialized with a shared `DomainInitContext` that provides access to all browser subsystems.
+
+## BaseDomain — Base Class Pattern
+
+All domain agents extend `BaseDomain`. Understanding this base class is essential for working with any domain.
+
+```typescript
+import { BaseDomain } from "../dev-tools/domains/base-domain.ts";
+import type { DomainInitContext } from "../dev-tools/domains/base-domain.ts";
+import { EventBus } from "../dev-tools/integration/event-bus.ts";
+
+export abstract class BaseDomain {
+  abstract readonly name: DomainName;
+  protected enabled: boolean = false;
+  protected context: DomainInitContext; // set by initialize()
+  protected eventBus: EventBus;
+
+  constructor(eventBus: EventBus) { ... }
+
+  // Called once during DevTools setup — sets context and calls setup()
+  initialize(context: DomainInitContext): void
+
+  // Domain-specific method and event registration — override in each domain
+  protected abstract setup(): void
+
+  // Called when client sends "Domain.enable"
+  async enable(): Promise<Record<string, unknown>>
+
+  // Called when client sends "Domain.disable"
+  async disable(): Promise<Record<string, unknown>>
+
+  // Routes incoming method calls from the protocol layer
+  async handleMethod(methodName: string, params: Record<string, unknown>): Promise<Record<string, unknown>>
+
+  // Registration helpers (called from setup())
+  protected registerMethod(name: string, description: string, handler: MethodHandler): void
+  protected registerEvent(name: string, description: string): void
+  protected emitEvent(eventName: string, params?: Record<string, unknown>): void
+
+  // Direct event listener management (bypass WebSocket)
+  addEventListener(listener: (event: ProtocolEvent) => void): void
+  removeEventListener(listener: (event: ProtocolEvent) => void): void
+
+  // Introspection
+  getMethodNames(): string[]   // always includes "enable" and "disable"
+  getEventNames(): string[]
+
+  // Cleanup — clears all registered methods, events, and listeners
+  dispose(): void
+}
+```
+
+### DomainInitContext
+
+Every domain receives a shared context object on initialization:
+
+```typescript
+export interface DomainInitContext {
+  browser: Browser;                     // Core browser instance
+  requestPipeline: RequestPipeline;     // HTTP request/response lifecycle
+  renderingPipeline: RenderingPipeline; // HTML/CSS/layout/paint pipeline
+  storageManager: StorageManager;       // localStorage, sessionStorage, IndexedDB
+  cookieManager: CookieManager;         // Cookie CRUD
+  quotaManager: QuotaManager;           // Storage quota enforcement
+  eventBus: EventBus;                   // Cross-domain pub/sub
+}
+```
+
+<Aside type="note">
+All domains receive the same context instance. Changes made through one domain (e.g., setting a cookie via the Storage domain) are immediately visible to other domains accessing the same subsystems.
+</Aside>
+
+---
+
+## DOM Domain
+
+**Class:** `DOMDomain` | **Dependencies:** none
+
+Provides DOM tree inspection and manipulation. Hooks into `RenderingPipeline.lastRenderResult.dom` for live DOM access.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable the domain |
+| `disable` | Disable the domain |
+| `getDocument` | Return the root DOM node (with configurable depth) |
+| `querySelector` | Run `querySelector` on a node by CSS selector |
+| `querySelectorAll` | Run `querySelectorAll` on a node by CSS selector |
+| `getOuterHTML` | Get the serialized outer HTML of a node |
+| `setAttributeValue` | Set an attribute on an element node |
+| `removeAttribute` | Remove an attribute from an element node |
+| `removeNode` | Remove a node from the DOM tree |
+| `getBoxModel` | Get content/padding/border/margin quads for an element |
+| `requestChildNodes` | Fetch children for a node and emit `setChildNodes` event |
+| `performSearch` | Search the DOM tree by text, tag name, or attribute value |
+| `getSearchResults` | Retrieve a range of results from a previous `performSearch` |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `documentUpdated` | DOM tree structure changed (full refresh needed) |
+| `setChildNodes` | Children fetched for a node via `requestChildNodes` |
+| `attributeModified` | An attribute value changed on a node |
+| `attributeRemoved` | An attribute was removed from a node |
+| `childNodeRemoved` | A child node was removed from its parent |
+| `childNodeInserted` | A child node was inserted into the tree |
+| `characterDataModified` | Text content changed on a text node |
+
+### Example
+
+```typescript
+// Enable and get the document tree
+await client.send("DOM.enable", {});
+const { root } = await client.send("DOM.getDocument", { depth: 3 });
+
+// Find an element by selector
+const { nodeId } = await client.send("DOM.querySelector", {
+  nodeId: root.nodeId,
+  selector: "#main-content",
+});
+
+// Get its box model for layout inspection
+const { model } = await client.send("DOM.getBoxModel", { nodeId });
+console.log(`Width: ${model.width}, Height: ${model.height}`);
+
+// Get outer HTML
+const { outerHTML } = await client.send("DOM.getOuterHTML", { nodeId });
+
+// Listen for attribute changes
+client.on("DOM.attributeModified", ({ nodeId, name, value }) => {
+  console.log(`Node ${nodeId}: ${name}="${value}"`);
+});
+```
+
+---
+
+## CSS Domain
+
+**Class:** `CSSDomain` | **Dependencies:** DOM
+
+Provides stylesheet inspection, computed styles, and CSS rule matching. Hooks into the CSSOM built by `RenderingPipeline`.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable the domain; emits `styleSheetAdded` for all existing stylesheets |
+| `disable` | Disable the domain |
+| `getComputedStyleForNode` | Get all computed CSS properties for a node |
+| `getMatchedStylesForNode` | Get matched CSS rules (inline + stylesheet rules) for a node |
+| `getStyleSheetText` | Get the raw text content of a stylesheet |
+| `getAllStyleSheets` | Get all stylesheet headers (id, url, origin, length) |
+| `forcePseudoState` | Force a pseudo-state (`:hover`, `:focus`, `:active`, `:visited`) on an element |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `styleSheetAdded` | A new stylesheet was added to the page |
+| `styleSheetRemoved` | A stylesheet was removed |
+| `styleSheetChanged` | The content of a stylesheet changed |
+
+### Example
+
+```typescript
+await client.send("CSS.enable", {});
+
+// Get all computed styles for a node
+const { computedStyle } = await client.send("CSS.getComputedStyleForNode", {
+  nodeId: 5,
+});
+computedStyle.forEach(({ name, value }) => {
+  console.log(`${name}: ${value}`);
+});
+
+// Get matching CSS rules
+const { matchedCSSRules } = await client.send("CSS.getMatchedStylesForNode", {
+  nodeId: 5,
+});
+
+// Force hover state for screenshot purposes
+await client.send("CSS.forcePseudoState", {
+  nodeId: 5,
+  forcedPseudoClasses: ["hover"],
+});
+```
+
+---
+
+## Network Domain
+
+**Class:** `NetworkDomain` | **Dependencies:** none
+
+Monitors HTTP requests and responses with timing data. Hooks into `RequestPipeline` for network activity tracking.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable network monitoring |
+| `disable` | Disable network monitoring |
+| `getResponseBody` | Get the response body for a completed request by request ID |
+| `getCookies` | Get cookies for one or more URLs |
+| `setCookie` | Set a cookie with full attribute control |
+| `clearBrowserCache` | Clear the browser's HTTP cache |
+| `clearBrowserCookies` | Clear all browser cookies |
+| `setCacheDisabled` | Disable or re-enable HTTP caching |
+| `getRequestStats` | Get aggregate request statistics (total, succeeded, failed, cached) |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `requestWillBeSent` | A request is about to be sent (includes URL, method, headers) |
+| `responseReceived` | Response headers have been received |
+| `loadingFinished` | Request completed; response body is available |
+| `loadingFailed` | Request failed with an error |
+| `dataReceived` | A chunk of response data was received |
+| `requestServedFromCache` | Request was served from the HTTP cache |
+
+### Example
+
+```typescript
+await client.send("Network.enable", {});
+
+// Monitor all outgoing requests
+client.on("Network.requestWillBeSent", ({ requestId, request }) => {
+  console.log(`[${requestId}] ${request.method} ${request.url}`);
+});
+
+// Monitor responses
+client.on("Network.responseReceived", ({ requestId, response }) => {
+  console.log(`[${requestId}] ${response.status} ${response.url}`);
+});
+
+// Get response body after load completes
+client.on("Network.loadingFinished", async ({ requestId }) => {
+  const { body } = await client.send("Network.getResponseBody", { requestId });
+  console.log("Body length:", body.length);
+});
+
+// Disable cache for testing
+await client.send("Network.setCacheDisabled", { cacheDisabled: true });
+```
+
+---
+
+## Runtime Domain
+
+**Class:** `RuntimeDomain` | **Dependencies:** none
+
+Provides JavaScript evaluation, console API interception, and object inspection. Hooks into `ScriptExecutor` and V8 isolate.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable the domain; emits `executionContextCreated` |
+| `disable` | Disable the domain |
+| `evaluate` | Evaluate a JavaScript expression in the page context |
+| `getProperties` | Get properties of a remote object by its `objectId` |
+| `releaseObject` | Release a remote object reference to free memory |
+| `releaseObjectGroup` | Release all objects in a named group |
+| `getHeapUsage` | Get current V8 heap usage (used vs total bytes) |
+| `getExecutionContexts` | List all active JavaScript execution contexts |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `consoleAPICalled` | A `console.*` method was called in the page (type, args, timestamp) |
+| `exceptionThrown` | An uncaught exception occurred |
+| `executionContextCreated` | A new JavaScript execution context was created |
+| `executionContextDestroyed` | An execution context was destroyed |
+
+### Example
+
+```typescript
+await client.send("Runtime.enable", {});
+
+// Evaluate JavaScript
+const { result } = await client.send("Runtime.evaluate", {
+  expression: "document.title",
+  returnByValue: true,
+});
+console.log(result.value); // => "Example Domain"
+
+// Evaluate returning an object reference
+const { result: obj } = await client.send("Runtime.evaluate", {
+  expression: "({ x: 1, y: 2 })",
+  returnByValue: false,
+});
+
+// Inspect the object's properties
+const { result: props } = await client.send("Runtime.getProperties", {
+  objectId: obj.objectId,
+  ownProperties: true,
+});
+
+// Clean up the remote reference
+await client.send("Runtime.releaseObject", { objectId: obj.objectId });
+```
+
+---
+
+## Debugger Domain
+
+**Class:** `DebuggerDomain` | **Dependencies:** Runtime
+
+Provides JavaScript debugging: breakpoints, stepping, call stack inspection, and expression evaluation at pause.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable debugging; emits `scriptParsed` for all known scripts |
+| `disable` | Disable debugging; resumes if currently paused |
+| `setBreakpoint` | Set a breakpoint at a specific script location (scriptId, line, column) |
+| `setBreakpointByUrl` | Set a breakpoint by URL and line number across all matching scripts |
+| `removeBreakpoint` | Remove a breakpoint by its ID |
+| `getScriptSource` | Get the source code for a script by `scriptId` |
+| `pause` | Pause script execution immediately |
+| `resume` | Resume execution after a pause |
+| `stepOver` | Step over the current statement |
+| `stepInto` | Step into the next function call |
+| `stepOut` | Step out of the current function |
+| `evaluateOnCallFrame` | Evaluate an expression in the scope of a specific call frame |
+| `getPossibleBreakpoints` | Get valid breakpoint locations within a source range |
+| `getStackTrace` | Get the current call stack with all frames |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `scriptParsed` | A script was parsed (includes `scriptId`, `url`, line/column range, `hash`) |
+| `paused` | Execution paused (includes `callFrames`, `reason`, `hitBreakpoints`) |
+| `resumed` | Execution resumed |
+| `breakpointResolved` | A breakpoint was resolved to its actual location |
+
+### Example
+
+```typescript
+await client.send("Debugger.enable", {});
+
+// Set a breakpoint by URL
+const { breakpointId } = await client.send("Debugger.setBreakpointByUrl", {
+  url: "https://example.com/app.js",
+  lineNumber: 42,
+  columnNumber: 0,
+});
+
+// Handle pause events
+client.on("Debugger.paused", async ({ callFrames, reason, hitBreakpoints }) => {
+  console.log(`Paused: ${reason}`);
+  console.log(`Top frame: ${callFrames[0].functionName} @ line ${callFrames[0].location.lineNumber}`);
+
+  // Evaluate in the paused context
+  const { result } = await client.send("Debugger.evaluateOnCallFrame", {
+    callFrameId: callFrames[0].callFrameId,
+    expression: "myVariable",
+  });
+  console.log("myVariable =", result.value ?? result.description);
+
+  // Step over one statement
+  await client.send("Debugger.stepOver", {});
+});
+
+// Remove the breakpoint
+await client.send("Debugger.removeBreakpoint", { breakpointId });
+```
+
+---
+
+## Console Domain
+
+**Class:** `ConsoleDomain` | **Dependencies:** Runtime
+
+Collects and dispatches console log messages. Subscribes to `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` events from the EventBus.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable console message capture |
+| `disable` | Disable console message capture |
+| `clearMessages` | Clear the internal message buffer |
+| `getMessages` | Return all buffered console messages |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `messageAdded` | A new console message was added (source, level, text, url, line, timestamp) |
+
+### Message Levels
+
+`log`, `warning`, `error`, `debug`, `info`, `verbose`
+
+### Example
+
+```typescript
+await client.send("Runtime.enable", {});
+await client.send("Console.enable", {});
+
+// Capture new messages as they arrive
+client.on("Console.messageAdded", ({ message }) => {
+  console.log(`[${message.level}] ${message.text}`);
+  if (message.source === "javascript" && message.level === "error") {
+    console.error("JS Error:", message.text, "at", message.url, ":", message.line);
+  }
+});
+
+// Read buffered messages at any time
+const { messages } = await client.send("Console.getMessages", {});
+messages.forEach((m) => console.log(m.level, m.text));
+
+// Clear the buffer
+await client.send("Console.clearMessages", {});
+```
+
+---
+
+## Page Domain
+
+**Class:** `PageDomain` | **Dependencies:** none
+
+Provides page navigation, lifecycle events, and screenshots. Hooks directly into the `Browser` class for navigation and history.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable page lifecycle events; emits initial `lifecycleEvent` |
+| `disable` | Disable the domain |
+| `navigate` | Navigate to a URL; returns `frameId` and `loaderId` |
+| `reload` | Reload the current page (optionally ignore cache) |
+| `goBack` | Navigate back in browser history |
+| `goForward` | Navigate forward in browser history |
+| `getNavigationHistory` | Get the current navigation history (list of entries + current index) |
+| `getFrameTree` | Get the frame hierarchy |
+| `captureScreenshot` | Take a screenshot of the page (returns base64 encoded image data) |
+| `getResourceTree` | Get the page resource tree |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `lifecycleEvent` | Page lifecycle milestone (init, DOMContentLoaded, load, etc.) |
+| `frameNavigated` | A frame navigated to a new URL |
+| `frameStartedLoading` | A frame began loading |
+| `frameStoppedLoading` | A frame finished loading |
+| `loadEventFired` | The page `load` event fired |
+| `domContentEventFired` | The `DOMContentLoaded` event fired |
+
+### Example
+
+```typescript
+await client.send("Page.enable", {});
+
+// Listen for navigation completion
+client.on("Page.frameNavigated", ({ frame }) => {
+  console.log("Navigated to:", frame.url);
+});
+
+// Navigate to a URL
+const { frameId } = await client.send("Page.navigate", {
+  url: "https://example.com",
+});
+
+// Take a screenshot
+const { data } = await client.send("Page.captureScreenshot", {
+  format: "png",
+  quality: 90,
+});
+// data is a base64-encoded PNG string
+
+// Navigate through history
+await client.send("Page.goBack", {});
+await client.send("Page.goForward", {});
+
+const { currentIndex, entries } = await client.send("Page.getNavigationHistory", {});
+console.log("History:", entries.map((e) => e.url));
+```
+
+---
+
+## Storage Domain
+
+**Class:** `StorageDomain` | **Dependencies:** none
+
+Inspects and manages browser storage: cookies, localStorage, sessionStorage, IndexedDB, and Cache API. Hooks into `StorageManager`, `CookieManager`, and `QuotaManager`.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable the domain |
+| `disable` | Disable the domain |
+| `getCookies` | Get cookies for specified URLs (or all cookies if none given) |
+| `setCookie` | Set a cookie with full attribute support (name, value, domain, path, secure, httpOnly, sameSite, expires) |
+| `deleteCookie` | Delete a cookie by name and optional scope |
+| `clearCookies` | Clear all browser cookies |
+| `getStorageEntries` | Get key-value entries from localStorage or sessionStorage for an origin |
+| `clearStorage` | Clear all storage for an origin |
+| `getUsageAndQuota` | Get storage usage and quota breakdown for an origin |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `storageCleared` | Storage was cleared for an origin |
+| `cookieAdded` | A cookie was added |
+| `cookieDeleted` | A cookie was deleted |
+
+### Example
+
+```typescript
+await client.send("Storage.enable", {});
+
+// Get all cookies for a URL
+const { cookies } = await client.send("Storage.getCookies", {
+  urls: ["https://example.com"],
+});
+cookies.forEach((c) => console.log(c.name, "=", c.value));
+
+// Set a cookie
+await client.send("Storage.setCookie", {
+  name: "session",
+  value: "abc123",
+  domain: "example.com",
+  path: "/",
+  secure: true,
+  httpOnly: true,
+  sameSite: "Strict",
+});
+
+// Get localStorage entries
+const { entries } = await client.send("Storage.getStorageEntries", {
+  origin: "https://example.com",
+  storageType: "local_storage",
+});
+
+// Check quota
+const { usage, quota } = await client.send("Storage.getUsageAndQuota", {
+  origin: "https://example.com",
+});
+console.log(`${usage} / ${quota} bytes used`);
+```
+
+---
+
+## Security Domain
+
+**Class:** `SecurityDomain` | **Dependencies:** Network
+
+Monitors and reports the security state of the current page. Inspects TLS certificates, detects mixed content, and tracks security-relevant events.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable security monitoring; emits initial `securityStateChanged` |
+| `disable` | Disable the domain |
+| `getSecurityState` | Get the current security state and explanations |
+| `getCertificate` | Get TLS certificate details for an origin |
+| `getInsecureContentStatus` | Get mixed content detection results |
+
+### Security States
+
+`secure`, `insecure`, `neutral`, `warning`, `info`, `unknown`
+
+### Events
+
+| Event | Description |
+|---|---|
+| `securityStateChanged` | Security state of the page changed (includes state + explanations) |
+| `certificateError` | A TLS certificate error occurred |
+
+### Example
+
+```typescript
+await client.send("Security.enable", {});
+
+// Monitor security state changes
+client.on("Security.securityStateChanged", ({ securityState, explanations }) => {
+  console.log("Security state:", securityState);
+  explanations.forEach((e) => console.log(e.summary));
+});
+
+// Get current state
+const { securityState, certificate } = await client.send("Security.getSecurityState", {});
+
+// Get certificate details
+const { tableData } = await client.send("Security.getCertificate", {
+  origin: "https://example.com",
+});
+```
+
+---
+
+## Performance Domain
+
+**Class:** `PerformanceDomain` | **Dependencies:** Network, Rendering
+
+Collects and reports performance metrics. Provides CPU profiling, navigation timing, Core Web Vitals, rendering metrics, and composite scoring.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable the domain; starts periodic `metrics` event emission |
+| `disable` | Disable the domain; stops periodic events |
+| `getMetrics` | Collect current performance metrics from all subsystems |
+| `startProfiling` | Start CPU sampling profiler |
+| `stopProfiling` | Stop profiler and return the sampling profile |
+| `getNavigationTiming` | Get navigation timing breakdown (DNS, TCP, TLS, request, response, DOM) |
+| `getWebVitals` | Get Core Web Vitals (LCP, FID, CLS, FCP, TTFB) |
+| `getRenderingMetrics` | Get rendering pipeline timing (parse, layout, paint, composite) |
+| `getPerformanceScore` | Get a composite performance score (0-100) |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `metrics` | Periodic metric updates emitted while the domain is enabled |
+
+### Example
+
+```typescript
+await client.send("Performance.enable", {});
+
+// Listen for periodic metric updates
+client.on("Performance.metrics", ({ metrics, title }) => {
+  metrics.forEach(({ name, value }) => console.log(`${name}: ${value}`));
+});
+
+// Get navigation timing
+const { timing } = await client.send("Performance.getNavigationTiming", {});
+console.log(`DNS: ${timing.dnsLookup}ms, TLS: ${timing.tlsHandshake}ms`);
+
+// Get Core Web Vitals
+const { vitals } = await client.send("Performance.getWebVitals", {});
+console.log(`LCP: ${vitals.lcp}ms, CLS: ${vitals.cls}, FID: ${vitals.fid}ms`);
+
+// CPU profiling
+await client.send("Performance.startProfiling", { samplingInterval: 1000 });
+// ... wait for page interaction ...
+const { profile } = await client.send("Performance.stopProfiling", {});
+```
+
+---
+
+## Memory Domain
+
+**Class:** `MemoryDomain` | **Dependencies:** Runtime
+
+Provides heap inspection, memory sampling, garbage collection control, and DOM counter reporting.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable the domain |
+| `disable` | Disable the domain; stops sampling if active |
+| `getHeapStats` | Get V8 heap statistics (used, total, external, array buffer sizes) |
+| `takeHeapSnapshot` | Take a heap snapshot and stream it via `addHeapSnapshotChunk` events |
+| `startSampling` | Start heap allocation sampling at a configurable interval |
+| `stopSampling` | Stop sampling |
+| `getAllocationProfile` | Get the sampled allocation profile tree |
+| `forceGarbageCollection` | Force a V8 garbage collection cycle |
+| `getDOMCounters` | Get DOM node count and active event listener counts |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `heapStatsUpdate` | Periodic heap statistics update |
+| `addHeapSnapshotChunk` | A chunk of heap snapshot data (streamed incrementally) |
+
+### Example
+
+```typescript
+await client.send("Memory.enable", {});
+
+// Get current heap stats
+const { heapStats } = await client.send("Memory.getHeapStats", {});
+console.log(`Used: ${heapStats.usedHeapSize} / ${heapStats.totalHeapSize} bytes`);
+
+// Take a heap snapshot
+const chunks: string[] = [];
+client.on("Memory.addHeapSnapshotChunk", ({ chunk }) => {
+  chunks.push(chunk);
+});
+await client.send("Memory.takeHeapSnapshot", { reportProgress: false });
+const snapshot = JSON.parse(chunks.join(""));
+
+// Heap allocation sampling
+await client.send("Memory.startSampling", { samplingInterval: 32768 });
+// ... trigger page actions ...
+await client.send("Memory.stopSampling", {});
+const { profile } = await client.send("Memory.getAllocationProfile", {});
+
+// Force GC and check DOM node count
+await client.send("Memory.forceGarbageCollection", {});
+const { documents, nodes, jsEventListeners } = await client.send("Memory.getDOMCounters", {});
+```
+
+---
+
+## Rendering Domain
+
+**Class:** `RenderingDomain` | **Dependencies:** DOM
+
+Provides render tree, layout tree, display list, compositor layer inspection, and rendering timing diagnostics.
+
+<Aside type="caution">
+The Rendering domain is marked experimental. Its API surface may change across BrowserX versions.
+</Aside>
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable the domain; emits initial `renderingStatsUpdated` |
+| `disable` | Disable the domain |
+| `getRenderTree` | Get the current render tree (render objects + computed styles) |
+| `getLayoutTree` | Get the current layout tree with box model data |
+| `getDisplayList` | Get the current paint display list (draw commands) |
+| `getCompositorLayers` | Get compositor layer tree with transforms, opacity, and bounds |
+| `getRenderingTiming` | Get timing breakdown for the last render (parse, style, layout, paint, composite) |
+| `setShowPaintRects` | Toggle paint rectangle visualization overlay |
+| `setShowLayoutBorders` | Toggle layout border visualization overlay |
+| `setShowFPSCounter` | Toggle FPS counter overlay |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `renderingStatsUpdated` | Rendering statistics have been updated |
+| `paintFlashing` | A paint operation occurred in a specific region |
+
+### Example
+
+```typescript
+await client.send("Rendering.enable", {});
+
+// Get render timing breakdown
+const { timing } = await client.send("Rendering.getRenderingTiming", {});
+console.log(`Layout: ${timing.layout}ms, Paint: ${timing.paint}ms`);
+
+// Enable visual debugging overlays
+await client.send("Rendering.setShowPaintRects", { result: true });
+await client.send("Rendering.setShowLayoutBorders", { show: true });
+
+// Get compositor layers for debugging transform/opacity issues
+const { layers } = await client.send("Rendering.getCompositorLayers", {});
+layers.forEach((layer) => {
+  console.log(`Layer: ${layer.width}x${layer.height} @ (${layer.offsetX}, ${layer.offsetY})`);
+});
+```
+
+---
+
+## Overlay Domain
+
+**Class:** `OverlayDomain` | **Dependencies:** DOM, Rendering
+
+Provides visual overlay functionality for element inspection and highlighting. Renders highlight overlays on DOM nodes, arbitrary rectangles, quads, and frames.
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable overlay functionality |
+| `disable` | Disable the domain |
+| `highlightNode` | Highlight a DOM node with box model overlay (content/padding/border/margin regions) |
+| `highlightRect` | Highlight an arbitrary rectangle on the page |
+| `highlightQuad` | Highlight a quadrilateral region |
+| `hideHighlight` | Clear all active highlights |
+| `setInspectMode` | Set the element inspect mode (`searchForNode`, `captureAreaScreenshot`, `showDistances`, `none`) |
+| `getHighlightObjectForTest` | Get computed highlight data for a node (used in tests) |
+| `highlightFrame` | Highlight an entire frame |
+| `setShowGridOverlays` | Toggle CSS grid overlay visualization |
+| `setShowFlexOverlays` | Toggle CSS flexbox overlay visualization |
+
+### Events
+
+| Event | Description |
+|---|---|
+| `nodeHighlightRequested` | A node highlight was requested by the overlay |
+| `inspectNodeRequested` | User selected a node while in `searchForNode` inspect mode |
+| `screenshotRequested` | An area screenshot was requested in `captureAreaScreenshot` mode |
+| `inspectModeCanceled` | Inspect mode was canceled |
+
+### Example
+
+```typescript
+await client.send("Overlay.enable", {});
+
+// Highlight a specific node
+await client.send("Overlay.highlightNode", {
+  highlightConfig: {
+    showInfo: true,
+    contentColor: { r: 111, g: 168, b: 220, a: 0.66 },
+    paddingColor: { r: 147, g: 196, b: 125, a: 0.55 },
+    borderColor: { r: 255, g: 229, b: 153, a: 0.66 },
+    marginColor: { r: 246, g: 178, b: 107, a: 0.66 },
+  },
+  nodeId: 42,
+});
+
+// Enable inspect mode to let users pick elements
+await client.send("Overlay.setInspectMode", {
+  mode: "searchForNode",
+  highlightConfig: { showInfo: true },
+});
+
+client.on("Overlay.inspectNodeRequested", ({ backendNodeId }) => {
+  console.log("User selected node:", backendNodeId);
+  // Switch back to normal mode
+  client.send("Overlay.setInspectMode", { mode: "none", highlightConfig: {} });
+});
+
+// Clear all highlights
+await client.send("Overlay.hideHighlight", {});
+```
+
+---
+
+## Emulation Domain
+
+**Class:** `EmulationDomain` | **Dependencies:** none
+
+Provides device and environment emulation: viewport, user agent, geolocation, timezone, locale, network throttling, CPU throttling, and touch emulation.
+
+<Aside type="note">
+The Emulation domain is command-driven and emits no protocol events. Changes are broadcast on the EventBus so other domains can react to viewport or network condition changes.
+</Aside>
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `enable` | Enable the domain |
+| `disable` | Disable the domain |
+| `setDeviceMetricsOverride` | Override viewport width, height, deviceScaleFactor, mobile flag, and screen orientation |
+| `clearDeviceMetricsOverride` | Clear all device metrics overrides |
+| `setUserAgentOverride` | Override the `User-Agent` request header |
+| `setEmulatedMedia` | Override CSS media type (e.g., `print`, `screen`) and media features |
+| `setGeolocationOverride` | Override `navigator.geolocation` with a specific latitude/longitude |
+| `clearGeolocationOverride` | Clear the geolocation override |
+| `setTimezoneOverride` | Override the system timezone (e.g., `America/New_York`) |
+| `setLocaleOverride` | Override the browser locale (e.g., `fr-FR`) |
+| `setTouchEmulationEnabled` | Enable or disable touch event emulation |
+| `setNetworkConditions` | Simulate network conditions (latency, download/upload throughput) |
+| `setCPUThrottlingRate` | Simulate CPU throttling (1 = no throttle, 4 = 4x slowdown) |
+| `setScriptExecutionDisabled` | Disable or re-enable JavaScript execution |
+
+### Example
+
+```typescript
+await client.send("Emulation.enable", {});
+
+// Emulate a mobile device (iPhone 12)
+await client.send("Emulation.setDeviceMetricsOverride", {
+  width: 390,
+  height: 844,
+  deviceScaleFactor: 3,
+  mobile: true,
+  screenOrientation: { type: "portraitPrimary", angle: 0 },
+});
+
+// Override user agent
+await client.send("Emulation.setUserAgentOverride", {
+  userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) ...",
+});
+
+// Simulate slow 3G network
+await client.send("Emulation.setNetworkConditions", {
+  offline: false,
+  latency: 400,
+  downloadThroughput: 50000,
+  uploadThroughput: 25000,
+});
+
+// Simulate slow CPU
+await client.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+
+// Emulate print media for CSS testing
+await client.send("Emulation.setEmulatedMedia", { media: "print" });
+
+// Clear device override
+await client.send("Emulation.clearDeviceMetricsOverride", {});
+```
+
+---
+
+## Domain Dependencies
+
+The following table summarizes inter-domain dependencies. Dependent domains use the EventBus to react to events from their dependencies without direct coupling.
+
+| Domain | Depends On | Notes |
+|---|---|---|
+| DOM | — | No dependencies |
+| CSS | DOM | Needs node IDs from DOM for style lookups |
+| Network | — | No dependencies |
+| Runtime | — | No dependencies |
+| Debugger | Runtime | Hooks into JS execution context |
+| Console | Runtime | Subscribes to `Runtime.consoleAPICalled` via EventBus |
+| Storage | — | No dependencies |
+| Security | Network | Monitors TLS data from request pipeline |
+| Performance | Network, Rendering | Aggregates data from both pipelines |
+| Memory | Runtime | Hooks into V8 heap information |
+| Rendering | DOM | Uses node IDs and render objects from DOM |
+| Overlay | DOM, Rendering | Combines DOM node data with render layout |
+| Emulation | — | No dependencies; broadcasts changes via EventBus |
+| Page | — | No dependencies |

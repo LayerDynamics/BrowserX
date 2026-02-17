@@ -1,0 +1,682 @@
+---
+title: Query Language Syntax
+description: Complete reference for the BrowserX query language
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The BrowserX query language is a declarative, SQL-like language for controlling browser and proxy operations.
+
+## Statements
+
+### SELECT
+
+Extract data from sources.
+
+**Syntax:**
+
+```sql
+SELECT field1, field2, ...
+FROM source
+[WHERE condition]
+[ORDER BY field [ASC|DESC]]
+[LIMIT count [OFFSET offset]]
+```
+
+**Examples:**
+
+```sql
+-- Extract title
+SELECT title FROM "https://example.com"
+
+-- Extract multiple fields
+SELECT title, description, keywords FROM "https://example.com"
+
+-- Extract with condition
+SELECT product.name, product.price
+FROM "https://store.com/products"
+WHERE product.price < 100
+
+-- Extract with ordering
+SELECT article.title, article.date
+FROM "https://news.com"
+ORDER BY article.date DESC
+LIMIT 10
+
+-- Extract with field aliases
+SELECT
+  TEXT(".product-name") AS name,
+  TEXT(".product-price") AS price
+FROM "https://store.com/product/123"
+```
+
+### NAVIGATE
+
+Navigate browser to a URL.
+
+**Syntax:**
+
+```sql
+NAVIGATE TO url
+[WITH options]
+[CAPTURE fields]
+```
+
+**Examples:**
+
+```sql
+-- Simple navigation
+NAVIGATE TO "https://example.com"
+
+-- Navigation with proxy headers
+NAVIGATE TO "https://api.example.com"
+  WITH {
+    proxy: {
+      headers: {"Authorization": "Bearer token123"},
+      cache: false
+    }
+  }
+
+-- Navigation with viewport
+NAVIGATE TO "https://mobile-site.com"
+  WITH {
+    browser: {
+      viewport: {width: 375, height: 667}
+    }
+  }
+
+-- Navigation with capture
+NAVIGATE TO "https://example.com"
+  CAPTURE response.status, response.body, dom.title
+
+-- Navigation with proxy interception
+NAVIGATE TO "https://app.example.com"
+  WITH {
+    proxy: {
+      intercept: {
+        urls: ["*/api/*"],
+        methods: ["GET", "POST"]
+      }
+    }
+  }
+  CAPTURE proxy.requests, proxy.responses
+```
+
+### SET
+
+Configure engine settings.
+
+**Syntax:**
+
+```sql
+SET config.path = value
+```
+
+**Examples:**
+
+```sql
+-- Set proxy timeout
+SET proxy.timeout = 5000
+
+-- Set browser viewport
+SET browser.viewport = {width: 1920, height: 1080}
+
+-- Set cache TTL
+SET proxy.cache.ttl = 3600
+
+-- Set security permissions
+SET security.allowedDomains = ["example.com", "trusted.com"]
+
+-- Enable debug mode
+SET debug.enabled = true
+SET debug.timing = true
+```
+
+### SHOW
+
+Display engine state and configuration.
+
+**Syntax:**
+
+```sql
+SHOW target [WHERE condition]
+```
+
+**Examples:**
+
+```sql
+-- Show all cache entries
+SHOW CACHE
+
+-- Show cache for specific domain
+SHOW CACHE WHERE url LIKE "%example.com%"
+
+-- Show cookies
+SHOW COOKIES
+
+-- Show cookies for domain
+SHOW COOKIES WHERE domain = "example.com"
+
+-- Show headers
+SHOW HEADERS
+
+-- Show active connections
+SHOW CONNECTIONS
+
+-- Show metrics
+SHOW METRICS
+
+-- Show configuration
+SHOW CONFIG
+```
+
+### FOR
+
+Iterate over collections.
+
+**Syntax:**
+
+```sql
+FOR EACH variable IN collection
+  statement
+```
+
+**Examples:**
+
+```sql
+-- Iterate over URLs
+FOR EACH url IN ["https://a.com", "https://b.com", "https://c.com"]
+  SELECT title FROM url
+
+-- Iterate with filtering
+FOR EACH product IN products
+  NAVIGATE TO product.url
+  CAPTURE TEXT(".price") AS price
+  WHERE price < 100
+
+-- Nested iteration
+FOR EACH category IN categories
+  FOR EACH product IN category.products
+    SELECT product.name, product.price
+```
+
+### IF
+
+Conditional execution.
+
+**Syntax:**
+
+```sql
+IF condition THEN
+  statement
+[ELSE
+  statement]
+```
+
+**Examples:**
+
+```sql
+-- Simple conditional
+IF EXISTS("#login-form") THEN
+  NAVIGATE TO "/login"
+
+-- If-else
+IF EXISTS("#user-menu") THEN
+  SELECT "Already logged in"
+ELSE
+  INSERT "user@example.com" INTO "#email"
+  INSERT "password" INTO "#password"
+  CLICK "#submit"
+
+-- Nested conditionals
+IF EXISTS("#error-message") THEN
+  IF TEXT("#error-message") LIKE "%password%" THEN
+    SELECT "Password error"
+  ELSE
+    SELECT "Other error"
+```
+
+### INSERT
+
+Insert values into form fields.
+
+**Syntax:**
+
+```sql
+INSERT value INTO selector
+```
+
+**Examples:**
+
+```sql
+-- Insert text into input
+INSERT "user@example.com" INTO "#email"
+INSERT "password123" INTO "#password"
+
+-- Insert into textarea
+INSERT "This is a comment" INTO "textarea[name='comment']"
+
+-- Insert variable
+INSERT username INTO "#username"
+```
+
+### UPDATE
+
+Update element properties.
+
+**Syntax:**
+
+```sql
+UPDATE selector SET property = value
+```
+
+**Examples:**
+
+```sql
+-- Update element text
+UPDATE ".status" SET textContent = "Active"
+
+-- Update attribute
+UPDATE "img.logo" SET src = "new-logo.png"
+
+-- Update style
+UPDATE ".banner" SET style.display = "none"
+```
+
+### DELETE
+
+Delete elements from DOM.
+
+**Syntax:**
+
+```sql
+DELETE selector
+```
+
+**Examples:**
+
+```sql
+-- Delete single element
+DELETE "#popup"
+
+-- Delete all matching elements
+DELETE ".advertisement"
+
+-- Conditional delete
+IF EXISTS(".cookie-banner") THEN
+  DELETE ".cookie-banner"
+```
+
+### CLICK
+
+Click on elements.
+
+**Syntax:**
+
+```sql
+CLICK selector [WITH options]
+```
+
+**Examples:**
+
+```sql
+-- Simple click
+CLICK "#submit-button"
+
+-- Click with navigation wait
+CLICK "a.next-page" WITH { waitForNavigation: true }
+
+-- Click with timeout
+CLICK "#slow-button" WITH { timeout: 5000 }
+```
+
+### WAIT
+
+Wait for conditions.
+
+**Syntax:**
+
+```sql
+WAIT duration
+WAIT FOR selector
+WAIT FOR condition
+```
+
+**Examples:**
+
+```sql
+-- Wait for duration
+WAIT 2s
+WAIT 500ms
+
+-- Wait for selector
+WAIT FOR "#content-loaded"
+
+-- Wait for multiple conditions
+WAIT FOR (EXISTS("#data") AND NOT EXISTS(".loading"))
+
+-- Wait with timeout
+WAIT FOR "#result" WITH { timeout: 10000 }
+```
+
+### SCREENSHOT
+
+Capture screenshots.
+
+**Syntax:**
+
+```sql
+SCREENSHOT [selector] [WITH options]
+```
+
+**Examples:**
+
+```sql
+-- Full page screenshot
+SCREENSHOT
+
+-- Element screenshot
+SCREENSHOT ".product-card"
+
+-- Screenshot with options
+SCREENSHOT WITH {
+  fullPage: true,
+  format: "png",
+  quality: 90,
+  path: "screenshot.png"
+}
+
+-- Selector with options
+SCREENSHOT ".header" WITH {
+  format: "jpeg",
+  quality: 80
+}
+```
+
+### PDF
+
+Generate PDF of page.
+
+**Syntax:**
+
+```sql
+PDF [WITH options]
+```
+
+**Examples:**
+
+```sql
+-- Generate PDF
+PDF
+
+-- PDF with options
+PDF WITH {
+  format: "A4",
+  landscape: false,
+  path: "output.pdf"
+}
+```
+
+### WITH (Common Table Expression)
+
+Define reusable subqueries.
+
+**Syntax:**
+
+```sql
+WITH name AS (query)
+statement
+```
+
+**Examples:**
+
+```sql
+-- Define and use CTE
+WITH products AS (
+  SELECT name, price, url FROM "https://store.com/search?q=laptop"
+)
+SELECT * FROM products WHERE price < 1000
+
+-- Multiple CTEs
+WITH
+  products AS (SELECT * FROM "https://store.com/products"),
+  reviews AS (SELECT * FROM "https://store.com/reviews")
+SELECT
+  products.name,
+  reviews.rating
+FROM products, reviews
+WHERE products.id = reviews.product_id
+```
+
+## Data Types
+
+### Primitives
+
+```sql
+-- String
+"hello world"
+'single quotes'
+
+-- Number
+42
+3.14
+1e10
+
+-- Boolean
+true
+false
+
+-- Null
+null
+```
+
+### Collections
+
+```sql
+-- Array
+[1, 2, 3]
+["a", "b", "c"]
+
+-- Object
+{key: "value", nested: {field: 123}}
+
+-- Set
+{1, 2, 3}  -- Unique values only
+```
+
+### Special Types
+
+```sql
+-- URL
+"https://example.com"
+
+-- Selector (CSS)
+".class #id"
+"div > p:first-child"
+
+-- XPath
+"//div[@class='content']"
+
+-- Regex
+/pattern/flags
+/\d{3}-\d{3}-\d{4}/
+
+-- Duration
+5s
+100ms
+2m
+1h
+
+-- Bytes
+10KB
+5MB
+1GB
+```
+
+## Operators
+
+### Comparison
+
+```sql
+=   -- Equal
+!=  -- Not equal
+>   -- Greater than
+>=  -- Greater than or equal
+<   -- Less than
+<=  -- Less than or equal
+
+-- Examples
+price = 100
+age >= 18
+status != "pending"
+```
+
+### Logical
+
+```sql
+AND  -- Logical AND
+OR   -- Logical OR
+NOT  -- Logical NOT
+
+-- Examples
+price < 100 AND inStock = true
+status = "active" OR status = "pending"
+NOT deleted
+```
+
+### Arithmetic
+
+```sql
++   -- Addition
+-   -- Subtraction
+*   -- Multiplication
+/   -- Division
+%   -- Modulo
+
+-- Examples
+price * 1.1          -- Add 10% tax
+quantity - sold      -- Remaining stock
+total / count        -- Average
+```
+
+### String
+
+```sql
+||      -- Concatenation
+LIKE    -- Pattern matching
+MATCHES -- Regex matching
+
+-- Examples
+firstName || " " || lastName
+title LIKE "%test%"
+email MATCHES /^[\w\.-]+@[\w\.-]+\.\w+$/
+```
+
+### Collection
+
+```sql
+IN          -- Membership
+NOT IN      -- Not membership
+CONTAINS    -- Contains element
+
+-- Examples
+status IN ("active", "pending")
+category NOT IN blockedCategories
+tags CONTAINS "featured"
+```
+
+## Built-in Functions
+
+### String Functions
+
+```sql
+UPPER(text)                          -- To uppercase
+LOWER(text)                          -- To lowercase
+TRIM(text)                           -- Remove whitespace
+SUBSTRING(text, start, length)       -- Extract substring
+REPLACE(text, pattern, replacement)  -- Replace pattern
+SPLIT(text, delimiter)               -- Split into array
+LENGTH(text)                         -- String length
+CONCAT(str1, str2, ...)             -- Concatenate strings
+```
+
+### DOM Functions
+
+```sql
+TEXT(selector)           -- Extract text content
+HTML(selector)           -- Extract HTML
+ATTR(selector, name)     -- Extract attribute
+COUNT(selector)          -- Count matching elements
+EXISTS(selector)         -- Check if element exists
+CLICK(selector)          -- Click element
+TYPE(selector, text)     -- Type into element
+```
+
+### Network Functions
+
+```sql
+HEADER(request, name)    -- Get header value
+STATUS(response)         -- Get status code
+BODY(response)           -- Get response body
+CACHED(url)             -- Check if URL is cached
+```
+
+### Utility Functions
+
+```sql
+PARSE_JSON(text)         -- Parse JSON string
+PARSE_HTML(text)         -- Parse HTML string
+PARSE_URL(text)          -- Parse URL string
+PARSE_NUMBER(text)       -- Parse number from text
+WAIT(duration)           -- Wait for duration
+SCREENSHOT(options)      -- Capture screenshot
+PDF(options)             -- Generate PDF
+NOW()                    -- Current timestamp
+UUID()                   -- Generate UUID
+```
+
+### Aggregate Functions
+
+```sql
+SUM(values)              -- Sum of values
+AVG(values)              -- Average of values
+MIN(values)              -- Minimum value
+MAX(values)              -- Maximum value
+COUNT(values)            -- Count of values
+ARRAY(values)            -- Collect into array
+```
+
+## Comments
+
+```sql
+-- Single line comment
+SELECT title FROM "https://example.com"  -- Inline comment
+
+/*
+  Multi-line comment
+  Can span multiple lines
+*/
+SELECT title FROM "https://example.com"
+```
+
+## Whitespace
+
+Whitespace is generally ignored:
+
+```sql
+-- Compact
+SELECT title FROM "https://example.com" WHERE title LIKE "%test%"
+
+-- Readable
+SELECT
+  title,
+  description
+FROM "https://example.com"
+WHERE title LIKE "%test%"
+```
+
+## Next Steps
+
+- Explore [DOM Functions](/query/dom-functions) in detail
+- Learn about [Expressions and Operators](/query/expressions)
+- Study [Real-World Examples](/query/examples)

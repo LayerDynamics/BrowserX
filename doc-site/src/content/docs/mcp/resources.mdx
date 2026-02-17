@@ -1,0 +1,688 @@
+---
+title: MCP Resources
+description: Read-only access to page state, metrics, and system status
+---
+
+# Resources
+
+MCP Resources provide **read-only access** to BrowserX state without performing actions. Use resources for passive observation, monitoring, and state retrieval.
+
+## Resources vs Tools
+
+| Use Resources when... | Use Tools when... |
+|-----------------------|-------------------|
+| Checking current state | Performing actions |
+| Monitoring metrics | Navigating or interacting |
+| Passive observation | Modifying state |
+| Getting screenshots without side effects | Taking fresh screenshots |
+
+Resources are accessed via URI patterns, while tools are called with explicit parameters.
+
+## Page Resources
+
+Access current page state for active browser sessions.
+
+### page://&#123;sessionId&#125;/content
+
+Get the full HTML content of the current page.
+
+**URI Pattern:** `page://{sessionId}/content`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "text/html";
+  text: string;             // Full page HTML
+}
+```
+
+**Example:**
+
+```typescript
+// Access via MCP resource API
+const resource = await readResource("page://sess_abc123/content");
+// → { text: "<!DOCTYPE html><html>...</html>", mimeType: "text/html" }
+```
+
+**Use cases:**
+
+- Inspect page structure
+- Verify page loaded correctly
+- Debug rendering issues
+
+---
+
+### page://&#123;sessionId&#125;/screenshot
+
+Get a screenshot of the current page viewport.
+
+**URI Pattern:** `page://{sessionId}/screenshot`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "image/png";
+  blob: string;             // Base64 encoded PNG
+}
+```
+
+**Example:**
+
+```typescript
+const screenshot = await readResource("page://sess_abc123/screenshot");
+// → { blob: "iVBORw0KGgoAAAANSUhEUgAA...", mimeType: "image/png" }
+```
+
+**Use cases:**
+
+- Quick visual check of current page state
+- Passive monitoring without triggering screenshot action
+- Accessing last rendered frame
+
+**Note:** This returns the **current** screenshot without triggering a new render. Use `browser_screenshot` tool for fresh captures.
+
+---
+
+### page://&#123;sessionId&#125;/title
+
+Get the document title of the current page.
+
+**URI Pattern:** `page://{sessionId}/title`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "text/plain";
+  text: string;             // Document title
+}
+```
+
+**Example:**
+
+```typescript
+const title = await readResource("page://sess_abc123/title");
+// → { text: "Example Domain", mimeType: "text/plain" }
+```
+
+**Use cases:**
+
+- Verify navigation completed
+- Check page loaded correctly
+- Monitor page title changes
+
+---
+
+### page://&#123;sessionId&#125;/url
+
+Get the current URL of the page.
+
+**URI Pattern:** `page://{sessionId}/url`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "text/plain";
+  text: string;             // Current URL
+}
+```
+
+**Example:**
+
+```typescript
+const url = await readResource("page://sess_abc123/url");
+// → { text: "https://example.com/page", mimeType: "text/plain" }
+```
+
+**Use cases:**
+
+- Check for redirects
+- Verify navigation target
+- Track navigation history
+
+---
+
+## Metrics Resources
+
+Monitor server and engine performance.
+
+### metrics://query-engine
+
+Query engine execution statistics.
+
+**URI Pattern:** `metrics://query-engine`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "application/json";
+  text: string;             // JSON stringified metrics
+}
+```
+
+**Metrics:**
+
+```typescript
+{
+  queriesExecuted: number;
+  totalExecutionTime: number;  // milliseconds
+  averageExecutionTime: number;
+  cacheStats: {
+    hits: number;
+    misses: number;
+    hitRate: number;          // 0-1
+  };
+  errorCount: number;
+  lastQueryTime: string;        // ISO timestamp
+}
+```
+
+**Example:**
+
+```typescript
+const metrics = await readResource("metrics://query-engine");
+const data = JSON.parse(metrics.text);
+// → {
+//   queriesExecuted: 42,
+//   averageExecutionTime: 1250,
+//   cacheStats: { hits: 15, misses: 27, hitRate: 0.357 },
+//   ...
+// }
+```
+
+**Use cases:**
+
+- Monitor query performance
+- Track cache effectiveness
+- Debug slow queries
+
+---
+
+### metrics://browser-pool
+
+Browser session pool statistics.
+
+**URI Pattern:** `metrics://browser-pool`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "application/json";
+  text: string;             // JSON stringified metrics
+}
+```
+
+**Metrics:**
+
+```typescript
+{
+  total: number;            // Total pool capacity
+  idle: number;             // Available instances
+  inUse: number;            // Active instances
+  acquired: number;         // Lifetime acquisitions
+  released: number;         // Lifetime releases
+  failed: number;           // Failed acquisitions
+  avgAcquisitionTime: number;  // milliseconds
+}
+```
+
+**Example:**
+
+```typescript
+const poolMetrics = await readResource("metrics://browser-pool");
+const data = JSON.parse(poolMetrics.text);
+// → {
+//   total: 10,
+//   idle: 7,
+//   inUse: 3,
+//   acquired: 125,
+//   released: 122,
+//   ...
+// }
+```
+
+**Use cases:**
+
+- Monitor pool capacity
+- Detect resource exhaustion
+- Track instance reuse
+
+---
+
+### metrics://runtime
+
+Runtime performance and health metrics.
+
+**URI Pattern:** `metrics://runtime`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "application/json";
+  text: string;             // JSON stringified metrics
+}
+```
+
+**Metrics:**
+
+```typescript
+{
+  uptime: number;           // milliseconds
+  memoryUsage: {
+    heapUsed: number;       // bytes
+    heapTotal: number;
+    external: number;
+  };
+  requestsProcessed: number;
+  requestRate: number;      // requests per second
+  componentHealth: {
+    "session-manager": "healthy" | "degraded";
+    "browser-pool": "healthy" | "degraded";
+    "query-engine": "healthy" | "degraded";
+  };
+}
+```
+
+**Example:**
+
+```typescript
+const runtime = await readResource("metrics://runtime");
+const data = JSON.parse(runtime.text);
+// → {
+//   uptime: 3600000,  // 1 hour
+//   memoryUsage: { heapUsed: 50000000, ... },
+//   componentHealth: { "session-manager": "healthy", ... }
+// }
+```
+
+**Use cases:**
+
+- Monitor overall system health
+- Detect memory leaks
+- Track request throughput
+
+---
+
+### metrics://cache
+
+Proxy cache statistics.
+
+**URI Pattern:** `metrics://cache`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "application/json";
+  text: string;             // JSON stringified metrics
+}
+```
+
+**Metrics:**
+
+```typescript
+{
+  entries: number;          // Total cached entries
+  size: number;             // Total size in bytes
+  hits: number;             // Cache hits
+  misses: number;           // Cache misses
+  hitRate: number;          // 0-1
+  evictions: number;        // Entries evicted
+  expirations: number;      // Entries expired
+  avgEntrySize: number;     // bytes
+}
+```
+
+**Example:**
+
+```typescript
+const cache = await readResource("metrics://cache");
+const data = JSON.parse(cache.text);
+// → {
+//   entries: 150,
+//   size: 5242880,  // ~5MB
+//   hitRate: 0.78,
+//   ...
+// }
+```
+
+**Use cases:**
+
+- Monitor cache effectiveness
+- Track memory usage
+- Tune cache size/TTL
+
+---
+
+## Visibility Resources
+
+Server dashboard and operation tracking.
+
+### visibility://dashboard
+
+Comprehensive system health dashboard.
+
+**URI Pattern:** `visibility://dashboard`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "application/json";
+  text: string;             // JSON stringified dashboard
+}
+```
+
+**Dashboard:**
+
+```typescript
+{
+  status: "healthy" | "degraded" | "critical";
+  timestamp: string;        // ISO timestamp
+  components: {
+    "session-manager": {
+      status: "healthy" | "degraded";
+      activeSessions: number;
+      maxSessions: number;
+      message?: string;
+    };
+    "browser-pool": {
+      status: "healthy" | "degraded";
+      total: number;
+      idle: number;
+      inUse: number;
+    };
+    "runtime": {
+      status: "healthy" | "degraded";
+      uptime: number;
+    };
+  };
+  activeOperations: number;
+  recentErrors: Array<{
+    timestamp: string;
+    operation: string;
+    error: string;
+  }>;
+  metrics: {
+    browserx_mcp_active_sessions: number;
+    browserx_mcp_sessions_created_total: number;
+    browserx_mcp_sessions_closed_total: number;
+  };
+}
+```
+
+**Example:**
+
+```typescript
+const dashboard = await readResource("visibility://dashboard");
+const data = JSON.parse(dashboard.text);
+// → {
+//   status: "healthy",
+//   components: {
+//     "session-manager": { status: "healthy", activeSessions: 3, maxSessions: 10 },
+//     "browser-pool": { status: "healthy", total: 10, idle: 7, inUse: 3 },
+//     ...
+//   },
+//   activeOperations: 2,
+//   recentErrors: [],
+//   ...
+// }
+```
+
+**Use cases:**
+
+- System health monitoring
+- Troubleshooting degraded state
+- Capacity planning
+
+---
+
+### visibility://operations
+
+Track running operations and their progress.
+
+**URI Pattern:** `visibility://operations`
+
+**Returns:**
+
+```typescript
+{
+  uri: string;
+  mimeType: "application/json";
+  text: string;             // JSON stringified operations
+}
+```
+
+**Operations:**
+
+```typescript
+{
+  operations: Array<{
+    id: string;
+    type: "navigate" | "click" | "screenshot" | "query" | "other";
+    description: string;
+    sessionId?: string;
+    startTime: string;      // ISO timestamp
+    elapsed: number;        // milliseconds
+    status: "pending" | "running" | "completed" | "failed";
+  }>;
+  count: number;
+}
+```
+
+**Example:**
+
+```typescript
+const operations = await readResource("visibility://operations");
+const data = JSON.parse(operations.text);
+// → {
+//   operations: [
+//     {
+//       id: "op_123",
+//       type: "navigate",
+//       description: "Navigate to https://example.com",
+//       sessionId: "sess_abc",
+//       startTime: "2024-02-16T10:30:00Z",
+//       elapsed: 1250,
+//       status: "running"
+//     }
+//   ],
+//   count: 1
+// }
+```
+
+**Use cases:**
+
+- Monitor long-running operations
+- Detect stuck operations
+- Track concurrent workload
+
+---
+
+## Resource URI Patterns
+
+All resource URIs follow these patterns:
+
+| Category | Pattern | Example |
+|----------|---------|---------|
+| Page | `page://{sessionId}/{property}` | `page://sess_123/title` |
+| Metrics | `metrics://{component}` | `metrics://query-engine` |
+| Visibility | `visibility://{view}` | `visibility://dashboard` |
+
+### Session ID Format
+
+Session IDs from `browser_navigate` follow the pattern `sess_{random}`:
+
+```
+sess_abc123def456
+sess_xyz789ghi012
+```
+
+---
+
+## Resource Access Patterns
+
+### Polling for Changes
+
+Resources can be polled to detect state changes:
+
+```typescript
+let lastTitle = "";
+
+// Poll every 5 seconds
+setInterval(async () => {
+  const resource = await readResource("page://sess_abc123/title");
+  const currentTitle = resource.text;
+
+  if (currentTitle !== lastTitle) {
+    console.log("Title changed:", currentTitle);
+    lastTitle = currentTitle;
+  }
+}, 5000);
+```
+
+### Health Monitoring
+
+Continuously monitor system health:
+
+```typescript
+async function checkHealth() {
+  const dashboard = await readResource("visibility://dashboard");
+  const data = JSON.parse(dashboard.text);
+
+  if (data.status === "degraded") {
+    // Check which component is degraded
+    for (const [name, component] of Object.entries(data.components)) {
+      if (component.status === "degraded") {
+        console.warn(`Component degraded: ${name}`, component.message);
+      }
+    }
+  }
+
+  return data.status === "healthy";
+}
+
+// Check every minute
+setInterval(checkHealth, 60000);
+```
+
+### Capacity Monitoring
+
+Detect pool exhaustion before it happens:
+
+```typescript
+async function checkCapacity() {
+  const pool = await readResource("metrics://browser-pool");
+  const data = JSON.parse(pool.text);
+
+  const utilization = data.inUse / data.total;
+
+  if (utilization > 0.8) {
+    console.warn("Pool at 80% capacity");
+    // Consider closing idle sessions
+  }
+}
+```
+
+---
+
+## Resource Caching
+
+Resources are served fresh on each request. The MCP server does **not** cache resource values.
+
+If you need caching for performance:
+
+1. **Client-side caching** - Cache resource values in your application
+2. **Polling interval** - Reduce polling frequency
+3. **Event-driven** - Use runtime events instead of polling (advanced)
+
+---
+
+## Error Handling
+
+### Session Not Found
+
+If a session doesn't exist, page resources return error text:
+
+```typescript
+const resource = await readResource("page://invalid_session/content");
+// → { text: "Session not found: invalid_session", mimeType: "text/plain" }
+```
+
+### Component Not Ready
+
+If a component hasn't initialized yet, metrics return empty/default values:
+
+```typescript
+const metrics = await readResource("metrics://query-engine");
+// → { text: '{"queriesExecuted": 0, ...}' }
+```
+
+---
+
+## Best Practices
+
+### Use Resources for Monitoring
+
+Resources are perfect for passive monitoring without side effects:
+
+```typescript
+// Good: Check page state without action
+const title = await readResource("page://sess_123/title");
+
+// Bad: Taking screenshot has side effects (saves file, logs activity)
+await browser_screenshot({ sessionId: "sess_123" });
+```
+
+### Combine with Tools
+
+Use resources to verify before taking action:
+
+```typescript
+// 1. Check current URL
+const urlResource = await readResource("page://sess_123/url");
+const currentUrl = urlResource.text;
+
+// 2. Navigate if needed
+if (currentUrl !== targetUrl) {
+  await browser_navigate({ sessionId: "sess_123", url: targetUrl });
+}
+```
+
+### Monitor Health Proactively
+
+Check health before operations:
+
+```typescript
+const dashboard = await readResource("visibility://dashboard");
+const data = JSON.parse(dashboard.text);
+
+if (data.components["session-manager"].status === "degraded") {
+  // Close some sessions before creating new ones
+  await cleanupSessions();
+}
+```
+
+---
+
+## Next Steps
+
+- [Tools Reference](/mcp/tools) - Active operations and commands
+- [Session Management](/mcp/sessions) - Session lifecycle patterns
+- [Monitoring](/mcp/monitoring) - Health checks and metrics
+- [Agent Guide](/mcp/agent-guide) - Using resources in AI workflows
