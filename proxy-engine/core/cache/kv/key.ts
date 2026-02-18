@@ -48,18 +48,28 @@ export class CacheKey {
     url: string;
     varyHeaders: Record<string, string>;
   } {
-    const parts = key.split(':');
-    const method = parts[0];
-    const url = parts[1];
-    const varyHeaders: Record<string, string> = {};
+    const colonIdx = key.indexOf(':');
+    const method = key.slice(0, colonIdx);
+    const rest = key.slice(colonIdx + 1); // e.g. "http://example.com/:accept=text/html"
 
-    // Parse vary headers if present
-    for (let i = 2; i < parts.length; i++) {
-      const [headerPair] = parts[i].split('=');
-      if (headerPair) {
-        const [name, value] = parts[i].split('=');
-        if (name && value) {
-          varyHeaders[name] = value;
+    // Find where vary headers start: first :lowercaseName= after the URL scheme (://)
+    const schemeEnd = rest.indexOf('://');
+    const searchFrom = schemeEnd === -1 ? 0 : schemeEnd + 3;
+    const varyMatch = rest.slice(searchFrom).search(/:([a-z][a-z0-9-]*)=/);
+
+    const varyHeaders: Record<string, string> = {};
+    let url: string;
+
+    if (varyMatch === -1) {
+      url = rest;
+    } else {
+      const varyStart = searchFrom + varyMatch;
+      url = rest.slice(0, varyStart);
+      const varyStr = rest.slice(varyStart + 1); // skip the leading :
+      for (const part of varyStr.split(':')) {
+        const eqIdx = part.indexOf('=');
+        if (eqIdx > -1) {
+          varyHeaders[part.slice(0, eqIdx)] = part.slice(eqIdx + 1);
         }
       }
     }

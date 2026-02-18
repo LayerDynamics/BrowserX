@@ -203,6 +203,62 @@ export const EXISTS: FunctionImplementation = {
 };
 
 /**
+ * CLICK - Click the first element matching selector
+ */
+export const CLICK: FunctionImplementation = {
+  signature: {
+    name: "CLICK",
+    category: FunctionCategory.DOM,
+    minArgs: 1,
+    maxArgs: 1,
+    argTypes: [["css_selector" as DataType]],
+    returnType: "boolean" as DataType,
+    description: "Click the first element matching selector",
+    examples: ['CLICK("#submit") → true'],
+    isAsync: true,
+  },
+  implementation: async (selector: unknown): Promise<boolean> => {
+    const controller = requireBrowserController();
+    const page = controller.getCurrentPage();
+
+    if (!page) {
+      throw new Error("No page available. Navigate to a URL first.");
+    }
+
+    await page.click(String(selector), "css");
+    return true;
+  },
+};
+
+/**
+ * TYPE - Type text into the first element matching selector
+ */
+export const TYPE: FunctionImplementation = {
+  signature: {
+    name: "TYPE",
+    category: FunctionCategory.DOM,
+    minArgs: 2,
+    maxArgs: 2,
+    argTypes: [["css_selector" as DataType, "string" as DataType]],
+    returnType: "boolean" as DataType,
+    description: "Type text into the first element matching selector",
+    examples: ['TYPE("#email", "user@example.com") → true'],
+    isAsync: true,
+  },
+  implementation: async (selector: unknown, text: unknown): Promise<boolean> => {
+    const controller = requireBrowserController();
+    const page = controller.getCurrentPage();
+
+    if (!page) {
+      throw new Error("No page available. Navigate to a URL first.");
+    }
+
+    await page.type(String(selector), String(text));
+    return true;
+  },
+};
+
+/**
  * All DOM functions
  */
 export const DOM_FUNCTIONS: FunctionImplementation[] = [
@@ -211,4 +267,6 @@ export const DOM_FUNCTIONS: FunctionImplementation[] = [
   ATTR,
   COUNT,
   EXISTS,
+  CLICK,
+  TYPE,
 ];
