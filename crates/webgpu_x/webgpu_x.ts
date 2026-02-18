@@ -496,7 +496,7 @@ export class WebGPUX {
    * @returns GPUVendor enum value
    */
   detectVendor(vendorId: number): GPUVendor {
-    return detect_gpu_vendor(vendorId);
+    return detect_gpu_vendor(vendorId) as GPUVendor;
   }
 
   /**
@@ -521,7 +521,7 @@ export class WebGPUX {
     maxWorkgroupSize: number,
     vendor: GPUVendor,
   ): number {
-    return get_optimal_workgroup_size(problemSize, maxWorkgroupSize, vendor);
+    return get_optimal_workgroup_size(problemSize, maxWorkgroupSize, vendor) as number;
   }
 
   // ============================================================================
@@ -535,7 +535,7 @@ export class WebGPUX {
    * @returns Buffer handle (0 if allocation failed)
    */
   acquireBuffer(size: bigint, usage: number): bigint {
-    return buffer_pool_acquire(size, usage);
+    return buffer_pool_acquire(size, usage) as bigint;
   }
 
   /**
@@ -588,7 +588,7 @@ export class WebGPUX {
    * @returns Staging belt handle
    */
   createStagingBelt(chunkSize: bigint): bigint {
-    return staging_belt_create(chunkSize);
+    return staging_belt_create(chunkSize) as bigint;
   }
 
   /**
@@ -637,7 +637,7 @@ export class WebGPUX {
    * @returns Aligned size in bytes
    */
   bufferCalculateAlignedSize(size: bigint, alignment: bigint): bigint {
-    return buffer_calculate_aligned_size(size, alignment);
+    return buffer_calculate_aligned_size(size, alignment) as bigint;
   }
 
   /**
@@ -646,7 +646,7 @@ export class WebGPUX {
    * @returns Required alignment in bytes (4 or 256)
    */
   bufferGetAlignment(usage: number): bigint {
-    return buffer_get_alignment(usage);
+    return buffer_get_alignment(usage) as bigint;
   }
 
   /**
@@ -655,7 +655,7 @@ export class WebGPUX {
    * @returns Padding bytes needed to reach 256-byte alignment
    */
   bufferGetRowPadding(rowSize: bigint): bigint {
-    return buffer_get_row_padding(rowSize);
+    return buffer_get_row_padding(rowSize) as bigint;
   }
 
   /**
@@ -664,7 +664,7 @@ export class WebGPUX {
    * @returns Padded row size aligned to 256 bytes
    */
   bufferGetPaddedRowSize(rowSize: bigint): bigint {
-    return buffer_get_padded_row_size(rowSize);
+    return buffer_get_padded_row_size(rowSize) as bigint;
   }
 
   /**
@@ -679,7 +679,7 @@ export class WebGPUX {
     height: number,
     bytesPerPixel: number,
   ): bigint {
-    return buffer_calculate_texture_buffer_size(width, height, bytesPerPixel);
+    return buffer_calculate_texture_buffer_size(width, height, bytesPerPixel) as bigint;
   }
 
   // ============================================================================
@@ -696,7 +696,7 @@ export class WebGPUX {
    * // Returns 11 (log2(1024) + 1)
    */
   textureCalculateMipLevels(width: number, height: number): number {
-    return texture_calculate_mip_levels(width, height);
+    return texture_calculate_mip_levels(width, height) as number;
   }
 
   /**
@@ -743,7 +743,7 @@ export class WebGPUX {
    * @returns Shader cache handle
    */
   createShaderCache(): bigint {
-    return shader_cache_create();
+    return shader_cache_create() as bigint;
   }
 
   /**
@@ -755,7 +755,7 @@ export class WebGPUX {
    * // Returns 0 (Vertex)
    */
   shaderDetectStage(filePath: string): number {
-    return shader_detect_stage(filePath);
+    return shader_detect_stage(filePath) as number;
   }
 
   /**
@@ -1016,7 +1016,7 @@ export class WebGPUX {
    * @returns Number of lines
    */
   wgslLineCount(shaderCode: string): number {
-    return wgsl_line_count(shaderCode);
+    return wgsl_line_count(shaderCode) as number;
   }
 
   /**
@@ -1132,7 +1132,7 @@ export class WebGPUX {
    * console.log(`Tensor size: ${size} bytes`);
    */
   tensorSizeBytes(tensor: TensorMeta): bigint {
-    return BigInt(tensor_size_bytes(this.serializeTensor(tensor)));
+    return BigInt(tensor_size_bytes(this.serializeTensor(tensor)) as number);
   }
 
   /**
@@ -1143,7 +1143,7 @@ export class WebGPUX {
    * const rank = webgpuX.tensorRank(tensor);  // Returns 3 for [2, 3, 4]
    */
   tensorRank(tensor: TensorMeta): number {
-    return tensor_rank(this.serializeTensor(tensor));
+    return tensor_rank(this.serializeTensor(tensor)) as number;
   }
 
   /**
@@ -1154,7 +1154,7 @@ export class WebGPUX {
    * const elements = webgpuX.tensorTotalElements(tensor);  // Returns 24 for [2, 3, 4]
    */
   tensorTotalElements(tensor: TensorMeta): bigint {
-    return BigInt(tensor_total_elements(this.serializeTensor(tensor)));
+    return BigInt(tensor_total_elements(this.serializeTensor(tensor)) as number);
   }
 
   /**
@@ -1294,7 +1294,7 @@ export class WebGPUX {
    * @returns Number of logical CPU cores
    */
   linuxGetCpuCount(): number {
-    return linux_get_cpu_count();
+    return linux_get_cpu_count() as number;
   }
 
   /**
@@ -1302,7 +1302,7 @@ export class WebGPUX {
    * @returns Page size in bytes
    */
   linuxGetPageSize(): bigint {
-    return linux_get_page_size();
+    return linux_get_page_size() as bigint;
   }
 
   /**
@@ -1310,7 +1310,7 @@ export class WebGPUX {
    * @returns Total memory in bytes
    */
   linuxGetTotalMemory(): bigint {
-    return linux_get_total_memory();
+    return linux_get_total_memory() as bigint;
   }
 
   /**
@@ -1370,7 +1370,7 @@ export class WebGPUX {
    * @returns Number of logical processors
    */
   windowsGetLogicalProcessorCount(): number {
-    return windows_get_logical_processor_count();
+    return windows_get_logical_processor_count() as number;
   }
 
   /**
@@ -1378,7 +1378,7 @@ export class WebGPUX {
    * @returns Page size in bytes
    */
   windowsGetPageSize(): bigint {
-    return windows_get_page_size();
+    return windows_get_page_size() as bigint;
   }
 
   /**
@@ -1439,7 +1439,7 @@ export class WebGPUX {
    * @returns Optimal workgroup size
    */
   metalOptimalWorkgroupSize(family: MetalFamily): number {
-    return metal_optimal_workgroup_size(family);
+    return metal_optimal_workgroup_size(family) as number;
   }
 
   /**
@@ -1448,7 +1448,7 @@ export class WebGPUX {
    * @returns SIMD group size (typically 32)
    */
   metalSimdGroupSize(family: MetalFamily): number {
-    return metal_simd_group_size(family);
+    return metal_simd_group_size(family) as number;
   }
 
   /**
@@ -1457,7 +1457,7 @@ export class WebGPUX {
    * @returns Max threadgroup memory in bytes
    */
   metalMaxThreadgroupMemory(family: MetalFamily): bigint {
-    return metal_max_threadgroup_memory(family);
+    return metal_max_threadgroup_memory(family) as bigint;
   }
 
   /**
@@ -1488,7 +1488,7 @@ export class WebGPUX {
    * @returns Optimal workgroup size
    */
   rocmOptimalWorkgroupSize(architecture: ROCmArchitecture): number {
-    return rocm_optimal_workgroup_size(architecture);
+    return rocm_optimal_workgroup_size(architecture) as number;
   }
 
   /**
@@ -1497,7 +1497,7 @@ export class WebGPUX {
    * @returns Wavefront size (32 or 64)
    */
   rocmWavefrontSize(architecture: ROCmArchitecture): number {
-    return rocm_wavefront_size(architecture);
+    return rocm_wavefront_size(architecture) as number;
   }
 
   /**
@@ -1506,7 +1506,7 @@ export class WebGPUX {
    * @returns LDS size in bytes
    */
   rocmLdsSizePerCu(architecture: ROCmArchitecture): bigint {
-    return rocm_lds_size_per_cu(architecture);
+    return rocm_lds_size_per_cu(architecture) as bigint;
   }
 
   /**
@@ -1539,7 +1539,7 @@ export class WebGPUX {
     sharedMemoryPerBlock: bigint,
     architecture: ROCmArchitecture,
   ): number {
-    return rocm_calculate_occupancy(threadsPerBlock, sharedMemoryPerBlock, architecture);
+    return rocm_calculate_occupancy(threadsPerBlock, sharedMemoryPerBlock, architecture) as number;
   }
 
   // ============================================================================
@@ -1553,7 +1553,7 @@ export class WebGPUX {
    * @returns Optimal workgroup size
    */
   cudaOptimalWorkgroupSize(computeMajor: number, computeMinor: number): number {
-    return cuda_optimal_workgroup_size(computeMajor, computeMinor);
+    return cuda_optimal_workgroup_size(computeMajor, computeMinor) as number;
   }
 
   /**
@@ -1562,7 +1562,7 @@ export class WebGPUX {
    * @returns Bank size in bytes (4 or 8)
    */
   cudaSharedMemoryBankSize(computeMajor: number): number {
-    return cuda_shared_memory_bank_size(computeMajor);
+    return cuda_shared_memory_bank_size(computeMajor) as number;
   }
 
   /**
@@ -1587,7 +1587,7 @@ export class WebGPUX {
     sharedMemoryPerBlock: bigint,
     computeMajor: number,
   ): number {
-    return cuda_calculate_occupancy(threadsPerBlock, sharedMemoryPerBlock, computeMajor);
+    return cuda_calculate_occupancy(threadsPerBlock, sharedMemoryPerBlock, computeMajor) as number;
   }
 
   // ============================================================================
@@ -1601,7 +1601,7 @@ export class WebGPUX {
    * @returns Optimal workgroup size
    */
   vulkanOptimalWorkgroupSize(vendorId: number, deviceId: number): number {
-    return vulkan_optimal_workgroup_size(vendorId, deviceId);
+    return vulkan_optimal_workgroup_size(vendorId, deviceId) as number;
   }
 
   /**
@@ -1636,7 +1636,7 @@ export class WebGPUX {
    * @returns Recommended descriptor set count
    */
   vulkanRecommendedDescriptorSets(): number {
-    return vulkan_recommended_descriptor_sets();
+    return vulkan_recommended_descriptor_sets() as number;
   }
 
   // ============================================================================
@@ -1650,7 +1650,7 @@ export class WebGPUX {
    * @returns Optimal workgroup size
    */
   openclOptimalWorkgroupSize(vendorId: number, maxWorkgroupSize: bigint): bigint {
-    return opencl_optimal_workgroup_size(vendorId, maxWorkgroupSize);
+    return opencl_optimal_workgroup_size(vendorId, maxWorkgroupSize) as bigint;
   }
 
   /**
@@ -1826,7 +1826,7 @@ export class WebGPUX {
    * @returns Buffer handle (0 on failure)
    */
   createReadbackBuffer(deviceHandle: bigint, size: bigint): bigint {
-    return gpu_create_readback_buffer(deviceHandle, size);
+    return gpu_create_readback_buffer(deviceHandle, size) as bigint;
   }
 
   /**
@@ -1875,7 +1875,7 @@ export class WebGPUX {
    * @returns Aligned bytes per row (256-byte aligned)
    */
   calculateAlignedBytesPerRow(width: number, bytesPerPixel: number): number {
-    return gpu_calculate_aligned_bytes_per_row(width, bytesPerPixel);
+    return gpu_calculate_aligned_bytes_per_row(width, bytesPerPixel) as number;
   }
 
   /**
@@ -1902,7 +1902,7 @@ export class WebGPUX {
    * @returns Buffer handle (0 on failure)
    */
   createGPUBuffer(deviceHandle: bigint, size: bigint, usage: number, mapped: number = 0): bigint {
-    return gpu_create_buffer(deviceHandle, size, usage, mapped);
+    return gpu_create_buffer(deviceHandle, size, usage, mapped) as bigint;
   }
 
   /**
@@ -1920,7 +1920,7 @@ export class WebGPUX {
    * @returns Texture view handle (0 on failure)
    */
   createTextureView(deviceHandle: bigint, descriptorJson: string): bigint {
-    return gpu_create_texture_view(deviceHandle, descriptorJson);
+    return gpu_create_texture_view(deviceHandle, descriptorJson) as bigint;
   }
 
   /**
@@ -1938,7 +1938,7 @@ export class WebGPUX {
    * @returns Sampler handle (0 on failure)
    */
   createSampler(deviceHandle: bigint, descriptorJson: string): bigint {
-    return gpu_create_sampler(deviceHandle, descriptorJson);
+    return gpu_create_sampler(deviceHandle, descriptorJson) as bigint;
   }
 
   /**
@@ -1957,7 +1957,7 @@ export class WebGPUX {
    * @returns Bind group handle (0 on failure)
    */
   createBindGroup(deviceHandle: bigint, layoutHandle: bigint, entriesJson: string): bigint {
-    return gpu_create_bind_group(deviceHandle, layoutHandle, entriesJson);
+    return gpu_create_bind_group(deviceHandle, layoutHandle, entriesJson) as bigint;
   }
 
   /**
@@ -1985,7 +1985,7 @@ export class WebGPUX {
    * @returns Command encoder handle (0 on failure)
    */
   createCommandEncoder(deviceHandle: bigint): bigint {
-    return gpu_create_command_encoder(deviceHandle);
+    return gpu_create_command_encoder(deviceHandle) as bigint;
   }
 
   /**
@@ -1995,7 +1995,7 @@ export class WebGPUX {
    * @returns Render pass handle (0 on failure)
    */
   beginRenderPass(encoderHandle: bigint, colorAttachmentJson: string): bigint {
-    return gpu_begin_render_pass(encoderHandle, colorAttachmentJson);
+    return gpu_begin_render_pass(encoderHandle, colorAttachmentJson) as bigint;
   }
 
   /**
@@ -2059,7 +2059,7 @@ export class WebGPUX {
    * @returns Command buffer handle (0 on failure)
    */
   finishCommandEncoder(encoderHandle: bigint): bigint {
-    return gpu_finish_command_encoder(encoderHandle);
+    return gpu_finish_command_encoder(encoderHandle) as bigint;
   }
 
   /**
