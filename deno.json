@@ -6,6 +6,7 @@
     "./query-engine",
     "./mcp-server",
     "./runtime",
+    "./graphx",
     "./crates/webgpu_x"
   ],
   "nodeModulesDir": "none",
@@ -80,8 +81,13 @@
     "mcp:server:logs": "./mcp-server/browserx-mcp logs",
     "mcp:install-plugin": "./browserx-claude-plugin/install.sh",
 
-    "check:all": "deno task browser:check && deno task devtools:check && deno task proxy:check && deno task query:check && deno task runtime:check && deno task mcp:check",
-    "test:all": "deno task browser:test && deno task devtools:test && deno task proxy:test && deno task query:test && deno task runtime:test",
+    "graphx:check": "cd graphx && deno task check",
+    "graphx:test": "cd graphx && deno task test",
+    "graphx:lint": "cd graphx && deno task lint",
+    "graphx:fmt": "cd graphx && deno task fmt",
+
+    "check:all": "deno task browser:check && deno task devtools:check && deno task proxy:check && deno task query:check && deno task runtime:check && deno task mcp:check && deno task graphx:check",
+    "test:all": "deno task browser:test && deno task devtools:test && deno task proxy:test && deno task query:test && deno task runtime:test && deno task graphx:test",
     "lint:all": "deno task browser:lint && deno task devtools:lint && deno task proxy:lint && deno task query:lint && deno task runtime:lint",
     "lint:fix:all": "cd browser && deno task lint && cd ../proxy-engine && deno task lint && cd ../query-engine && deno task lint:fix && cd ../runtime && deno task lint:fix",
     "fmt:all": "deno task browser:fmt && deno task devtools:fmt && deno task proxy:fmt && deno task query:fmt && deno task runtime:fmt",
