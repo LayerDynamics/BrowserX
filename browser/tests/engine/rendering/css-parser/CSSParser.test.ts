@@ -684,3 +684,242 @@ Deno.test({
         assertEquals(importUrls[0], "reset.css");
     },
 });
+
+// @media rule edge cases
+
+Deno.test({
+    name: "CSSParser: multiple @media rules in one stylesheet",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(
+            `@media screen { p { color: red; } } @media print { p { color: black; } }`
+        );
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const mediaRules = parser.getMediaRules();
+        assertEquals(mediaRules.length, 2);
+        assertEquals(mediaRules[0].condition, "screen");
+        assertEquals(mediaRules[1].condition, "print");
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @media rule with multiple inner rules",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(
+            `@media screen { p { color: red; } div { margin: 0; } h1 { font-size: 24px; } }`
+        );
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const mediaRules = parser.getMediaRules();
+        assertEquals(mediaRules.length, 1);
+        assertEquals(mediaRules[0].rules.length, 3);
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @media rule with complex and condition",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(
+            `@media (min-width: 768px) and (max-width: 1024px) { body { font-size: 16px; } }`
+        );
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const mediaRules = parser.getMediaRules();
+        assertEquals(mediaRules.length, 1);
+        assert(mediaRules[0].condition.includes("min-width"));
+        assert(mediaRules[0].condition.includes("max-width"));
+        assert(mediaRules[0].condition.includes("and"));
+        assertEquals(mediaRules[0].rules.length, 1);
+    },
+});
+
+Deno.test({
+    name: "CSSParser: calling parse() twice resets mediaRules",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const parser = new CSSParser();
+
+        parser.parse(tokenizer.tokenize(`@media screen { p { color: red; } }`));
+        assertEquals(parser.getMediaRules().length, 1);
+        assertEquals(parser.getMediaRules()[0].condition, "screen");
+
+        parser.parse(tokenizer.tokenize(`@media print { p { color: black; } }`));
+        assertEquals(parser.getMediaRules().length, 1);
+        assertEquals(parser.getMediaRules()[0].condition, "print");
+    },
+});
+
+// @keyframes edge cases
+
+Deno.test({
+    name: "CSSParser: multiple named @keyframes blocks",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(
+            `@keyframes fade { from { opacity: 0; } to { opacity: 1; } } ` +
+            `@keyframes slide { from { left: 0; } to { left: 100px; } }`
+        );
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const keyframeRules = parser.getKeyframeRules();
+        assertEquals(keyframeRules.size, 2);
+        assertEquals(keyframeRules.has("fade"), true);
+        assertEquals(keyframeRules.has("slide"), true);
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @keyframes with from, percentage stop, and to",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(
+            `@keyframes slide { from { left: 0; } 50% { left: 50px; } to { left: 100px; } }`
+        );
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const keyframeRules = parser.getKeyframeRules();
+        assertEquals(keyframeRules.has("slide"), true);
+        const frames = keyframeRules.get("slide")!;
+        assertEquals(frames.length, 3);
+        assertEquals(frames[0].selector, "from");
+        assertEquals(frames[1].selector, "50%");
+        assertEquals(frames[2].selector, "to");
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @keyframes with multiple declarations per stop",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(
+            `@keyframes bounce { from { top: 0; opacity: 0; } to { top: 100px; opacity: 1; } }`
+        );
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const keyframeRules = parser.getKeyframeRules();
+        assertEquals(keyframeRules.has("bounce"), true);
+        const frames = keyframeRules.get("bounce")!;
+        assertEquals(frames.length, 2);
+        assertEquals(frames[0].declarations.length, 2);
+        assertEquals(frames[0].declarations[0].property, "top");
+        assertEquals(frames[0].declarations[1].property, "opacity");
+        assertEquals(frames[1].declarations.length, 2);
+    },
+});
+
+// @font-face edge cases
+
+Deno.test({
+    name: "CSSParser: multiple @font-face blocks produces two entries",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(
+            `@font-face { font-family: 'FontA'; } @font-face { font-family: 'FontB'; font-weight: bold; }`
+        );
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const fontFaceRules = parser.getFontFaceRules();
+        assertEquals(fontFaceRules.length, 2);
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @font-face with multiple properties",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(
+            `@font-face { font-family: 'MyFont'; font-weight: bold; font-style: italic; }`
+        );
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const fontFaceRules = parser.getFontFaceRules();
+        assertEquals(fontFaceRules.length, 1);
+        assertEquals(fontFaceRules[0].length, 3);
+        assertEquals(fontFaceRules[0][0].property, "font-family");
+        assertEquals(fontFaceRules[0][1].property, "font-weight");
+        assertEquals(fontFaceRules[0][2].property, "font-style");
+    },
+});
+
+// @import edge cases
+
+Deno.test({
+    name: "CSSParser: multiple @import statements",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(`@import "reset.css"; @import "base.css";`);
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const importUrls = parser.getImportUrls();
+        assertEquals(importUrls.length, 2);
+        assertEquals(importUrls[0], "reset.css");
+        assertEquals(importUrls[1], "base.css");
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @import with url() syntax stores URL",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(`@import url("style.css");`);
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const importUrls = parser.getImportUrls();
+        assertEquals(importUrls.length, 1);
+        assertEquals(importUrls[0], "style.css");
+    },
+});
+
+// Reset behavior
+
+Deno.test({
+    name: "CSSParser: second parse() call replaces all at-rule results",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const parser = new CSSParser();
+
+        // First parse: media + keyframes + font-face + import
+        parser.parse(tokenizer.tokenize(
+            `@import "first.css"; @media screen { p { color: red; } } ` +
+            `@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } } ` +
+            `@font-face { font-family: 'First'; }`
+        ));
+        assertEquals(parser.getImportUrls().length, 1);
+        assertEquals(parser.getMediaRules().length, 1);
+        assertEquals(parser.getKeyframeRules().size, 1);
+        assertEquals(parser.getFontFaceRules().length, 1);
+
+        // Second parse: different at-rules
+        parser.parse(tokenizer.tokenize(
+            `@import "second.css"; @import "third.css";`
+        ));
+        assertEquals(parser.getImportUrls().length, 2);
+        assertEquals(parser.getImportUrls()[0], "second.css");
+        assertEquals(parser.getMediaRules().length, 0);
+        assertEquals(parser.getKeyframeRules().size, 0);
+        assertEquals(parser.getFontFaceRules().length, 0);
+    },
+});

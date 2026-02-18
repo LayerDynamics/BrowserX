@@ -1182,6 +1182,7 @@ export class CSSParser {
             this.advance();
         } else if (token.type === CSSTokenType.FUNCTION && token.value.toLowerCase() === "url") {
             this.advance(); // past FUNCTION
+            if (this.current().type === CSSTokenType.LEFT_PAREN) this.advance(); // past (
             this.consumeWhitespace();
             const inner = this.current();
             if (inner.type === CSSTokenType.STRING || inner.type === CSSTokenType.IDENT) {
