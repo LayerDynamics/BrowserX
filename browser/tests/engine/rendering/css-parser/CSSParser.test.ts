@@ -625,3 +625,62 @@ Deno.test({
         assertExists(stylesheet);
     },
 });
+
+Deno.test({
+    name: "CSSParser: @media rule is parsed and stored",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(`@media (max-width: 768px) { body { color: red; } }`);
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const mediaRules = parser.getMediaRules();
+        assertEquals(mediaRules.length, 1);
+        assertEquals(mediaRules[0].rules.length, 1);
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @keyframes rule is parsed and stored",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(`@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }`);
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const keyframeRules = parser.getKeyframeRules();
+        assertEquals(keyframeRules.has("fadeIn"), true);
+        assertEquals(keyframeRules.get("fadeIn")!.length, 2);
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @font-face rule is parsed without error",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(`@font-face { font-family: 'MyFont'; src: url('/font.woff2'); }`);
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const fontFaceRules = parser.getFontFaceRules();
+        assertEquals(fontFaceRules.length, 1);
+    },
+});
+
+Deno.test({
+    name: "CSSParser: @import is parsed without error",
+    fn() {
+        const tokenizer = new CSSTokenizer();
+        const tokens = tokenizer.tokenize(`@import "reset.css"; body { margin: 0; }`);
+
+        const parser = new CSSParser();
+        parser.parse(tokens);
+
+        const importUrls = parser.getImportUrls();
+        assertEquals(importUrls.length, 1);
+        assertEquals(importUrls[0], "reset.css");
+    },
+});

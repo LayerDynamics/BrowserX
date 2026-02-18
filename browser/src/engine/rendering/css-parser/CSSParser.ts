@@ -701,6 +701,12 @@ export class CSSParser {
     private tokens: CSSToken[] = [];
     private position: number = 0;
 
+    // At-rule storage
+    private mediaRules: Array<{ condition: string; rules: CSSRule[] }> = [];
+    private keyframeRules: Map<string, Array<{ selector: string; declarations: CSSDeclaration[] }>> = new Map();
+    private fontFaceRules: Array<CSSDeclaration[]> = [];
+    private importUrls: string[] = [];
+
     /**
      * Parse a single CSS rule from a string
      * Used by StyleSheet.insertRule()
@@ -715,12 +721,21 @@ export class CSSParser {
         return parser.parseRule();
     }
 
+    getMediaRules(): Array<{ condition: string; rules: CSSRule[] }> { return this.mediaRules; }
+    getKeyframeRules(): Map<string, Array<{ selector: string; declarations: CSSDeclaration[] }>> { return this.keyframeRules; }
+    getFontFaceRules(): Array<CSSDeclaration[]> { return this.fontFaceRules; }
+    getImportUrls(): string[] { return this.importUrls; }
+
     /**
      * Parse CSS tokens into stylesheet
      */
     parse(tokens: CSSToken[]): CSSStyleSheet {
         this.tokens = tokens;
         this.position = 0;
+        this.mediaRules = [];
+        this.keyframeRules = new Map();
+        this.fontFaceRules = [];
+        this.importUrls = [];
 
         const stylesheet = new StyleSheet();
 
@@ -1142,27 +1157,114 @@ export class CSSParser {
      * Parse at-rule (@media, @import, @keyframes, etc.)
      */
     private parseAtRule(): void {
-        // For now, skip at-rules
-        // TODO: Implement @media, @import, @keyframes, @font-face, etc.
-
-        const atKeyword = this.current().value;
+        // AT_KEYWORD value includes "@" prefix — strip it for dispatch
+        const keyword = this.current().value.slice(1).toLowerCase();
         this.advance();
 
-        // Skip until we find opening brace or semicolon
+        switch (keyword) {
+            case "import": this.parseImportRule(); break;
+            case "media": this.parseMediaRule(); break;
+            case "keyframes":
+            case "-webkit-keyframes":
+            case "-moz-keyframes":
+                this.parseKeyframesRule(); break;
+            case "font-face": this.parseFontFaceRule(); break;
+            default: this.skipAtRuleBody(); break;
+        }
+    }
+
+    private parseImportRule(): void {
+        this.consumeWhitespace();
+        let url = "";
+        const token = this.current();
+        if (token.type === CSSTokenType.STRING) {
+            url = token.value;
+            this.advance();
+        } else if (token.type === CSSTokenType.FUNCTION && token.value.toLowerCase() === "url") {
+            this.advance(); // past FUNCTION
+            this.consumeWhitespace();
+            const inner = this.current();
+            if (inner.type === CSSTokenType.STRING || inner.type === CSSTokenType.IDENT) {
+                url = inner.value;
+                this.advance();
+            }
+            this.consumeWhitespace();
+            if (this.current().type === CSSTokenType.RIGHT_PAREN) this.advance();
+        }
+        if (url) this.importUrls.push(url);
+        this.consumeWhitespace();
+        if (this.current().type === CSSTokenType.SEMICOLON) this.advance();
+    }
+
+    private parseMediaRule(): void {
+        const conditionParts: string[] = [];
+        while (!this.isAtEnd()) {
+            this.consumeWhitespace();
+            const token = this.current();
+            if (token.type === CSSTokenType.LEFT_BRACE) break;
+            if (token.type === CSSTokenType.EOF || token.type === CSSTokenType.SEMICOLON) return;
+            conditionParts.push(this.getTokenValue(token));
+            this.advance();
+        }
+        const condition = conditionParts.join(" ").trim();
+        if (!this.match(CSSTokenType.LEFT_BRACE)) return;
+        const rules: CSSRule[] = [];
+        while (!this.isAtEnd()) {
+            this.consumeWhitespace();
+            const token = this.current();
+            if (token.type === CSSTokenType.RIGHT_BRACE || token.type === CSSTokenType.EOF) break;
+            if (token.type === CSSTokenType.COMMENT) { this.advance(); continue; }
+            if (token.type === CSSTokenType.AT_KEYWORD) { this.skipAtRuleBody(); continue; }
+            const rule = this.parseRule();
+            if (rule) rules.push(rule);
+        }
+        if (this.current().type === CSSTokenType.RIGHT_BRACE) this.advance();
+        this.mediaRules.push({ condition, rules });
+    }
+
+    private parseKeyframesRule(): void {
+        this.consumeWhitespace();
+        const nameToken = this.current();
+        if (nameToken.type !== CSSTokenType.IDENT && nameToken.type !== CSSTokenType.STRING) {
+            this.skipAtRuleBody(); return;
+        }
+        const name = nameToken.value;
+        this.advance();
+        this.consumeWhitespace();
+        if (!this.match(CSSTokenType.LEFT_BRACE)) { this.skipAtRuleBody(); return; }
+        const frames: Array<{ selector: string; declarations: CSSDeclaration[] }> = [];
+        while (!this.isAtEnd()) {
+            this.consumeWhitespace();
+            const token = this.current();
+            if (token.type === CSSTokenType.RIGHT_BRACE || token.type === CSSTokenType.EOF) break;
+            if (token.type === CSSTokenType.COMMENT) { this.advance(); continue; }
+            let selector = "";
+            if (token.type === CSSTokenType.IDENT) { selector = token.value; this.advance(); }
+            else if (token.type === CSSTokenType.PERCENTAGE) { selector = token.value + "%"; this.advance(); }
+            else { this.advance(); continue; }
+            this.consumeWhitespace();
+            if (!this.match(CSSTokenType.LEFT_BRACE)) continue;
+            const declarations = this.parseDeclarations();
+            if (this.current().type === CSSTokenType.RIGHT_BRACE) this.advance();
+            frames.push({ selector, declarations });
+        }
+        if (this.current().type === CSSTokenType.RIGHT_BRACE) this.advance();
+        this.keyframeRules.set(name, frames);
+    }
+
+    private parseFontFaceRule(): void {
+        this.consumeWhitespace();
+        if (!this.match(CSSTokenType.LEFT_BRACE)) { this.skipAtRuleBody(); return; }
+        const declarations = this.parseDeclarations();
+        if (this.current().type === CSSTokenType.RIGHT_BRACE) this.advance();
+        this.fontFaceRules.push(declarations);
+    }
+
+    private skipAtRuleBody(): void {
         while (!this.isAtEnd()) {
             const token = this.current();
-
-            if (token.type === CSSTokenType.SEMICOLON) {
-                this.advance();
-                return;
-            }
-
-            if (token.type === CSSTokenType.LEFT_BRACE) {
-                // Skip entire block
-                this.skipBlock();
-                return;
-            }
-
+            if (token.type === CSSTokenType.SEMICOLON) { this.advance(); return; }
+            if (token.type === CSSTokenType.LEFT_BRACE) { this.skipBlock(); return; }
             this.advance();
         }
     }
