@@ -6,7 +6,7 @@
 /* ── Fonts ─────────────────────────────────────────────────── */
 /* Loaded via <link> tags in astro.config.mjs `head` to avoid
    render-blocking CSS @import and improve FCP. Font-family
-   declarations below reference Syne, DM Sans, JetBrains Mono. */
+   declarations below reference Space Grotesk, Manrope, Fira Code. */
 
 /* ── Design Tokens ─────────────────────────────────────────── */
 :root {
@@ -70,8 +70,8 @@
   --sl-color-black: var(--bx-void);
 
   /* Typography */
-  --sl-font:      'DM Sans', system-ui, sans-serif;
-  --sl-font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --sl-font:      'Manrope', system-ui, sans-serif;
+  --sl-font-mono: 'Fira Code', 'Fira Mono', monospace;
   --sl-text-h1:   clamp(1.75rem, 4vw, 2.5rem);
   --sl-text-h2:   clamp(1.25rem, 3vw, 1.75rem);
   --sl-text-h3:   1.125rem;
@@ -98,16 +98,16 @@ body {
   background: var(--bx-void);
 }
 
-/* Headings use Syne */
+/* Headings use Space Grotesk */
 h1, h2, h3, h4, h5, h6,
 .sl-markdown-content h1,
 .sl-markdown-content h2,
 .sl-markdown-content h3,
 .sl-markdown-content h4 {
-  font-family: 'Syne', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 700;
   color: var(--bx-white);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
 /* ── Starlight nav / header ────────────────────────────────── */
@@ -119,10 +119,10 @@ header.header {
 
 .site-title,
 .site-title span {
-  font-family: 'Syne', sans-serif;
-  font-weight: 800;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
   color: var(--bx-white);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
 }
 
 /* Sidebar */
@@ -156,11 +156,11 @@ nav.sidebar {
 /* Sidebar section labels */
 .sidebar details > summary,
 .sidebar .group-label {
-  font-family: 'Syne', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   color: var(--bx-gray-3);
 }
 
@@ -226,7 +226,7 @@ main {
 }
 
 .sl-markdown-content th {
-  font-family: 'Syne', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -346,7 +346,7 @@ main {
   padding: 0.5rem 0.875rem;
   font-size: 0.75rem;
   color: var(--bx-gray-2);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', monospace;
   border-bottom: 1px solid var(--bx-border);
   background: var(--bx-void);
 }
@@ -362,7 +362,7 @@ main {
 }
 
 .results-table th {
-  font-family: 'Syne', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -380,7 +380,7 @@ main {
   padding: 0.4rem 0.875rem;
   color: var(--bx-gray-1);
   border-bottom: 1px solid var(--bx-border);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.75rem;
 }
 
@@ -411,7 +411,7 @@ main {
   border-bottom: 2px solid transparent;
   color: var(--bx-gray-2);
   cursor: pointer;
-  font-family: 'DM Sans', sans-serif;
+  font-family: 'Manrope', sans-serif;
   font-size: 0.75rem;
   font-weight: 500;
   letter-spacing: 0.04em;
@@ -451,7 +451,7 @@ main {
 }
 
 .screenshot-timestamp {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.75rem;
   color: var(--bx-gray-2);
 }
@@ -466,7 +466,7 @@ main {
 .console-container {
   display: flex;
   flex-direction: column;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.75rem;
 }
 
@@ -529,12 +529,12 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--bx-gray-2);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.7rem;
 }
 
 .network-status {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', monospace;
   font-weight: 600;
   font-size: 0.75rem;
 }
@@ -542,7 +542,7 @@ main {
 .network-duration,
 .network-size {
   color: var(--bx-gray-2);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.75rem;
 }
 
