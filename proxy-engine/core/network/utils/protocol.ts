@@ -325,27 +325,59 @@ export function wantsHTTP2Upgrade(data: Uint8Array): boolean {
 }
 
 /**
- * Parse ALPN protocols from TLS ClientHello
+ * Parse ALPN protocols from TLS ClientHello by walking the TLS extension structure.
+ * Looks for extension type 0x0010 (ALPN) and extracts the protocol name list.
  */
 export function parseALPNProtocols(data: Uint8Array): string[] {
-  // This is a simplified parser - full TLS parsing is complex
-  // In practice, you'd use a proper TLS library
+  // Must be a TLS handshake record (0x16) and a ClientHello (0x01)
+  if (data.length < 9 || data[0] !== 0x16) return [];
+  if (data[5] !== 0x01) return [];
 
-  if (data.length < 6 || data[0] !== 0x16) {
-    return [];
+  // Skip: record header (5) + handshake header (4) + client version (2) + random (32)
+  let pos = 9 + 2 + 32;
+  if (pos >= data.length) return [];
+
+  // Skip session ID
+  const sessionIdLen = data[pos++];
+  pos += sessionIdLen;
+  if (pos + 2 > data.length) return [];
+
+  // Skip cipher suites
+  const cipherSuitesLen = (data[pos] << 8) | data[pos + 1];
+  pos += 2 + cipherSuitesLen;
+  if (pos + 1 > data.length) return [];
+
+  // Skip compression methods
+  const compLen = data[pos++];
+  pos += compLen;
+  if (pos + 2 > data.length) return [];
+
+  // Walk extensions looking for ALPN (type 0x0010)
+  const extensionsLen = (data[pos] << 8) | data[pos + 1];
+  pos += 2;
+  const extensionsEnd = Math.min(pos + extensionsLen, data.length);
+
+  while (pos + 4 <= extensionsEnd) {
+    const extType = (data[pos] << 8) | data[pos + 1];
+    const extLen = (data[pos + 2] << 8) | data[pos + 3];
+    pos += 4;
+    if (extType === 0x0010) {
+      if (pos + 2 > data.length) return [];
+      const listLen = (data[pos] << 8) | data[pos + 1];
+      let ppos = pos + 2;
+      const listEnd = ppos + listLen;
+      const protocols: string[] = [];
+      while (ppos < listEnd && ppos < data.length) {
+        const protoLen = data[ppos++];
+        if (ppos + protoLen > data.length) break;
+        protocols.push(decoder.decode(data.slice(ppos, ppos + protoLen)));
+        ppos += protoLen;
+      }
+      return protocols;
+    }
+    pos += extLen;
   }
-
-  // This is a placeholder - real implementation would parse TLS extensions
-  // to extract ALPN protocols
-  const protocols: string[] = [];
-
-  // Common ALPN protocol IDs
-  const text = decoder.decode(data);
-  if (text.includes("h2")) protocols.push("h2");
-  if (text.includes("http/1.1")) protocols.push("http/1.1");
-  if (text.includes("http/1.0")) protocols.push("http/1.0");
-
-  return protocols;
+  return [];
 }
 
 /**
@@ -363,4 +395,42 @@ export function selectALPNProtocol(
   }
 
   return undefined;
+}
+
+/**
+ * Build a TLS ALPN extension (type 0x0010) bytes for use in ClientHello construction.
+ * Returns the raw extension bytes: type(2) + length(2) + protocol_list_length(2) + protocols.
+ */
+export function buildALPNExtension(protocols: string[]): Uint8Array {
+  // Encode each protocol name
+  const encoded = protocols.map((p) => encoder.encode(p));
+
+  // Protocol list length = sum of (1 + proto_len) for each proto
+  const listLen = encoded.reduce((acc, p) => acc + 1 + p.length, 0);
+
+  // Extension: type(2) + ext_len(2) + list_len(2) + protocols
+  const extDataLen = 2 + listLen; // list_length field + protocol bytes
+  const buf = new Uint8Array(4 + extDataLen); // type + length + data
+  let pos = 0;
+
+  // Extension type 0x0010 (ALPN)
+  buf[pos++] = 0x00;
+  buf[pos++] = 0x10;
+
+  // Extension data length
+  buf[pos++] = (extDataLen >> 8) & 0xff;
+  buf[pos++] = extDataLen & 0xff;
+
+  // Protocol list length
+  buf[pos++] = (listLen >> 8) & 0xff;
+  buf[pos++] = listLen & 0xff;
+
+  // Each protocol: length(1) + bytes
+  for (const proto of encoded) {
+    buf[pos++] = proto.length;
+    buf.set(proto, pos);
+    pos += proto.length;
+  }
+
+  return buf;
 }
