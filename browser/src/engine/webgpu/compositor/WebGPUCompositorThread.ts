@@ -22,8 +22,24 @@ import { WebGPUDevice } from "../adapter/Device.ts";
 import { WebGPUCanvasContext } from "../canvas/CanvasContext.ts";
 import { WebGPUTextureManager } from "../operations/render/TextureManager.ts";
 import { WebGPUCommandEncoder } from "../encoder/mod.ts";
-import { PipelineManager } from "../pipelines/mod.ts";
+import {
+    PipelineManager,
+    CompositingPipeline,
+    CompositingBlendMode,
+    type CompositingPipelineConfig,
+} from "../pipelines/mod.ts";
 import { WebGPUError } from "../errors.ts";
+import {
+    createCompositorShaderModule,
+    createCompositorBindGroupLayout,
+    createCompositorBindGroup,
+    createCompositorUniformBuffer,
+    createFullScreenQuadBuffer,
+    writeCompositorUniforms,
+    createIdentityTransform,
+    CompositorEntryPoints,
+    CompositorVertexLayout,
+} from "../shaders/mod.ts";
 
 // ============================================================================
 // Types
@@ -216,6 +232,9 @@ export class WebGPUCompositorThread {
     // Intermediate render targets
     private compositeTexture: GPUTexture | null = null;
     private compositeTextureView: GPUTextureView | null = null;
+
+    // Layer compositing pipeline (lazy-initialized on first frame)
+    private compositingPipeline: CompositingPipeline | null = null;
 
     constructor(
         device: WebGPUDevice,
@@ -460,7 +479,14 @@ export class WebGPUCompositorThread {
                 }
 
                 // Composite layer to canvas
-                await this.compositeLayer(encoder, layer, layerTexture, canvasView);
+                await this.compositeLayer(
+                    encoder,
+                    layer,
+                    layerTexture,
+                    canvasView,
+                    canvasTexture.width,
+                    canvasTexture.height,
+                );
                 drawCalls++;
             }
 
@@ -501,15 +527,98 @@ export class WebGPUCompositorThread {
     }
 
     /**
-     * Composite a single layer
+     * Lazy-initialize the CompositingPipeline on first use.
+     */
+    private getOrInitCompositingPipeline(): CompositingPipeline {
+        if (!this.compositingPipeline) {
+            this.compositingPipeline = new CompositingPipeline(
+                this.device,
+                this.pipelineManager,
+            );
+        }
+        return this.compositingPipeline;
+    }
+
+    /**
+     * Build a column-major 4x4 clip-space transform for a layer.
+     * Maps pixel-space (x, y, width, height) to NDC clip space on a canvas of
+     * (canvasWidth, canvasHeight).  The vertex shader applies this matrix to a
+     * full-screen quad that spans [-1, 1] in both axes, so the result covers
+     * only the layer's sub-region.
+     */
+    private buildLayerTransform(
+        layer: LayerDescriptor,
+        canvasWidth: number,
+        canvasHeight: number,
+    ): Float32Array {
+        // Scale factors so the full-screen quad covers exactly (lw × lh) pixels.
+        const scaleX = layer.width / canvasWidth;
+        const scaleY = layer.height / canvasHeight;
+
+        // Layer center in NDC.  Pixel origin is top-left; NDC origin is center.
+        // NDC Y is inverted (positive = up) relative to pixel Y (positive = down).
+        const centerNdcX = 2 * (layer.x + layer.width / 2) / canvasWidth - 1;
+        const centerNdcY = 1 - 2 * (layer.y + layer.height / 2) / canvasHeight;
+
+        // Apply optional extra transform on top.
+        const tx = layer.transform?.translateX ?? 0;
+        const ty = layer.transform?.translateY ?? 0;
+        const sx = layer.transform?.scaleX ?? 1;
+        const sy = layer.transform?.scaleY ?? 1;
+
+        const finalScaleX = scaleX * sx;
+        const finalScaleY = scaleY * sy;
+        const finalTransX = centerNdcX + 2 * tx / canvasWidth;
+        const finalTransY = centerNdcY - 2 * ty / canvasHeight;
+
+        // Column-major 4×4 identity with scale and translation applied.
+        return new Float32Array([
+            finalScaleX, 0, 0, 0, // Column 0
+            0, finalScaleY, 0, 0, // Column 1
+            0, 0, 1, 0, // Column 2
+            finalTransX, finalTransY, 0, 1, // Column 3
+        ]);
+    }
+
+    /**
+     * Composite a single layer onto the canvas target view.
      */
     private async compositeLayer(
         encoder: WebGPUCommandEncoder,
         layer: LayerDescriptor,
         texture: GPUTexture,
-        targetView: GPUTextureView
+        targetView: GPUTextureView,
+        canvasWidth: number,
+        canvasHeight: number,
     ): Promise<void> {
-        // Create render pass
+        const cp = this.getOrInitCompositingPipeline();
+
+        // Determine canvas texture format (default bgra8unorm matches most contexts).
+        const format = (this.canvasContext.getConfiguration()?.format ?? "bgra8unorm") as GPUTextureFormat;
+
+        // Map compositor BlendMode to CompositingPipeline BlendMode (same values).
+        const blendMode = layer.blendMode as unknown as CompositingBlendMode;
+        const pipelineConfig: CompositingPipelineConfig = { blendMode, format };
+
+        // Get or create pipeline for this blend mode + format.
+        const pipeline = cp.getPipeline(pipelineConfig);
+
+        // Create a view from the layer texture.
+        const textureView = texture.createView({ label: `layer-${layer.id}-view` });
+
+        // Build uniform buffer.
+        const uniformBuffer = cp.createUniformBuffer();
+        cp.updateUniformBuffer(uniformBuffer, {
+            transformMatrix: this.buildLayerTransform(layer, canvasWidth, canvasHeight),
+            opacity: layer.opacity,
+            sourceSize: [layer.width as number, layer.height as number],
+            destSize: [canvasWidth, canvasHeight],
+        });
+
+        // Build bind group (texture + sampler + uniforms).
+        const bindGroup = cp.createBindGroup(uniformBuffer, textureView, true);
+
+        // Record the render pass.
         const passDescriptor = {
             colorAttachments: [{
                 view: targetView,
@@ -517,14 +626,13 @@ export class WebGPUCompositorThread {
                 storeOp: "store",
                 clearValue: this.config.clearColor,
             }] as GPURenderPassColorAttachment[],
+            label: `composite-layer-${layer.id}`,
         };
 
         const renderPass = encoder.beginRenderPass(passDescriptor);
-
-        // TODO: Set pipeline for layer compositing
-        // This requires the compositing pipeline which we'll implement next
-        // For now, we just end the pass
-
+        renderPass.setPipeline(pipeline);
+        renderPass.setBindGroup(0, bindGroup);
+        renderPass.draw(6, 1, 0, 0); // 6 vertices = 2 triangles (full-screen quad)
         encoder.endRenderPass();
     }
 
