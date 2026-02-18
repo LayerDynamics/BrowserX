@@ -1,0 +1,42 @@
+---
+const { siteTitleHref } = Astro.locals.starlightRoute;
+---
+
+<a href={siteTitleHref} class="bx-logo-wrap">
+  <svg width="22" height="22" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <!-- Browser window frame -->
+    <rect x="0.75" y="0.75" width="18.5" height="18.5" rx="3" stroke="white" stroke-width="1.5"/>
+    <!-- Chrome bar -->
+    <line x1="0.75" y1="5.75" x2="19.25" y2="5.75" stroke="white" stroke-width="1.5"/>
+    <!-- Three dots -->
+    <circle cx="3.75" cy="3.25" r="0.8" fill="white"/>
+    <circle cx="6.5" cy="3.25" r="0.8" fill="white"/>
+    <circle cx="9.25" cy="3.25" r="0.8" fill="white"/>
+    <!-- Bx monogram in content area -->
+    <text x="10" y="15.5" font-family="'Space Grotesk', system-ui, sans-serif" font-weight="700" font-size="9" fill="white" text-anchor="middle" dominant-baseline="auto">Bx</text>
+  </svg>
+  <span class="bx-wordmark">Browser<span class="bx-x">X</span></span>
+</a>
+
+<style>
+  .bx-logo-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .bx-wordmark {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 1.0625rem;
+    letter-spacing: -0.03em;
+    color: #ffffff;
+    line-height: 1;
+  }
+
+  .bx-x {
+    font-weight: 700;
+  }
+</style>

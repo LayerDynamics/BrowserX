@@ -12,6 +12,9 @@ export default defineConfig({
 		react(),
 		starlight({
 			title: 'BrowserX',
+			components: {
+				SiteTitle: './src/components/SiteTitle.astro',
+			},
 			customCss: ['./src/styles/global.css'],
 			head: [
 				{
