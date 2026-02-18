@@ -275,7 +275,7 @@ Deno.test({
         // Set localStorage value
         const storage = browser.getStorageManager();
         const localStorage = storage.getLocalStorage("http://example.com");
-        localStorage.setItem("test-key", "test-value");
+        localStorage.setItem("test-key", "test-value", "http://example.com");
 
         // Navigate to second page
         const html2 = `<!DOCTYPE html><html><body><h1>Page 2</h1></body></html>`;

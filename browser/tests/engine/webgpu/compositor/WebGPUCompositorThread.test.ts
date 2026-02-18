@@ -119,7 +119,7 @@ async function createTestCompositor(canvasW = 800, canvasH = 600): Promise<{
 
     const mockCanvas = new MockOffscreenCanvas(canvasW, canvasH);
     const config: CanvasContextConfig = {
-        canvas: mockCanvas as unknown as Parameters<typeof WebGPUCanvasContext.prototype.constructor>[1]["canvas"],
+        canvas: mockCanvas as unknown as OffscreenCanvas,
     };
     const canvasCtx = new WebGPUCanvasContext(device, config);
     const compositor = new WebGPUCompositorThread(device, canvasCtx);
@@ -965,7 +965,7 @@ if (webgpuAvailable) {
 
             const mockCanvas = new MockOffscreenCanvas(1280, 720);
             const config: CanvasContextConfig = {
-                canvas: mockCanvas as unknown as Parameters<typeof WebGPUCanvasContext.prototype.constructor>[1]["canvas"],
+                canvas: mockCanvas as unknown as OffscreenCanvas,
             };
             const canvasCtx = new WebGPUCanvasContext(device, config);
 
