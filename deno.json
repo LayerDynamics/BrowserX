@@ -15,7 +15,6 @@
     "@browserx/webgpu_x": "jsr:@browserx/webgpu_x"
   },
   "tasks": {
-    "// Browser tasks": "",
     "browser:check": "cd browser && deno task check",
     "browser:check:watch": "cd browser && deno task check:watch",
     "browser:test": "cd browser && deno task test",
@@ -23,7 +22,6 @@
     "browser:fmt": "cd browser && deno task fmt",
     "browser:fmt:check": "cd browser && deno task fmt:check",
 
-    "// Proxy Engine tasks": "",
     "proxy:start": "cd proxy-engine && deno task start",
     "proxy:start:dev": "cd proxy-engine && deno task start:dev",
     "proxy:start:config": "cd proxy-engine && deno task start:config",
@@ -34,7 +32,6 @@
     "proxy:fmt": "cd proxy-engine && deno task fmt",
     "proxy:fmt:check": "cd proxy-engine && deno task fmt:check",
 
-    "// Query Engine tasks": "",
     "query:check": "cd query-engine && deno task check",
     "query:check:watch": "cd query-engine && deno task check:watch",
     "query:test": "cd query-engine && deno task test",
@@ -54,7 +51,6 @@
     "query:doc": "cd query-engine && deno task doc",
     "query:cache": "cd query-engine && deno task cache",
 
-    "// Runtime tasks": "",
     "runtime:check": "cd runtime && deno task check",
     "runtime:check:watch": "cd runtime && deno task check:watch",
     "runtime:test": "cd runtime && deno task test",
@@ -64,7 +60,6 @@
     "runtime:fmt": "cd runtime && deno task fmt",
     "runtime:fmt:check": "cd runtime && deno task fmt:check",
 
-    "// DevTools tasks": "",
     "devtools:check": "cd dev-tools && deno task check",
     "devtools:check:watch": "cd dev-tools && deno task check:watch",
     "devtools:test": "cd dev-tools && deno task test",
@@ -72,7 +67,6 @@
     "devtools:fmt": "cd dev-tools && deno task fmt",
     "devtools:fmt:check": "cd dev-tools && deno task fmt:check",
 
-    "// MCP Server tasks": "",
     "mcp:start": "cd mcp-server && deno task start",
     "mcp:start:http": "cd mcp-server && deno task start:http",
     "mcp:dev": "cd mcp-server && deno task dev",
@@ -86,7 +80,6 @@
     "mcp:server:logs": "./mcp-server/browserx-mcp logs",
     "mcp:install-plugin": "./browserx-claude-plugin/install.sh",
 
-    "// Aggregate tasks - run across all workspaces": "",
     "check:all": "deno task browser:check && deno task devtools:check && deno task proxy:check && deno task query:check && deno task runtime:check && deno task mcp:check",
     "test:all": "deno task browser:test && deno task devtools:test && deno task proxy:test && deno task query:test && deno task runtime:test",
     "lint:all": "deno task browser:lint && deno task devtools:lint && deno task proxy:lint && deno task query:lint && deno task runtime:lint",
@@ -94,7 +87,6 @@
     "fmt:all": "deno task browser:fmt && deno task devtools:fmt && deno task proxy:fmt && deno task query:fmt && deno task runtime:fmt",
     "fmt:check:all": "deno task browser:fmt:check && deno task devtools:fmt:check && deno task proxy:fmt:check && deno task query:fmt:check && deno task runtime:fmt:check",
 
-    "// Convenience tasks": "",
     "check": "deno task check:all",
     "test": "deno task test:all",
     "lint": "deno task lint:all",

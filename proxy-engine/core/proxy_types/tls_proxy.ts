@@ -222,15 +222,21 @@ export class TLSProxy {
   private async handlePassthrough(
     request: HTTPRequest,
     server: UpstreamServer,
-    context: RequestContext,
+    _context: RequestContext,
   ): Promise<HTTPResponse> {
     this.stats.tlsPassthroughs++;
 
-    // In passthrough mode, we can't inspect the request
-    // Just forward the encrypted stream
-    // This is a placeholder - real implementation would handle at TCP level
+    // Forward the request to the upstream over HTTPS, using the upstream's
+    // own TLS certificate without interception.
+    const client = new HTTPSClient(server.host, server.port, {
+      hostname: server.host,
+    });
 
-    return this.createErrorResponse(501, "TLS passthrough not yet implemented");
+    await client.connect();
+    const response = await client.sendRequest(request);
+    client.close();
+
+    return response;
   }
 
   /**
