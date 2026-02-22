@@ -12,10 +12,14 @@
 import {
     abstractEquals,
     createBoolean,
+    createFunction,
     createNull,
     createNumber,
+    createObject,
     createString,
     createUndefined,
+    type Environment,
+    type JSFunction,
     type JSValue,
     JSValueType,
     strictEquals,
@@ -26,6 +30,8 @@ import {
 import {
     CallStack,
     createExecutionContext,
+    createFunctionEnvironmentRecord,
+    createFunctionExecutionContext,
     createGlobalEnvironmentRecord,
     createRealm,
     type EnvironmentRecord,
@@ -34,7 +40,16 @@ import {
     setIdentifierReference,
 } from "./ExecutionContext.ts";
 import { type HeapObjectID, type V8Heap } from "./V8Heap.ts";
-import { type CompiledFunction, Opcode } from "./V8Compiler.ts";
+import {
+    BytecodeGenerator,
+    type CompiledFunction,
+    type FunctionDeclarationNode,
+    type FunctionExpressionNode,
+    type IdentifierNode,
+    Opcode,
+    Parser,
+    type ProgramNode,
+} from "./V8Compiler.ts";
 
 /**
  * Interpreter state
@@ -85,6 +100,11 @@ export class IgnitionInterpreter {
     private frameStack: FrameInfo[] = [];
     private isRunning: boolean = false;
     private stats: InterpreterStats;
+
+    /** Inline cache for GET_PROPERTY keyed by bytecode offset */
+    private propertyCache = new Map<number, { objectRef: WeakRef<Record<string, unknown>>; name: string; value: JSValue }>();
+    private cacheHits = 0;
+    private cacheMisses = 0;
 
     constructor(heap: V8Heap | null = null) {
         this.accumulator = createUndefined();
@@ -589,64 +609,355 @@ export class IgnitionInterpreter {
      * RETURN - Return from function
      */
     private executeRETURN(): void {
-        this.isRunning = false;
+        if (this.frameStack.length > 0) {
+            const frame = this.frameStack.pop()!;
+            const returnValue = this.accumulator;
+            this.registers = frame.savedRegisters;
+            this.programCounter = frame.returnAddress;
+            this.constantPool = frame.function.constantPool;
+            this.accumulator = returnValue;
+            // Pop the function execution context
+            this.callStack.pop();
+            const prev = this.callStack.current();
+            if (prev) {
+                this.currentContext = prev;
+            }
+        } else {
+            this.isRunning = false;
+        }
     }
 
     /**
      * CALL - Call function
+     * Convention: accumulator = function, args in recent registers
      */
     private executeCALL(bytecode: Uint8Array): void {
         const argCount = this.readOperand(bytecode);
-        // Simplified - would pop arguments from stack
-        // and call function in accumulator
-        this.accumulator = createUndefined();
+        const func = this.accumulator;
+
+        if (func.type !== JSValueType.FUNCTION) {
+            this.accumulator = createUndefined();
+            return;
+        }
+
+        const fn = func.value as JSFunction;
+
+        // Collect arguments from registers
+        // Convention: compiler stores func in rN, args in rN+1..rN+argCount
+        // Find the highest non-undefined register to locate arg base
+        let maxUsed = -1;
+        for (let i = this.registers.length - 1; i >= 0; i--) {
+            if (this.registers[i] && this.registers[i].type !== JSValueType.UNDEFINED) {
+                maxUsed = i;
+                break;
+            }
+        }
+        const argBase = maxUsed - argCount + 1;
+        const args: JSValue[] = [];
+        for (let i = 0; i < argCount; i++) {
+            const reg = argBase + i;
+            args.push(reg >= 0 && reg < this.registers.length ? (this.registers[reg] || createUndefined()) : createUndefined());
+        }
+
+        // Native function shortcut
+        if (fn.isNative && fn.nativeImpl) {
+            this.accumulator = fn.nativeImpl(...args);
+            this.stats.functionsExecuted++;
+            return;
+        }
+
+        // Get function node BEFORE compileFunctionBody (which caches bytecode on fn.code)
+        const funcNode = this.getFunctionNode(fn);
+
+        // Compile function body if needed
+        const compiled = this.compileFunctionBody(fn);
+        if (!compiled) {
+            this.accumulator = createUndefined();
+            return;
+        }
+
+        // Save current frame
+        this.frameStack.push({
+            function: { bytecode, constantPool: this.constantPool, name: "<caller>", parameterCount: 0, registerCount: 0 },
+            returnAddress: this.programCounter,
+            savedRegisters: [...this.registers],
+            savedAccumulator: this.accumulator,
+        });
+
+        // Create function execution context
+        const outer = this.currentContext.lexicalEnvironment;
+        const realm = this.currentContext.realm!;
+        const funcCtx = createFunctionExecutionContext(func, createUndefined(), undefined, outer, realm);
+
+        // Bind parameters
+        if (funcNode) {
+            for (let i = 0; i < funcNode.params.length; i++) {
+                funcCtx.lexicalEnvironment.bindings.set(
+                    funcNode.params[i].name,
+                    args[i] || createUndefined(),
+                );
+            }
+        }
+
+        this.callStack.push(funcCtx);
+        this.currentContext = funcCtx;
+
+        // Execute function bytecode
+        this.registers = new Array(compiled.registerCount).fill(null).map(() => createUndefined());
+        for (let i = 0; i < Math.min(args.length, compiled.parameterCount); i++) {
+            this.registers[i] = args[i];
+        }
+        this.constantPool = compiled.constantPool;
+        this.programCounter = 0;
+        this.stats.functionsExecuted++;
+        // Execution continues in the main loop with the new bytecode context
+        // But we need to run it inline since our main loop uses the outer bytecode
+        this.runInnerFunction(compiled);
     }
 
     /**
-     * CONSTRUCT - Construct object
+     * Run an inner function's bytecode to completion
+     */
+    private runInnerFunction(compiled: CompiledFunction): void {
+        const innerBytecode = compiled.bytecode;
+        const savedRunning = this.isRunning;
+        const savedFrameDepth = this.frameStack.length;
+        this.isRunning = true;
+        this.programCounter = 0;
+
+        while (this.isRunning && this.programCounter < innerBytecode.length) {
+            this.executeInstruction(innerBytecode);
+            this.stats.instructionsExecuted++;
+            // If RETURN popped our frame (back to caller level), stop this inner loop
+            if (this.frameStack.length < savedFrameDepth) {
+                break;
+            }
+        }
+
+        this.isRunning = savedRunning;
+        // After inner function returns, frameStack pop already happened in RETURN
+    }
+
+    /**
+     * CONSTRUCT - Construct object with new
      */
     private executeCONSTRUCT(bytecode: Uint8Array): void {
         const argCount = this.readOperand(bytecode);
-        // Simplified - would create new object and call constructor
-        this.accumulator = createUndefined();
+        const func = this.accumulator;
+
+        if (func.type !== JSValueType.FUNCTION) {
+            this.accumulator = createUndefined();
+            return;
+        }
+
+        const fn = func.value as JSFunction;
+
+        // Collect arguments
+        const args: JSValue[] = [];
+        for (let i = 0; i < argCount; i++) {
+            args.push(this.registers[this.registers.length - argCount + i] || createUndefined());
+        }
+
+        // Create new object with constructor's prototype
+        const newObj = createObject(fn.prototype || null);
+        if (newObj.type === JSValueType.OBJECT) {
+            newObj.value.constructor = fn;
+        }
+
+        // Native constructor
+        if (fn.isNative && fn.nativeImpl) {
+            const result = fn.nativeImpl(...args);
+            this.accumulator = (result.type === JSValueType.OBJECT || result.type === JSValueType.FUNCTION)
+                ? result
+                : newObj;
+            return;
+        }
+
+        // Get function node BEFORE compileFunctionBody (which caches bytecode on fn.code)
+        const funcNode = this.getFunctionNode(fn);
+
+        // Compile and execute constructor
+        const compiled = this.compileFunctionBody(fn);
+        if (!compiled) {
+            this.accumulator = newObj;
+            return;
+        }
+
+        // Save frame
+        this.frameStack.push({
+            function: { bytecode, constantPool: this.constantPool, name: "<caller>", parameterCount: 0, registerCount: 0 },
+            returnAddress: this.programCounter,
+            savedRegisters: [...this.registers],
+            savedAccumulator: this.accumulator,
+        });
+
+        // Create execution context with 'this' = newObj
+        const outer = this.currentContext.lexicalEnvironment;
+        const realm = this.currentContext.realm!;
+        const funcCtx = createFunctionExecutionContext(func, newObj, func, outer, realm);
+        if (funcNode) {
+            for (let i = 0; i < funcNode.params.length; i++) {
+                funcCtx.lexicalEnvironment.bindings.set(
+                    funcNode.params[i].name,
+                    args[i] || createUndefined(),
+                );
+            }
+        }
+        // Bind 'this' in context
+        funcCtx.lexicalEnvironment.bindings.set("this", newObj);
+
+        this.callStack.push(funcCtx);
+        this.currentContext = funcCtx;
+
+        this.registers = new Array(compiled.registerCount).fill(null).map(() => createUndefined());
+        for (let i = 0; i < Math.min(args.length, compiled.parameterCount); i++) {
+            this.registers[i] = args[i];
+        }
+        this.constantPool = compiled.constantPool;
+
+        this.runInnerFunction(compiled);
+
+        // If constructor returned non-object, use newObj
+        if (this.accumulator.type !== JSValueType.OBJECT && this.accumulator.type !== JSValueType.FUNCTION) {
+            this.accumulator = newObj;
+        }
     }
 
     /**
-     * GET_PROPERTY - Get property from object
+     * GET_PROPERTY - Get named property from object in accumulator
+     * Uses inline cache keyed by bytecode offset for repeated access on the same object.
      */
     private executeGET_PROPERTY(bytecode: Uint8Array): void {
+        // The PC already advanced past the opcode; record offset of the operand for cache key
+        const cacheKey = this.programCounter;
         const nameIndex = this.readOperand(bytecode);
         const name = this.constantPool[nameIndex] as string;
-        // Simplified - would get property from object in accumulator
+        const obj = this.accumulator;
+
+        if (obj.type === JSValueType.OBJECT || obj.type === JSValueType.FUNCTION) {
+            // Inline cache check: same object identity + same property name
+            const cached = this.propertyCache.get(cacheKey);
+            if (cached && cached.name === name && cached.objectRef.deref() === obj.value) {
+                // Verify the property still exists with same value (monomorphic guard)
+                const current = obj.value.properties.get(name);
+                if (current !== undefined && current === cached.value) {
+                    this.accumulator = cached.value;
+                    this.cacheHits++;
+                    return;
+                }
+            }
+            this.cacheMisses++;
+
+            // Slow path: walk prototype chain
+            let current: import("./JSValue.ts").JSObject | null = obj.value;
+            while (current) {
+                if (current.getters?.has(name)) {
+                    // Never cache getter results — they may return different values each call
+                    this.accumulator = current.getters.get(name)!();
+                    return;
+                }
+                if (current.properties.has(name)) {
+                    const value = current.properties.get(name)!;
+                    // Cache only own-property plain values (not from prototype, not getters)
+                    if (current === obj.value) {
+                        this.propertyCache.set(cacheKey, {
+                            objectRef: new WeakRef(obj.value as unknown as Record<string, unknown>),
+                            name,
+                            value,
+                        });
+                    }
+                    this.accumulator = value;
+                    return;
+                }
+                current = current.prototype;
+            }
+        }
         this.accumulator = createUndefined();
     }
 
     /**
-     * SET_PROPERTY - Set property on object
+     * SET_PROPERTY - Set named property on object
+     * Operands: nameIndex, objectRegister
      */
     private executeSET_PROPERTY(bytecode: Uint8Array): void {
         const nameIndex = this.readOperand(bytecode);
+        const objRegister = this.readOperand(bytecode);
         const name = this.constantPool[nameIndex] as string;
-        // Simplified - would set property on object
+        const value = this.accumulator;
+        const obj = this.registers[objRegister] || createUndefined();
+
+        if (obj.type === JSValueType.OBJECT || obj.type === JSValueType.FUNCTION) {
+            // Check setters first (dynamic/live properties)
+            if (obj.value.setters?.has(name)) {
+                obj.value.setters.get(name)!(value);
+                return;
+            }
+            obj.value.properties.set(name, value);
+
+            // Invalidate any inline cache entries that reference this object + property
+            for (const [key, entry] of this.propertyCache) {
+                if (entry.name === name && entry.objectRef.deref() === obj.value) {
+                    this.propertyCache.delete(key);
+                }
+            }
+        }
     }
 
     /**
-     * GET_KEYED - Get property by key
+     * GET_KEYED - Get property by computed key
      */
     private executeGET_KEYED(bytecode: Uint8Array): void {
         const keyRegister = this.readOperand(bytecode);
-        const key = this.registers[keyRegister];
-        // Simplified - would get property by key
+        const key = this.registers[keyRegister] || createUndefined();
+        const obj = this.accumulator;
+
+        const keyStr = this.jsValueToPropertyKey(key);
+        if (obj.type === JSValueType.OBJECT || obj.type === JSValueType.FUNCTION) {
+            let current: import("./JSValue.ts").JSObject | null = obj.value;
+            while (current) {
+                if (current.getters?.has(keyStr)) {
+                    this.accumulator = current.getters.get(keyStr)!();
+                    return;
+                }
+                if (current.properties.has(keyStr)) {
+                    this.accumulator = current.properties.get(keyStr)!;
+                    return;
+                }
+                current = current.prototype;
+            }
+        }
         this.accumulator = createUndefined();
     }
 
     /**
-     * SET_KEYED - Set property by key
+     * SET_KEYED - Set property by computed key
+     * Operands: keyRegister, objectRegister
      */
     private executeSET_KEYED(bytecode: Uint8Array): void {
         const keyRegister = this.readOperand(bytecode);
-        const key = this.registers[keyRegister];
-        // Simplified - would set property by key
+        const objRegister = this.readOperand(bytecode);
+        const key = this.registers[keyRegister] || createUndefined();
+        const value = this.accumulator;
+        const obj = this.registers[objRegister] || createUndefined();
+
+        const keyStr = this.jsValueToPropertyKey(key);
+        if (obj.type === JSValueType.OBJECT || obj.type === JSValueType.FUNCTION) {
+            // Check setters first (dynamic/live properties)
+            if (obj.value.setters?.has(keyStr)) {
+                obj.value.setters.get(keyStr)!(value);
+                return;
+            }
+            obj.value.properties.set(keyStr, value);
+            // Update length for array-like objects
+            if (typeof keyStr === "string" && /^\d+$/.test(keyStr)) {
+                const idx = parseInt(keyStr, 10);
+                const lengthVal = obj.value.properties.get("length");
+                const currentLength = lengthVal && lengthVal.type === JSValueType.NUMBER ? lengthVal.value : 0;
+                if (idx >= currentLength) {
+                    obj.value.properties.set("length", createNumber(idx + 1));
+                }
+            }
+        }
     }
 
     /**
@@ -656,6 +967,14 @@ export class IgnitionInterpreter {
         const nameIndex = this.readOperand(bytecode);
         const name = this.constantPool[nameIndex] as string;
 
+        // First check lexical environment chain (for function parameters, locals, closures)
+        const envValue = getIdentifierReference(this.currentContext.lexicalEnvironment, name);
+        if (envValue !== null) {
+            this.accumulator = envValue;
+            return;
+        }
+
+        // Then check globals
         if (this.globals.has(name)) {
             this.accumulator = this.globals.get(name)!;
         } else {
@@ -669,50 +988,158 @@ export class IgnitionInterpreter {
     private executeSTA_GLOBAL(bytecode: Uint8Array): void {
         const nameIndex = this.readOperand(bytecode);
         const name = this.constantPool[nameIndex] as string;
+
+        // First check if name exists in lexical environment chain
+        if (setIdentifierReference(this.currentContext.lexicalEnvironment, name, this.accumulator)) {
+            return;
+        }
         this.globals.set(name, this.accumulator);
     }
 
     /**
-     * LDA_CONTEXT_SLOT - Load from context
+     * LDA_CONTEXT_SLOT - Load from context slot
+     * Operand is a constant pool index containing the variable name
      */
     private executeLDA_CONTEXT_SLOT(bytecode: Uint8Array): void {
-        const slotIndex = this.readOperand(bytecode);
-        // Simplified - would load from closure context
-        this.accumulator = createUndefined();
+        const nameIndex = this.readOperand(bytecode);
+        const name = this.constantPool[nameIndex] as string;
+
+        // Look up in current execution context's environment chain
+        const value = getIdentifierReference(this.currentContext.lexicalEnvironment, name);
+        this.accumulator = value ?? createUndefined();
     }
 
     /**
-     * STA_CONTEXT_SLOT - Store to context
+     * STA_CONTEXT_SLOT - Store to context slot
+     * Operand is a constant pool index containing the variable name
      */
     private executeSTA_CONTEXT_SLOT(bytecode: Uint8Array): void {
-        const slotIndex = this.readOperand(bytecode);
-        // Simplified - would store to closure context
+        const nameIndex = this.readOperand(bytecode);
+        const name = this.constantPool[nameIndex] as string;
+
+        // Set in current execution context's environment chain
+        const success = setIdentifierReference(
+            this.currentContext.lexicalEnvironment,
+            name,
+            this.accumulator,
+        );
+        if (!success) {
+            // If not found, create in current environment
+            this.currentContext.lexicalEnvironment.bindings.set(name, this.accumulator);
+        }
     }
 
     /**
-     * CREATE_OBJECT - Create object literal
+     * CREATE_OBJECT - Create empty object literal
      */
     private executeCREATE_OBJECT(): void {
-        // Simplified - would create new object
-        this.accumulator = createUndefined();
+        this.accumulator = createObject();
     }
 
     /**
-     * CREATE_ARRAY - Create array literal
+     * CREATE_ARRAY - Create array with given capacity
      */
     private executeCREATE_ARRAY(bytecode: Uint8Array): void {
         const elementCount = this.readOperand(bytecode);
-        // Simplified - would create array from registers
-        this.accumulator = createUndefined();
+        const arr = createObject();
+        if (arr.type === JSValueType.OBJECT) {
+            arr.value.properties.set("length", createNumber(elementCount));
+        }
+        this.accumulator = arr;
     }
 
     /**
-     * CREATE_CLOSURE - Create function closure
+     * CREATE_CLOSURE - Create function closure from constant pool entry
      */
     private executeCREATE_CLOSURE(bytecode: Uint8Array): void {
         const funcIndex = this.readOperand(bytecode);
-        // Simplified - would create closure from constant pool
-        this.accumulator = createUndefined();
+        const funcNode = this.constantPool[funcIndex];
+
+        // Capture current scope for closure
+        const scope: Environment = {
+            bindings: new Map(this.currentContext.lexicalEnvironment.bindings),
+            outer: this.currentContext.lexicalEnvironment.outer
+                ? {
+                    bindings: new Map(this.currentContext.lexicalEnvironment.outer.bindings),
+                    outer: this.currentContext.lexicalEnvironment.outer.outer,
+                }
+                : null,
+        };
+
+        // Determine function name and param count
+        const node = funcNode as { id?: { name: string } | null; params?: { name: string }[] };
+        const name = node.id?.name || "<anonymous>";
+        const paramCount = node.params?.length || 0;
+
+        this.accumulator = createFunction(name, funcNode as string, paramCount, scope);
+    }
+
+    /**
+     * Convert JSValue to property key string
+     */
+    private jsValueToPropertyKey(key: JSValue): string {
+        if (key.type === JSValueType.STRING) return key.value;
+        if (key.type === JSValueType.NUMBER) return String(key.value);
+        if (key.type === JSValueType.BOOLEAN) return String(key.value);
+        return "undefined";
+    }
+
+    /**
+     * Get function AST node from JSFunction's code field
+     */
+    private getFunctionNode(fn: JSFunction): { params: IdentifierNode[]; body: { body: unknown[] } } | null {
+        if (typeof fn.code === "object" && fn.code !== null && !(fn.code instanceof Uint8Array)) {
+            return fn.code as { params: IdentifierNode[]; body: { body: unknown[] } };
+        }
+        return null;
+    }
+
+    /**
+     * Compile a function body (AST node) to bytecode
+     * Caches the result on the JSFunction for subsequent calls
+     */
+    /** Cache for compiled function bodies (keyed by JSFunction reference) */
+    private compiledFunctionCache = new WeakMap<object, CompiledFunction>();
+
+    private compileFunctionBody(fn: JSFunction): CompiledFunction | null {
+        // Check cache first
+        const cached = this.compiledFunctionCache.get(fn as unknown as object);
+        if (cached) {
+            return cached;
+        }
+
+        // If code is already compiled bytecode (from external source)
+        if (fn.code instanceof Uint8Array) {
+            const result: CompiledFunction = {
+                name: fn.name,
+                parameterCount: fn.length,
+                registerCount: 16,
+                bytecode: fn.code,
+                constantPool: [],
+            };
+            this.compiledFunctionCache.set(fn as unknown as object, result);
+            return result;
+        }
+
+        // If code is a function AST node, compile it
+        const funcNode = fn.code as unknown as { type: string; body?: { body: unknown[] }; params?: { name: string }[] };
+        if (funcNode && typeof funcNode === "object" && funcNode.body) {
+            const generator = new BytecodeGenerator();
+            const programNode = {
+                type: "Program",
+                body: funcNode.body.body,
+            } as unknown as ProgramNode;
+            const compiled = generator.generate(programNode);
+            compiled.name = fn.name;
+            compiled.parameterCount = fn.length;
+
+            // Cache the full compiled result (bytecode + constantPool)
+            this.compiledFunctionCache.set(fn as unknown as object, compiled);
+
+            return compiled;
+        }
+
+        return null;
     }
 
     /**
@@ -754,6 +1181,13 @@ export class IgnitionInterpreter {
     }
 
     /**
+     * Get inline cache statistics
+     */
+    getCacheStats(): { hits: number; misses: number } {
+        return { hits: this.cacheHits, misses: this.cacheMisses };
+    }
+
+    /**
      * Reset interpreter
      */
     reset(): void {
@@ -764,6 +1198,9 @@ export class IgnitionInterpreter {
         this.constantPool = [];
         this.frameStack = [];
         this.isRunning = false;
+        this.propertyCache.clear();
+        this.cacheHits = 0;
+        this.cacheMisses = 0;
 
         this.stats = {
             instructionsExecuted: 0,
