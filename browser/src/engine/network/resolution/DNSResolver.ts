@@ -6,6 +6,7 @@
  */
 
 import type { ByteBuffer, Port } from "../../../types/identifiers.ts";
+import { BrowserConsole } from "../../logging/BrowserConsole.ts";
 import { AddressFamily, SocketImpl, SocketType } from "../primitives/Socket.ts";
 import { decodeDomainName, DNSRecordType, encodeDomainName, parseDNSRecord } from "./DNSRecords.ts";
 
@@ -38,6 +39,7 @@ export interface DNSResult {
 }
 
 export class DNSResolver {
+    private dnsLogger = new BrowserConsole("DNSResolver");
     private nameservers: string[] = ["8.8.8.8", "8.8.4.4"]; // Google DNS
     private dohEndpoint?: string; // DNS-over-HTTPS endpoint
 
@@ -84,7 +86,7 @@ export class DNSResolver {
             try {
                 return await this.queryDoH(hostname, type);
             } catch (error) {
-                console.warn(`DoH query failed: ${(error as Error).message}, falling back to UDP`);
+                this.dnsLogger.warn(`DoH query failed: ${(error as Error).message}, falling back to UDP`);
             }
         }
 
@@ -96,7 +98,7 @@ export class DNSResolver {
                 return await this.queryUDP(hostname, type, nameserver);
             } catch (error) {
                 lastError = error as Error;
-                console.warn(`DNS query to ${nameserver} failed: ${lastError.message}`);
+                this.dnsLogger.warn(`DNS query to ${nameserver} failed: ${lastError.message}`);
             }
         }
 
@@ -286,7 +288,7 @@ export class DNSResolver {
                 }
             } catch (error) {
                 // Skip malformed records
-                console.warn(`Failed to parse DNS record: ${(error as Error).message}`);
+                this.dnsLogger.warn(`Failed to parse DNS record: ${(error as Error).message}`);
                 break;
             }
         }

@@ -6,6 +6,7 @@
  */
 
 import { ConnectionPool } from "./ConnectionPool.ts";
+import { BrowserConsole } from "../../logging/BrowserConsole.ts";
 import type { PooledConnection } from "../../../types/network.ts";
 import type { Port } from "../../../types/identifiers.ts";
 
@@ -41,6 +42,7 @@ const DEFAULT_CONFIG: Required<ConnectionManagerConfig> = {
 };
 
 export class ConnectionManager {
+    private logger = new BrowserConsole("ConnectionManager");
     private pool: ConnectionPool;
     private healthCheckInterval: number | null = null;
     private config: Required<ConnectionManagerConfig>;
@@ -103,7 +105,7 @@ export class ConnectionManager {
 
             return true;
         } catch (error) {
-            console.error("Health check failed:", error);
+            this.logger.error("Health check failed:", error);
             return false;
         }
     }
@@ -169,7 +171,7 @@ export class ConnectionManager {
     private startHealthChecking(): void {
         this.healthCheckInterval = setInterval(() => {
             this.performHealthChecks().catch((error) => {
-                console.error("Error during health checks:", error);
+                this.logger.error("Error during health checks:", error);
             });
         }, this.config.healthCheckIntervalMs);
     }

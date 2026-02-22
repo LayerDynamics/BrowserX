@@ -10,6 +10,7 @@
  */
 
 import type { HTTPHeaders, HTTPMethod, HTTPRequest, HTTPResponse } from "../types/http.ts";
+import { BrowserConsole } from "./logging/BrowserConsole.ts";
 import type { ByteBuffer, Port, RequestID, URLString } from "../types/identifiers.ts";
 import { DNSResolver, type DNSResult } from "./network/resolution/DNSResolver.ts";
 import { DNSCache } from "./network/resolution/DNSCache.ts";
@@ -18,6 +19,7 @@ import { ConnectionManager } from "./network/connection/ConnectionManager.ts";
 import { type CacheMatchOptions, CacheStorage } from "./storage/CacheAPI.ts";
 import { HTTPRequestParser } from "./network/protocols/HTTPRequestParser.ts";
 import { HTTPResponseParser } from "./network/protocols/HTTPResponseParser.ts";
+import type { PipelineObserver, PipelineStageEvent } from "./PipelineObserver.ts";
 
 /**
  * Request options
@@ -90,12 +92,22 @@ export interface RequestPipelineConfig {
  * High-level orchestrator for HTTP requests
  */
 export class RequestPipeline {
+    private pipelineLogger = new BrowserConsole("RequestPipeline");
     private dnsResolver: DNSResolver;
     private dnsCache: DNSCache;
     private connectionPool: ConnectionPool;
     private connectionManager: ConnectionManager;
     private cacheStorage: CacheStorage;
     private requestIdCounter: number = 1;
+    private observer?: PipelineObserver;
+
+    setObserver(observer: PipelineObserver): void {
+        this.observer = observer;
+    }
+
+    private emitStage(stageId: string, stageName: string, status: PipelineStageEvent["status"], startTime: number, endTime?: number, duration?: number, artifact?: unknown, error?: Error): void {
+        this.observer?.onStage({ stageId, stageName, pipeline: "request", status, startTime, endTime, duration, artifact, error });
+    }
 
     constructor(config: RequestPipelineConfig = {}) {
         const origin = config.origin || "https://localhost";
@@ -180,12 +192,14 @@ export class RequestPipeline {
             const request: HTTPRequest = this.buildRequest(parsedUrl, options);
 
             // Check cache if enabled
+            this.emitStage("cache-check", "Cache Check", "running", Date.now());
             if (
                 options.cache !== "no-cache" && options.cache !== "no-store" &&
                 options.cache !== false
             ) {
                 const cached = await this.checkCache(request, options);
                 if (cached) {
+                    this.emitStage("cache-check", "Cache Check", "completed", Date.now(), Date.now(), 0, cached);
                     return {
                         request,
                         response: cached,
@@ -202,6 +216,7 @@ export class RequestPipeline {
                     };
                 }
             }
+            this.emitStage("cache-check", "Cache Check", "completed", Date.now(), Date.now(), 0, null);
 
             // Check if aborted before DNS resolution
             if (options.signal?.aborted) {
@@ -209,9 +224,11 @@ export class RequestPipeline {
             }
 
             // 1. DNS Resolution
+            this.emitStage("dns-resolution", "DNS Resolution", "running", Date.now());
             const dnsStart = Date.now();
             const addresses = await this.resolveDNS(parsedUrl.hostname);
             timing.dnsLookup = Date.now() - dnsStart;
+            this.emitStage("dns-resolution", "DNS Resolution", "completed", dnsStart, Date.now(), timing.dnsLookup, addresses);
 
             if (addresses.length === 0) {
                 throw new RequestPipelineError(
@@ -229,6 +246,7 @@ export class RequestPipeline {
 
             // 2. Connection Pool (acquire connection)
             // Pass hostname for TLS SNI - must be hostname, not IP address
+            this.emitStage("tcp-connection", "TCP Connection", "running", Date.now());
             const connStart = Date.now();
             const connection = await this.connectionPool.acquire(
                 targetIP,
@@ -237,6 +255,7 @@ export class RequestPipeline {
                 parsedUrl.hostname, // Pass hostname for TLS SNI
             );
             timing.tcpConnection = Date.now() - connStart;
+            this.emitStage("tcp-connection", "TCP Connection", "completed", connStart, Date.now(), timing.tcpConnection, connection);
 
             // 3. TLS Handshake timing (if secure and new connection)
             if (isSecure && connection.useCount === 1) {
@@ -244,14 +263,18 @@ export class RequestPipeline {
             } else {
                 timing.tlsHandshake = 0;
             }
+            this.emitStage("tls-handshake", "TLS Handshake", "completed", Date.now(), Date.now(), timing.tlsHandshake ?? 0);
 
             // 4. Send HTTP request
+            this.emitStage("http-send", "HTTP Send", "running", Date.now());
             const reqStart = Date.now();
             const requestData = this.serializeRequest(request);
             await connection.socket.write(requestData);
             timing.requestSent = Date.now() - reqStart;
+            this.emitStage("http-send", "HTTP Send", "completed", reqStart, Date.now(), timing.requestSent, request);
 
             // 5. Receive HTTP response
+            this.emitStage("http-receive", "HTTP Receive", "running", Date.now());
             const respStart = Date.now();
             const chunks: Uint8Array[] = [];
             let totalBytes = 0;
@@ -418,6 +441,8 @@ export class RequestPipeline {
                 }
             }
 
+            this.emitStage("http-receive", "HTTP Receive", "completed", respStart, Date.now(), Date.now() - respStart, response);
+
             timing.total = Date.now() - startTime;
 
             return {
@@ -539,7 +564,7 @@ export class RequestPipeline {
             await cache.put(request, response);
         } catch (error) {
             // Log but don't fail request if caching fails
-            console.warn("Failed to store in cache:", error);
+            this.pipelineLogger.warn("Failed to store in cache:", error);
         }
     }
     /**

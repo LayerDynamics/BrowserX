@@ -22,6 +22,7 @@ import type {
     LayerID,
     Duration,
 } from "../../types/webgpu.ts";
+import { BrowserConsole } from "../logging/BrowserConsole.ts";
 import { WebGPUDevice } from "./adapter/Device.ts";
 import { WebGPUDriver } from "./driver/mod.ts";
 import {
@@ -32,6 +33,7 @@ import {
 import { MemoryManager } from "./memory/mod.ts";
 import {
     PipelineManager,
+    type PipelineResult,
     type RenderPipelineDescriptor,
     type ComputePipelineDescriptor,
 } from "./pipelines/mod.ts";
@@ -145,6 +147,7 @@ export class WebGPUEngineError extends WebGPUError {
  * Main WebGPU engine integrating all subsystems
  */
 export class WebGPUEngine {
+    private engineLogger = new BrowserConsole("WebGPU");
     private state: WebGPUEngineState = WebGPUEngineState.UNINITIALIZED;
     private config: WebGPUEngineConfig;
 
@@ -223,7 +226,7 @@ export class WebGPUEngine {
             this.state = WebGPUEngineState.READY;
 
             if (this.debug) {
-                console.log("[WebGPU] Engine initialized successfully");
+                this.engineLogger.info("Engine initialized successfully");
             }
         } catch (error) {
             this.state = WebGPUEngineState.ERROR;
@@ -406,11 +409,13 @@ export class WebGPUEngine {
     // ========================================================================
 
     /**
-     * Create render pipeline
+     * Create render pipeline.
+     * Returns a PipelineResult wrapping either an FFI handle (when webgpu_x is available)
+     * or a native GPURenderPipeline (fallback).
      */
     async createRenderPipeline(
         descriptor: RenderPipelineDescriptor
-    ): Promise<GPURenderPipeline> {
+    ): Promise<PipelineResult<GPURenderPipeline>> {
         if (!this.pipelineManager) {
             throw new WebGPUEngineError("Pipeline manager not initialized");
         }
@@ -421,11 +426,12 @@ export class WebGPUEngine {
     }
 
     /**
-     * Create compute pipeline
+     * Create compute pipeline.
+     * Returns a PipelineResult wrapping either an FFI handle or native GPUComputePipeline.
      */
     async createComputePipeline(
         descriptor: ComputePipelineDescriptor
-    ): Promise<GPUComputePipeline> {
+    ): Promise<PipelineResult<GPUComputePipeline>> {
         if (!this.pipelineManager) {
             throw new WebGPUEngineError("Pipeline manager not initialized");
         }
@@ -1015,7 +1021,7 @@ export class WebGPUEngine {
         this.state = WebGPUEngineState.DESTROYED;
 
         if (this.debug) {
-            console.log("[WebGPU] Engine destroyed");
+            this.engineLogger.info("Engine destroyed");
         }
     }
 }

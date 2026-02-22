@@ -5,16 +5,26 @@
  * Manages V8 isolate, context, and DOM bindings.
  */
 
-import type { DOMElement, DOMNode } from "../../types/dom.ts";
+import type { DOMDocument, DOMElement, DOMNode } from "../../types/dom.ts";
 import { DOMNodeType } from "../../types/dom.ts";
+import type { JSValue } from "./JSValue.ts";
 import type { ByteBuffer } from "../../types/identifiers.ts";
 import { V8Isolate } from "./V8Isolate.ts";
 import { V8Context } from "./V8Context.ts";
 import { WindowObject } from "./WindowObject.ts";
 import { EventLoop } from "./EventLoop.ts";
 import type { RequestPipeline } from "../RequestPipeline.ts";
+import { BrowserConsole } from "../logging/BrowserConsole.ts";
 import { StorageManager } from "../storage/StorageManager.ts";
 import type { ContentSecurityPolicy } from "../security/ContentSecurityPolicy.ts";
+
+/**
+ * DOM node with event listeners registry (installed by DOMBindings)
+ */
+interface DOMNodeWithEvents extends DOMNode {
+    readyState?: string;
+    __eventListeners?: Map<string, Array<JSValue>>;
+}
 
 /**
  * Script type
@@ -46,6 +56,7 @@ export interface ScriptExecutionResult {
  * Script Executor
  */
 export class ScriptExecutor {
+    private logger = new BrowserConsole("ScriptExecutor");
     private isolate: V8Isolate;
     private context: V8Context;
     private windowObject: WindowObject;
@@ -110,7 +121,7 @@ export class ScriptExecutor {
                 executionTime: Date.now() - startTime,
             };
         } catch (error) {
-            console.error(`Script execution error:`, error);
+            this.logger.error("Script execution error:", error);
 
             return {
                 success: false,
@@ -270,7 +281,7 @@ export class ScriptExecutor {
             const result = this.context.eval(expression);
             return result;
         } catch (error) {
-            console.error(`Evaluation error:`, error);
+            this.logger.error("Evaluation error:", error);
             return undefined;
         }
     }
@@ -317,7 +328,7 @@ export class ScriptExecutor {
         }
 
         // All scripts executed — mark document as complete
-        const doc = this.document as any;
+        const doc = this.document as DOMNodeWithEvents;
         if (doc.readyState) {
             doc.readyState = "complete";
         }
@@ -371,7 +382,7 @@ export class ScriptExecutor {
      * HTML parsing is complete (readyState >= "interactive").
      */
     private async waitForDOMReady(): Promise<void> {
-        const doc = this.document as any;
+        const doc = this.document as DOMNodeWithEvents;
 
         // Check readyState if available on the document node
         if (doc.readyState) {
@@ -389,7 +400,7 @@ export class ScriptExecutor {
             }
 
             if (doc.readyState === "loading") {
-                console.warn("[ScriptExecutor] DOM readyState still 'loading' after timeout, proceeding anyway");
+                this.logger.warn("DOM readyState still 'loading' after timeout, proceeding anyway");
             }
             return;
         }
@@ -407,7 +418,7 @@ export class ScriptExecutor {
         }
 
         // If nothing is available, warn and proceed
-        console.warn("[ScriptExecutor] Cannot determine DOM readiness, proceeding");
+        this.logger.warn("Cannot determine DOM readiness, proceeding");
     }
 
     /**
@@ -415,8 +426,8 @@ export class ScriptExecutor {
      * Uses the __eventListeners map installed by DOMBindings.
      */
     private dispatchDocumentEvent(eventType: string): void {
-        const doc = this.document as any;
-        const listeners: Map<string, Array<any>> | undefined = doc.__eventListeners;
+        const doc = this.document as DOMNodeWithEvents;
+        const listeners = doc.__eventListeners;
         if (!listeners) return;
         const callbacks = listeners.get(eventType);
         if (!callbacks) return;

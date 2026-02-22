@@ -22,6 +22,7 @@ import type {
 } from "../../../types/webgpu.ts";
 import { GPUDeviceState } from "../../../types/webgpu.ts";
 import { WebGPUError } from "../errors.ts";
+import { BrowserConsole } from "../../logging/BrowserConsole.ts";
 
 // ============================================================================
 // Types
@@ -122,6 +123,7 @@ export class OffscreenDeviceLostError extends OffscreenWebGPUError {
  * ```
  */
 export class OffscreenWebGPU {
+    private logger = new BrowserConsole("OffscreenWebGPU");
     // Core GPU resources
     private adapter: GPUAdapter | null = null;
     private device: GPUDevice | null = null;
@@ -230,9 +232,7 @@ export class OffscreenWebGPU {
             this.state = OffscreenWebGPUState.READY;
 
             if (this.debug) {
-                console.log(
-                    `[${this.label}] Initialized ${width}x${height}`
-                );
+                this.logger.info(`Initialized ${width}x${height}`);
             }
         } catch (error) {
             this.state = OffscreenWebGPUState.UNINITIALIZED;
@@ -264,9 +264,7 @@ export class OffscreenWebGPU {
             this.state = OffscreenWebGPUState.LOST;
 
             if (this.debug) {
-                console.warn(
-                    `[${this.label}] Device lost: ${info.reason} - ${info.message}`
-                );
+                this.logger.warn(`Device lost: ${info.reason} - ${info.message}`);
             }
 
             if (this.onDeviceLostCallback) {
@@ -319,9 +317,7 @@ export class OffscreenWebGPU {
         });
 
         if (this.debug) {
-            console.log(
-                `[${this.label}] Created render texture ${this._width}x${this._height}`
-            );
+            this.logger.info(`Created render texture ${this._width}x${this._height}`);
         }
     }
 
@@ -360,9 +356,7 @@ export class OffscreenWebGPU {
         });
 
         if (this.debug) {
-            console.log(
-                `[${this.label}] Created readback buffer ${bufferSize} bytes (padded row: ${paddedBytesPerRow})`
-            );
+            this.logger.info(`Created readback buffer ${bufferSize} bytes (padded row: ${paddedBytesPerRow})`);
         }
     }
 
@@ -424,8 +418,10 @@ export class OffscreenWebGPU {
             );
 
             // Submit and wait
+            // Use Array.of to work around Deno 2.6.9 WebGPU bug where
+            // array literals fail "cannot be converted to a sequence" check
             const commandBuffer = encoder.finish();
-            this.device.queue.submit([commandBuffer]);
+            this.device.queue.submit(Array.of(commandBuffer) as GPUCommandBuffer[]);
 
             // Map buffer for reading
             await this.readbackBuffer.mapAsync(GPUMapMode.READ);
@@ -458,9 +454,7 @@ export class OffscreenWebGPU {
             this.totalReadbackTime += readbackTime;
 
             if (this.debug) {
-                console.log(
-                    `[${this.label}] Readback completed in ${readbackTime.toFixed(2)}ms`
-                );
+                this.logger.info(`Readback completed in ${readbackTime.toFixed(2)}ms`);
             }
 
             return pixelData;
@@ -512,9 +506,7 @@ export class OffscreenWebGPU {
         this.createReadbackBuffer();
 
         if (this.debug) {
-            console.log(
-                `[${this.label}] Resized from ${oldWidth}x${oldHeight} to ${width}x${height}`
-            );
+            this.logger.info(`Resized from ${oldWidth}x${oldHeight} to ${width}x${height}`);
         }
 
         // Notify callback
@@ -554,7 +546,7 @@ export class OffscreenWebGPU {
         await this.initialize(width, height);
 
         if (this.debug) {
-            console.log(`[${this.label}] Recovered from device loss`);
+            this.logger.info("Recovered from device loss");
         }
     }
 
@@ -724,7 +716,7 @@ export class OffscreenWebGPU {
         this.state = OffscreenWebGPUState.DESTROYED;
 
         if (this.debug) {
-            console.log(`[${this.label}] Disposed`);
+            this.logger.info("Disposed");
         }
     }
 }

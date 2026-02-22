@@ -10,6 +10,7 @@
  */
 
 import type { Pixels } from "../../../types/identifiers.ts";
+import { BrowserConsole } from "../../logging/BrowserConsole.ts";
 import type {
     Blob,
     HTMLCanvasElement,
@@ -64,6 +65,7 @@ interface ShaderProgram {
  * In headless mode, compositing operations are no-ops and getPixels() returns blank data.
  */
 export class CompositorThread {
+    private logger = new BrowserConsole("Compositor");
     private canvas: HTMLCanvasElement | null = null;
     private gl: WebGLRenderingContext | null = null;
     private layerManager: CompositorLayerManager;
@@ -145,13 +147,13 @@ export class CompositorThread {
             this.renderToPixels = new RenderToPixels();
             this.cpuCanvas = this.canvas;
 
-            console.log("[CompositorThread] Using CPU rendering mode (Canvas 2D)");
+            this.logger.info("Using CPU rendering mode (Canvas 2D)");
             return;
         }
 
         this.gl = gl;
 
-        console.log("[CompositorThread] Using GPU rendering mode (WebGL)");
+        this.logger.info("Using GPU rendering mode (WebGL)");
 
         // Initialize layer manager with WebGL context
         this.layerManager.initialize(gl);
@@ -369,7 +371,7 @@ export class CompositorThread {
             this.lastCompositeTime = performance.now() - startTime;
             this.frameCount++;
         } catch (error) {
-            console.error("Compositor frame error:", error);
+            this.logger.error("Compositor frame error:", error);
         }
     }
 

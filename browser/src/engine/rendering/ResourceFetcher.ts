@@ -7,6 +7,7 @@
 
 import type { ByteBuffer } from "../../types/identifiers.ts";
 import type { DOMElement, DOMNode } from "../../types/dom.ts";
+import { BrowserConsole } from "../logging/BrowserConsole.ts";
 import { RequestPipeline, type RequestResult } from "../RequestPipeline.ts";
 import { HTMLTokenizer } from "./html-parser/HTMLTokenizer.ts";
 import { HTMLTreeBuilder } from "./html-parser/HTMLTreeBuilder.ts";
@@ -40,6 +41,7 @@ export class ResourceFetchError extends Error {
  * - HTML and CSS parsing
  */
 export class ResourceFetcher {
+    private logger = new BrowserConsole("ResourceFetcher");
     private requestPipeline: RequestPipeline;
     private resources: ResourceInfo[] = [];
     private csp?: ContentSecurityPolicy;
@@ -261,7 +263,7 @@ export class ResourceFetcher {
                         if (this.csp) {
                             const pageOrigin = new URL(baseUrl.toString()).origin;
                             if (!this.csp.allows("style-src", cssUrl.toString(), pageOrigin)) {
-                                console.warn(`[ResourceFetcher] Blocked stylesheet by CSP: ${cssUrl}`);
+                                this.logger.warn(`Blocked stylesheet by CSP: ${cssUrl}`);
                                 continue;
                             }
                         }
@@ -289,7 +291,7 @@ export class ResourceFetcher {
 
             return stylesheets;
         } catch (error) {
-            console.warn("Failed to fetch some stylesheets:", error);
+            this.logger.warn("Failed to fetch some stylesheets:", error);
             return stylesheets;
         }
     }
@@ -341,7 +343,7 @@ export class ResourceFetcher {
                 if (this.csp) {
                     const pageOrigin = new URL(url.toString()).origin;
                     if (!this.csp.allows("img-src", imgUrl.toString(), pageOrigin)) {
-                        console.warn(`[ResourceFetcher] Blocked image by CSP: ${imgUrl}`);
+                        this.logger.warn(`Blocked image by CSP: ${imgUrl}`);
                         continue;
                     }
                 }

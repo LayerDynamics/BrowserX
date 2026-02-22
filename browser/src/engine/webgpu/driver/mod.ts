@@ -6,6 +6,7 @@
  */
 
 import { WebGPUDevice, type DeviceConfig } from "../adapter/Device.ts";
+import { BrowserConsole } from "../../logging/BrowserConsole.ts";
 import {
     GPUDeviceState,
     GPUVendor,
@@ -108,6 +109,7 @@ interface RecoveryAttempt {
  * - Error logging and diagnostics
  */
 export class WebGPUDriver {
+    private driverLogger = new BrowserConsole("WebGPUDriver");
     /** Driver configuration */
     private config: Required<DriverConfig>;
 
@@ -351,7 +353,7 @@ export class WebGPUDriver {
                 try {
                     callback(attempt);
                 } catch (err) {
-                    console.error("Error in recovery callback:", err);
+                    this.driverLogger.error("Error in recovery callback:", err);
                 }
             }
         }
@@ -392,7 +394,7 @@ export class WebGPUDriver {
             try {
                 callback(newState);
             } catch (error) {
-                console.error("Error in state callback:", error);
+                this.driverLogger.error("Error in state callback:", error);
             }
         }
     }
@@ -536,7 +538,7 @@ export class WebGPUDriver {
      */
     private handleError(error: Error): void {
         if (this.config.enableErrorLogging) {
-            console.error("[WebGPUDriver] Error:", error);
+            this.driverLogger.error("Error:", error);
         }
 
         // Notify error callbacks
@@ -544,7 +546,7 @@ export class WebGPUDriver {
             try {
                 callback(error);
             } catch (err) {
-                console.error("Error in error callback:", err);
+                this.driverLogger.error("Error in error callback:", err);
             }
         }
     }
@@ -554,7 +556,7 @@ export class WebGPUDriver {
      */
     private log(message: string): void {
         if (this.config.enableErrorLogging) {
-            console.log(`[WebGPUDriver] ${message}`);
+            this.driverLogger.info(message);
         }
     }
 

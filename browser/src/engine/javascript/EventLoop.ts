@@ -13,6 +13,7 @@
  */
 
 import { createUndefined, type JSFunction, type JSValue } from "./JSValue.ts";
+import { BrowserConsole } from "../logging/BrowserConsole.ts";
 import { type ExecutionResult, type V8Context } from "./V8Context.ts";
 
 /**
@@ -91,6 +92,7 @@ export interface EventLoopConfig {
  * JavaScript event loop implementation
  */
 export class EventLoop {
+    private logger = new BrowserConsole("EventLoop");
     private taskQueue: Task[] = [];
     private microtaskQueue: Task[] = [];
     private renderTasks: Task[] = [];
@@ -272,7 +274,7 @@ export class EventLoop {
 
         // Warn if microtask queue is growing too large
         if (this.microtaskQueue.length >= maxMicrotasks) {
-            console.warn(`Microtask queue overflow: ${this.microtaskQueue.length} tasks pending`);
+            this.logger.warn(`Microtask queue overflow: ${this.microtaskQueue.length} tasks pending`);
         }
     }
 
@@ -315,7 +317,7 @@ export class EventLoop {
         try {
             task.callback();
         } catch (error) {
-            console.error("Task execution error:", error);
+            this.logger.error("Task execution error:", error);
         }
 
         const executionTime = performance.now() - startTime;
@@ -325,7 +327,7 @@ export class EventLoop {
 
         // Warn about long-running tasks
         if (executionTime > this.config.maxTaskExecutionTime!) {
-            console.warn(`Long task detected: ${executionTime.toFixed(2)}ms`);
+            this.logger.warn(`Long task detected: ${executionTime.toFixed(2)}ms`);
         }
     }
 
