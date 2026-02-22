@@ -388,3 +388,54 @@ Deno.test({
     assertEquals(byteSize, 10);
   },
 });
+
+Deno.test({
+  name: "MemoryStorage - LRU: accessed item survives eviction while unaccessed item is evicted",
+  async fn() {
+    const store = new MemoryStorage(10);
+    await store.set("first", new Uint8Array(5));
+    await store.set("second", new Uint8Array(5));
+    // Access "first" so it becomes most-recently-used
+    await store.get("first");
+    // Trigger eviction — should evict "second" (least recently used), not "first"
+    await store.set("third", new Uint8Array(5));
+    assertEquals(await store.has("first"), true);
+    assertEquals(await store.has("second"), false);
+    assertEquals(await store.has("third"), true);
+  },
+});
+
+Deno.test({
+  name: "MemoryStorage - LRU: multiple accesses keep item alive",
+  async fn() {
+    const store = new MemoryStorage(15);
+    await store.set("a", new Uint8Array(5));
+    await store.set("b", new Uint8Array(5));
+    await store.set("c", new Uint8Array(5));
+    // Access "a" multiple times — it should be most-recently-used
+    await store.get("a");
+    await store.get("a");
+    // Trigger eviction — should evict "b" (oldest access), not "a"
+    await store.set("d", new Uint8Array(5));
+    assertEquals(await store.has("a"), true);
+    assertEquals(await store.has("b"), false);
+    assertEquals(await store.has("c"), true);
+    assertEquals(await store.has("d"), true);
+  },
+});
+
+Deno.test({
+  name: "MemoryStorage - LRU: eviction targets oldest access time not oldest insertion",
+  async fn() {
+    const store = new MemoryStorage(10);
+    await store.set("old", new Uint8Array(5));
+    await store.set("new", new Uint8Array(5));
+    // Access "old" making it more recent than "new"
+    await store.get("old");
+    // Trigger eviction — "new" has older access time despite later insertion
+    await store.set("newest", new Uint8Array(5));
+    assertEquals(await store.has("old"), true);
+    assertEquals(await store.has("new"), false);
+    assertEquals(await store.has("newest"), true);
+  },
+});
