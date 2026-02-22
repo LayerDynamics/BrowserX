@@ -23,6 +23,7 @@ import {
 import type { RequestPipeline } from "../RequestPipeline.ts";
 import type { StorageManager } from "../storage/StorageManager.ts";
 import { URLValidator, SSRFError } from "../security/URLValidator.ts";
+import type { ContentSecurityPolicy } from "../security/ContentSecurityPolicy.ts";
 
 /**
  * Timer callback
@@ -93,6 +94,7 @@ export class WindowObject {
     private requestPipeline?: RequestPipeline;
     private storageManager?: StorageManager;
     private origin: string;
+    private csp?: ContentSecurityPolicy;
 
     constructor(
         context: V8Context,
@@ -1084,6 +1086,14 @@ export class WindowObject {
                 throw e;
             }
 
+            // CSP connect-src check
+            if (this.csp && !this.csp.allows("connect-src", fetchUrl, this.origin)) {
+                console.warn(`[JS] fetch blocked by CSP connect-src: ${fetchUrl}`);
+                return this.buildFetchResponse(fetchUrl, null, new Error(
+                    `Refused to connect to '${fetchUrl}' because it violates the Content Security Policy directive: connect-src`
+                ));
+            }
+
             // Extract options from second arg
             const optionsArg = args[1];
             let method = "GET";
@@ -1488,6 +1498,20 @@ export class WindowObject {
     /**
      * Get DOM bindings
      */
+    /**
+     * Set Content Security Policy for fetch connect-src enforcement
+     */
+    setCSP(csp: ContentSecurityPolicy): void {
+        this.csp = csp;
+    }
+
+    /**
+     * Get the current Content Security Policy
+     */
+    getCSP(): ContentSecurityPolicy | undefined {
+        return this.csp;
+    }
+
     getDOMBindings(): DOMBindings {
         return this.domBindings;
     }

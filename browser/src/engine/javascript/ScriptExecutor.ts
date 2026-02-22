@@ -12,6 +12,9 @@ import { V8Isolate } from "./V8Isolate.ts";
 import { V8Context } from "./V8Context.ts";
 import { WindowObject } from "./WindowObject.ts";
 import { EventLoop } from "./EventLoop.ts";
+import type { RequestPipeline } from "../RequestPipeline.ts";
+import { StorageManager } from "../storage/StorageManager.ts";
+import type { ContentSecurityPolicy } from "../security/ContentSecurityPolicy.ts";
 
 /**
  * Script type
@@ -50,8 +53,9 @@ export class ScriptExecutor {
     private document: DOMNode;
     private url: string;
     private scriptsExecuted: number = 0;
+    private csp?: ContentSecurityPolicy;
 
-    constructor(document: DOMNode, url: string) {
+    constructor(document: DOMNode, url: string, requestPipeline?: RequestPipeline, storageManager?: StorageManager) {
         this.document = document;
         this.url = url;
 
@@ -59,8 +63,12 @@ export class ScriptExecutor {
         this.isolate = new V8Isolate();
         this.context = this.isolate.createContext();
 
+        // Ensure StorageManager is always available — create a default if none provided
+        // This guarantees origin-isolated, quota-tracked storage even for standalone usage
+        const effectiveStorageManager = storageManager ?? new StorageManager();
+
         // Create window object and install Web APIs
-        this.windowObject = new WindowObject(this.context, document, url);
+        this.windowObject = new WindowObject(this.context, document, url, requestPipeline, effectiveStorageManager);
         this.windowObject.install();
 
         // Create event loop
@@ -170,6 +178,18 @@ export class ScriptExecutor {
         options: ScriptExecutionOptions = {},
     ): Promise<ScriptExecutionResult> {
         try {
+            // CSP external script source check
+            if (this.csp) {
+                const pageOrigin = new URL(this.url).origin;
+                if (!this.csp.allows("script-src", url, pageOrigin)) {
+                    return {
+                        success: false,
+                        error: new Error(`Blocked by Content Security Policy: script-src does not allow '${url}'`),
+                        executionTime: 0,
+                    };
+                }
+            }
+
             // Fetch script content (simplified - would use RequestPipeline)
             const response = await fetch(url);
             const code = await response.text();
@@ -218,6 +238,18 @@ export class ScriptExecutor {
             };
         }
 
+        // CSP inline script check
+        if (this.csp) {
+            const nonce = element.attributes?.get("nonce") ?? undefined;
+            if (!this.csp.allowsInlineScript(nonce)) {
+                return {
+                    success: false,
+                    error: new Error("Blocked by Content Security Policy: inline script not allowed"),
+                    executionTime: 0,
+                };
+            }
+        }
+
         // Check for async/defer attributes
         const async = element.attributes?.has("async") ?? false;
         const defer = element.attributes?.has("defer") ?? false;
@@ -250,29 +282,64 @@ export class ScriptExecutor {
         const scripts = this.findScriptElements(this.document);
         const results: ScriptExecutionResult[] = [];
 
+        // Separate scripts by execution timing per HTML spec:
+        // 1. Non-deferred, non-async scripts execute in document order
+        // 2. Deferred scripts execute after parsing in document order
+        // 3. Async scripts fire independently (handled by execute() options.async)
+        const immediateScripts: DOMNode[] = [];
+        const deferredScripts: DOMNode[] = [];
+
         for (const script of scripts) {
-            // Script elements are always elements
-            if (script.nodeType !== DOMNodeType.ELEMENT) {
-                continue;
-            }
-
-            const scriptElement = script as DOMElement;
-
-            // Check if external or inline
-            const src = scriptElement.attributes?.get("src");
-
-            if (src) {
-                // External script
-                const result = await this.executeExternal(src);
-                results.push(result);
+            if (script.nodeType !== DOMNodeType.ELEMENT) continue;
+            const el = script as DOMElement;
+            const isDefer = el.attributes?.has("defer") ?? false;
+            if (isDefer) {
+                deferredScripts.push(script);
             } else {
-                // Inline script
-                const result = await this.executeInline(script);
-                results.push(result);
+                immediateScripts.push(script);
             }
         }
 
+        // Execute immediate scripts first (in document order)
+        for (const script of immediateScripts) {
+            const result = await this.executeScriptElement(script as DOMElement);
+            results.push(result);
+        }
+
+        // Dispatch DOMContentLoaded — DOM is interactive, deferred scripts about to run
+        this.dispatchDocumentEvent("DOMContentLoaded");
+
+        // Execute deferred scripts after immediate scripts (in document order)
+        // waitForDOMReady() is called inside execute() when defer=true
+        for (const script of deferredScripts) {
+            const result = await this.executeScriptElement(script as DOMElement);
+            results.push(result);
+        }
+
+        // All scripts executed — mark document as complete
+        const doc = this.document as any;
+        if (doc.readyState) {
+            doc.readyState = "complete";
+        }
+
+        // Dispatch readystatechange for "complete"
+        this.dispatchDocumentEvent("readystatechange");
+
+        // Dispatch load event on window
+        this.dispatchDocumentEvent("load");
+
         return results;
+    }
+
+    /**
+     * Execute a single script element (external or inline)
+     */
+    private async executeScriptElement(element: DOMElement): Promise<ScriptExecutionResult> {
+        const src = element.attributes?.get("src");
+        if (src) {
+            return await this.executeExternal(src);
+        }
+        return await this.executeInline(element);
     }
 
     /**
@@ -299,10 +366,69 @@ export class ScriptExecutor {
 
     /**
      * Wait for DOM ready state
+     * Checks document.readyState and structural integrity before allowing
+     * deferred scripts to execute. Per HTML spec, deferred scripts run after
+     * HTML parsing is complete (readyState >= "interactive").
      */
     private async waitForDOMReady(): Promise<void> {
-        // Simplified - assume DOM is ready
-        return Promise.resolve();
+        const doc = this.document as any;
+
+        // Check readyState if available on the document node
+        if (doc.readyState) {
+            if (doc.readyState === "interactive" || doc.readyState === "complete") {
+                return;
+            }
+
+            // readyState is "loading" — poll until it transitions
+            const maxWait = 5000; // 5 second timeout
+            const pollInterval = 10;
+            let waited = 0;
+            while (doc.readyState === "loading" && waited < maxWait) {
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+                waited += pollInterval;
+            }
+
+            if (doc.readyState === "loading") {
+                console.warn("[ScriptExecutor] DOM readyState still 'loading' after timeout, proceeding anyway");
+            }
+            return;
+        }
+
+        // No readyState property — verify DOM structural integrity as fallback
+        // Document node (type 9) should have child elements (at least <html>)
+        if (doc.nodeType === 9 && doc.childNodes && doc.childNodes.length > 0) {
+            // DOM tree exists with children — consider it ready
+            return;
+        }
+
+        // Fallback: check for documentElement
+        if (doc.documentElement) {
+            return;
+        }
+
+        // If nothing is available, warn and proceed
+        console.warn("[ScriptExecutor] Cannot determine DOM readiness, proceeding");
+    }
+
+    /**
+     * Dispatch an event on the document node's event listener registry.
+     * Uses the __eventListeners map installed by DOMBindings.
+     */
+    private dispatchDocumentEvent(eventType: string): void {
+        const doc = this.document as any;
+        const listeners: Map<string, Array<any>> | undefined = doc.__eventListeners;
+        if (!listeners) return;
+        const callbacks = listeners.get(eventType);
+        if (!callbacks) return;
+        for (const callback of callbacks) {
+            if (callback?.type === "function" && callback.value?.isNative && callback.value?.nativeImpl) {
+                try {
+                    callback.value.nativeImpl();
+                } catch {
+                    // Swallow errors in event handlers
+                }
+            }
+        }
     }
 
     /**
@@ -484,6 +610,20 @@ export class ScriptExecutor {
      */
     getDocument(): DOMNode {
         return this.document;
+    }
+
+    /**
+     * Set Content Security Policy for script execution enforcement
+     */
+    setCSP(csp: ContentSecurityPolicy): void {
+        this.csp = csp;
+    }
+
+    /**
+     * Get the current Content Security Policy
+     */
+    getCSP(): ContentSecurityPolicy | undefined {
+        return this.csp;
     }
 }
 

@@ -34,6 +34,9 @@ import { OffscreenWebGPU, OffscreenWebGPUState } from "./webgpu/offscreen/mod.ts
 import { WebGPUCompositorLayer, LayerType, LayerBlendMode, LayerState } from "./webgpu/compositor/mod.ts";
 import { WebGPUDevice } from "./webgpu/adapter/Device.ts";
 import { WebGPUTextureManager } from "./webgpu/operations/render/TextureManager.ts";
+import type { PipelineObserver, PipelineStageEvent } from "./PipelineObserver.ts";
+import type { StorageManager } from "./storage/StorageManager.ts";
+import { ContentSecurityPolicy } from "./security/ContentSecurityPolicy.ts";
 
 /**
  * Rendering options
@@ -47,6 +50,7 @@ export interface RenderingOptions {
     enableCSS?: boolean;
     timeout?: number;
     signal?: AbortSignal;
+    storageManager?: StorageManager;
 }
 
 /**
@@ -136,6 +140,106 @@ export class RenderingPipelineError extends Error {
 }
 
 /**
+ * Parse intrinsic dimensions from image binary data.
+ * Supports PNG, JPEG, GIF, WebP, and BMP header parsing.
+ * Returns { width: 0, height: 0 } if format is unrecognized.
+ */
+function parseImageDimensions(data: Uint8Array): { width: number; height: number } {
+    if (data.length < 8) return { width: 0, height: 0 };
+
+    // PNG: bytes 0-7 are signature, IHDR chunk starts at 8, width at 16, height at 20 (big-endian)
+    if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4E && data[3] === 0x47) {
+        if (data.length < 24) return { width: 0, height: 0 };
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        return {
+            width: view.getUint32(16, false),
+            height: view.getUint32(20, false),
+        };
+    }
+
+    // JPEG: starts with 0xFFD8, scan for SOF0/SOF2 marker (0xFFC0/0xFFC2)
+    if (data[0] === 0xFF && data[1] === 0xD8) {
+        let offset = 2;
+        while (offset < data.length - 9) {
+            if (data[offset] !== 0xFF) { offset++; continue; }
+            const marker = data[offset + 1];
+            // SOF0 (0xC0) through SOF3 (0xC3), excluding DHT (0xC4)
+            if (marker >= 0xC0 && marker <= 0xC3) {
+                const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                return {
+                    width: view.getUint16(offset + 7, false),
+                    height: view.getUint16(offset + 5, false),
+                };
+            }
+            // Skip to next marker using segment length
+            if (marker === 0xD0 || marker === 0xD1 || marker === 0xD2 || marker === 0xD3 ||
+                marker === 0xD4 || marker === 0xD5 || marker === 0xD6 || marker === 0xD7 ||
+                marker === 0xD8 || marker === 0xD9 || marker === 0x01) {
+                offset += 2;
+            } else {
+                if (offset + 3 >= data.length) break;
+                const segLen = (data[offset + 2] << 8) | data[offset + 3];
+                offset += 2 + segLen;
+            }
+        }
+        return { width: 0, height: 0 };
+    }
+
+    // GIF: "GIF87a" or "GIF89a", width at 6, height at 8 (little-endian)
+    if (data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46) {
+        if (data.length < 10) return { width: 0, height: 0 };
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        return {
+            width: view.getUint16(6, true),
+            height: view.getUint16(8, true),
+        };
+    }
+
+    // WebP: "RIFF" at 0, "WEBP" at 8
+    if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 &&
+        data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50) {
+        // VP8 lossy: "VP8 " at 12, width at 26, height at 28
+        if (data[12] === 0x56 && data[13] === 0x50 && data[14] === 0x38 && data[15] === 0x20) {
+            if (data.length < 30) return { width: 0, height: 0 };
+            const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+            return {
+                width: view.getUint16(26, true) & 0x3FFF,
+                height: view.getUint16(28, true) & 0x3FFF,
+            };
+        }
+        // VP8L lossless: "VP8L" at 12, packed dimensions at 21
+        if (data[12] === 0x56 && data[13] === 0x50 && data[14] === 0x38 && data[15] === 0x4C) {
+            if (data.length < 25) return { width: 0, height: 0 };
+            const bits = (data[21]) | (data[22] << 8) | (data[23] << 16) | (data[24] << 24);
+            return {
+                width: (bits & 0x3FFF) + 1,
+                height: ((bits >> 14) & 0x3FFF) + 1,
+            };
+        }
+        // VP8X extended: width at 24 (24-bit LE + 1), height at 27 (24-bit LE + 1)
+        if (data[12] === 0x56 && data[13] === 0x50 && data[14] === 0x38 && data[15] === 0x58) {
+            if (data.length < 30) return { width: 0, height: 0 };
+            return {
+                width: (data[24] | (data[25] << 8) | (data[26] << 16)) + 1,
+                height: (data[27] | (data[28] << 8) | (data[29] << 16)) + 1,
+            };
+        }
+    }
+
+    // BMP: "BM" at 0, width at 18, height at 22 (little-endian, signed for height)
+    if (data[0] === 0x42 && data[1] === 0x4D) {
+        if (data.length < 26) return { width: 0, height: 0 };
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        return {
+            width: view.getInt32(18, true),
+            height: Math.abs(view.getInt32(22, true)),
+        };
+    }
+
+    return { width: 0, height: 0 };
+}
+
+/**
  * Create OffscreenCanvas abstraction for Deno runtime
  * Deno doesn't have native OffscreenCanvas, so we create a shim
  * that satisfies the type requirements. Actual rendering is handled by webgpu_x.
@@ -169,6 +273,7 @@ export class RenderingPipeline {
     private resources: ResourceInfo[] = [];
     public lastRenderResult?: RenderingResult;
     private ownsRequestPipeline: boolean;
+    private storageManager?: StorageManager;
 
     // WebGPU rendering support
     private webgpu: OffscreenWebGPU | null = null;
@@ -176,6 +281,22 @@ export class RenderingPipeline {
     private webgpuTextureManager: WebGPUTextureManager | null = null;
     private webgpuLayer: WebGPUCompositorLayer | null = null;
     private useWebGPU: boolean = false;
+
+    private observer?: PipelineObserver;
+    private lastRenderArtifacts?: { dom: unknown; cssom: unknown; renderTree: unknown; layoutTree: unknown; displayList: unknown };
+    private csp?: ContentSecurityPolicy;
+
+    setObserver(observer: PipelineObserver): void {
+        this.observer = observer;
+    }
+
+    getLastRenderArtifacts(): { dom: unknown; cssom: unknown; renderTree: unknown; layoutTree: unknown; displayList: unknown } | undefined {
+        return this.lastRenderArtifacts;
+    }
+
+    private emitStage(stageId: string, stageName: string, status: PipelineStageEvent["status"], startTime: number, endTime?: number, duration?: number, artifact?: unknown, error?: Error): void {
+        this.observer?.onStage({ stageId, stageName, pipeline: "rendering", status, startTime, endTime, duration, artifact, error });
+    }
 
     constructor(options: RenderingOptions = {}, requestPipeline?: RequestPipeline) {
         // Use provided RequestPipeline or create a new one
@@ -191,6 +312,7 @@ export class RenderingPipeline {
         this.height = options.height ?? 768;
         this.devicePixelRatio = options.devicePixelRatio ?? 1.0;
         this.enableJavaScript = options.enableJavaScript ?? false;
+        this.storageManager = options.storageManager;
 
         // Create OffscreenCanvas for compositor rendering
         this.canvas = createOffscreenCanvas(
@@ -341,9 +463,11 @@ export class RenderingPipeline {
 
         try {
             // 1. Fetch HTML
+            this.emitStage("html-fetch", "HTML Fetch", "running", Date.now());
             const htmlStart = Date.now();
             const htmlResult = await this.fetchHTML(url, options.signal);
             timing.htmlFetch = Date.now() - htmlStart;
+            this.emitStage("html-fetch", "HTML Fetch", "completed", htmlStart, Date.now(), timing.htmlFetch, htmlResult);
 
             this.resources.push({
                 url: htmlResult.request.url,
@@ -353,33 +477,54 @@ export class RenderingPipeline {
                 cached: htmlResult.fromCache,
             });
 
+            // Parse CSP header from HTML response if present
+            const cspHeader = htmlResult.response.headers?.get("content-security-policy");
+            const cspReportHeader = htmlResult.response.headers?.get("content-security-policy-report-only");
+            if (cspHeader) {
+                this.csp = new ContentSecurityPolicy(cspHeader, false);
+            } else if (cspReportHeader) {
+                this.csp = new ContentSecurityPolicy(cspReportHeader, true);
+            }
+
             // 2. Parse HTML → DOM
+            this.emitStage("html-parse", "HTML Parse", "running", Date.now());
             const parseStart = Date.now();
             const dom = await this.parseHTML(htmlResult.response.body);
             timing.htmlParse = Date.now() - parseStart;
+            this.emitStage("html-parse", "HTML Parse", "completed", parseStart, Date.now(), timing.htmlParse, dom);
 
             // 3. Discover and fetch CSS
+            this.emitStage("css-fetch", "CSS Fetch", "running", Date.now());
             const cssStart = Date.now();
             const stylesheets = await this.fetchStylesheets(dom, url);
             timing.cssFetch = Date.now() - cssStart;
+            this.emitStage("css-fetch", "CSS Fetch", "completed", cssStart, Date.now(), timing.cssFetch, stylesheets);
 
             // 4. Parse CSS → CSSOM
+            this.emitStage("css-parse", "CSS Parse", "running", Date.now());
             const cssParseStart = Date.now();
             const cssom = await this.parseCSS(stylesheets);
             timing.cssParse = Date.now() - cssParseStart;
+            this.emitStage("css-parse", "CSS Parse", "completed", cssParseStart, Date.now(), timing.cssParse, cssom);
 
             // 4.5. Execute JavaScript (if enabled)
+            this.emitStage("script-execution", "Script Execution", "running", Date.now());
             let scriptExecutor: ScriptExecutor | undefined;
             if (options.enableJavaScript ?? this.enableJavaScript) {
                 const scriptStart = Date.now();
-                scriptExecutor = new ScriptExecutor(dom, url.toString());
+                scriptExecutor = new ScriptExecutor(dom, url.toString(), this.requestPipeline, this.storageManager);
+                if (this.csp) {
+                    scriptExecutor.setCSP(this.csp);
+                }
                 await scriptExecutor.executeScriptsInDOM();
                 timing.scriptExecution = Date.now() - scriptStart;
             } else {
                 timing.scriptExecution = 0;
             }
+            this.emitStage("script-execution", "Script Execution", "completed", Date.now(), Date.now(), timing.scriptExecution, scriptExecutor);
 
             // 5. Build Render Tree (apply styles)
+            this.emitStage("style-resolution", "Style Resolution", "running", Date.now());
             const styleStart = Date.now();
             const styleResolver = new StyleResolver(cssom);
             const renderTree = new RenderTree();
@@ -397,8 +542,10 @@ export class RenderingPipeline {
 
             renderTree.build(documentElement, styleResolver);
             timing.styleResolution = Date.now() - styleStart;
+            this.emitStage("style-resolution", "Style Resolution", "completed", styleStart, Date.now(), timing.styleResolution, renderTree);
 
             // 6. Layout → Compute geometry
+            this.emitStage("layout", "Layout", "running", Date.now());
             const layoutStart = Date.now();
             const layoutEngine = new LayoutEngine();
             const rootRenderObject = renderTree.getRoot();
@@ -408,8 +555,68 @@ export class RenderingPipeline {
             );
             const layoutTree = rootRenderObject.layout!;
             timing.layoutComputation = Date.now() - layoutStart;
+            this.emitStage("layout", "Layout", "completed", layoutStart, Date.now(), timing.layoutComputation, layoutTree);
+
+            // 6.5. Fetch images (if enabled) using PreloadScanner
+            // Discover image URLs from the raw HTML and fetch them via the RequestPipeline
+            // so DRAW_IMAGE commands can render actual images
+            const enableImages = options.enableImages ?? true;
+            const imageMap = new Map<string, import("../types/dom.ts").CanvasImageSource>();
+            if (enableImages) {
+                const htmlText = new TextDecoder().decode(htmlResult.response.body);
+                const preloadScanner = new PreloadScanner();
+                const preloadResources = preloadScanner.scan(htmlText);
+                const imageResources = preloadResources.filter(r => r.type === "image");
+
+                for (const imgResource of imageResources) {
+                    try {
+                        const imgUrl = new URL(imgResource.url, url);
+
+                        // CSP img-src check
+                        if (this.csp) {
+                            const pageOrigin = new URL(url.toString()).origin;
+                            if (!this.csp.allows("img-src", imgUrl.toString(), pageOrigin)) {
+                                console.warn(`[RenderingPipeline] Blocked image by CSP: ${imgUrl}`);
+                                continue;
+                            }
+                        }
+
+                        const imgResult = await this.requestPipeline.get(imgUrl, { signal: options.signal });
+
+                        this.resources.push({
+                            url: imgResult.request.url,
+                            type: "image",
+                            size: imgResult.response.body.byteLength,
+                            fetchTime: imgResult.timing.total,
+                            cached: imgResult.fromCache,
+                        });
+
+                        // Decode image bytes into a drawable ImageBitmap
+                        const imgData = imgResult.response.body;
+                        const dims = parseImageDimensions(new Uint8Array(imgData));
+                        try {
+                            // Determine MIME type from headers or binary signature
+                            const contentType = imgResult.response.headers?.get("content-type") || "image/png";
+                            const blob = new Blob([imgData], { type: contentType });
+                            const bitmap = await createImageBitmap(blob as unknown as ImageBitmapSource);
+                            imageMap.set(imgResource.url, bitmap as unknown as import("../types/dom.ts").CanvasImageSource);
+                        } catch {
+                            // createImageBitmap unavailable (headless) — store dimensions for layout
+                            imageMap.set(imgResource.url, {
+                                width: dims.width,
+                                height: dims.height,
+                                close: () => {},
+                                _data: imgData,
+                            } as any);
+                        }
+                    } catch {
+                        // Image fetch failed — skip silently, broken-image placeholder will show
+                    }
+                }
+            }
 
             // 7. Paint → Generate display list
+            this.emitStage("paint", "Paint", "running", Date.now());
             const paintStart = Date.now();
             const displayList = new DisplayList();
             const paintContext = new PaintContext();
@@ -426,7 +633,14 @@ export class RenderingPipeline {
                 } as import("./rendering/paint/DisplayList.ts").AnyPaintCommand;
                 displayList.add(displayCommand);
             }
+
+            // Register fetched images with the display list so DRAW_IMAGE commands can render
+            for (const [src, img] of imageMap) {
+                displayList.registerImage(src, img);
+            }
+
             timing.paintRecording = Date.now() - paintStart;
+            this.emitStage("paint", "Paint", "completed", paintStart, Date.now(), timing.paintRecording, displayList);
 
             // 7.5. Pass render tree to compositor for CPU rendering
             // CPU mode needs the render tree to paint via Canvas 2D
@@ -435,9 +649,11 @@ export class RenderingPipeline {
             }
 
             // 8. Composite → Render to pixels
+            this.emitStage("composite", "Composite", "running", Date.now());
             const compositeStart = Date.now();
             this.compositor.composite();
             timing.compositing = Date.now() - compositeStart;
+            this.emitStage("composite", "Composite", "completed", compositeStart, Date.now(), timing.compositing);
 
             timing.total = Date.now() - startTime;
 
@@ -454,9 +670,11 @@ export class RenderingPipeline {
 
             // Store for access by BrowserPage API
             this.lastRenderResult = result;
+            this.lastRenderArtifacts = { dom, cssom, renderTree, layoutTree, displayList };
 
             return result;
         } catch (error) {
+            this.emitStage("unknown", "Unknown", "error", startTime, Date.now(), Date.now() - startTime, undefined, error instanceof Error ? error : new Error(String(error)));
             if (error instanceof RenderingPipelineError) {
                 throw error;
             }
@@ -675,6 +893,16 @@ export class RenderingPipeline {
                     const href = element.attributes.get("href");
                     if (href) {
                         const cssUrl = new URL(href, baseUrl);
+
+                        // CSP style-src check for external stylesheets
+                        if (this.csp) {
+                            const pageOrigin = new URL(baseUrl.toString()).origin;
+                            if (!this.csp.allows("style-src", cssUrl.toString(), pageOrigin)) {
+                                console.warn(`[RenderingPipeline] Blocked stylesheet by CSP: ${cssUrl}`);
+                                continue;
+                            }
+                        }
+
                         const result = await this.requestPipeline.get(cssUrl);
 
                         this.resources.push({
@@ -775,39 +1003,65 @@ export class RenderingPipeline {
      */
     private paint(layoutBox: LayoutBox, context: PaintContext): void {
         try {
+            const style = layoutBox.style;
+
             // Paint background
-            if (layoutBox.style?.backgroundColor) {
-                context.fillRect(
-                    layoutBox.x,
-                    layoutBox.y,
-                    layoutBox.width,
-                    layoutBox.height,
-                    layoutBox.style.backgroundColor,
-                );
+            if (style) {
+                const bgColor = style.getPropertyValue("background-color");
+                if (bgColor && bgColor !== "transparent") {
+                    context.fillRect(
+                        layoutBox.x,
+                        layoutBox.y,
+                        layoutBox.width,
+                        layoutBox.height,
+                        bgColor,
+                    );
+                }
             }
 
             // Paint border
-            if (layoutBox.style?.borderColor && layoutBox.style?.borderWidth) {
-                const borderWidth = layoutBox.style.borderWidth;
-                context.strokeRect(
+            if (style) {
+                const borderColor = style.getPropertyValue("border-color") || style.getPropertyValue("border-top-color");
+                const borderWidthStr = style.getPropertyValue("border-width") || style.getPropertyValue("border-top-width");
+                if (borderColor && borderWidthStr) {
+                    const borderWidth = parseFloat(borderWidthStr) as Pixels;
+                    if (borderWidth > 0) {
+                        context.strokeRect(
+                            layoutBox.x,
+                            layoutBox.y,
+                            layoutBox.width,
+                            layoutBox.height,
+                            borderColor,
+                            borderWidth,
+                        );
+                    }
+                }
+            }
+
+            // Paint image content (replaced elements with src)
+            if (layoutBox.src) {
+                context.drawImage(
+                    layoutBox.src,
                     layoutBox.x,
                     layoutBox.y,
                     layoutBox.width,
                     layoutBox.height,
-                    layoutBox.style.borderColor,
-                    borderWidth,
                 );
             }
 
             // Paint text content
             if (layoutBox.type === "text" && layoutBox.text) {
+                const color = style?.getPropertyValue("color") || "#000000";
+                const fontSizeStr = style?.getPropertyValue("font-size");
+                const fontSize = fontSizeStr ? parseFloat(fontSizeStr) : 16;
+                const fontFamily = style?.getPropertyValue("font-family") || "sans-serif";
+                const font = `${fontSize}px ${fontFamily}`;
                 context.fillText(
                     layoutBox.text,
                     layoutBox.x,
                     layoutBox.y,
-                    layoutBox.style?.color ?? "#000000",
-                    layoutBox.style?.fontSize ?? 16,
-                    layoutBox.style?.fontFamily ?? "sans-serif",
+                    font,
+                    color,
                 );
             }
 
@@ -982,6 +1236,20 @@ export class RenderingPipeline {
     /**
      * Clear all caches
      */
+    /**
+     * Set Content Security Policy for resource loading enforcement
+     */
+    setCSP(csp: ContentSecurityPolicy): void {
+        this.csp = csp;
+    }
+
+    /**
+     * Get the current Content Security Policy
+     */
+    getCSP(): ContentSecurityPolicy | undefined {
+        return this.csp;
+    }
+
     clearCache(): void {
         this.requestPipeline.clearDNSCache();
         this.resources = [];
