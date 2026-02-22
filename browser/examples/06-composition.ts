@@ -26,8 +26,8 @@ const requestPipeline2 = new RequestPipeline();
 
 // Make parallel requests
 const [result1, result2] = await Promise.all([
-    requestPipeline1.get("https://example.com"),
-    requestPipeline2.get("https://example.com"),
+  requestPipeline1.get("https://example.com"),
+  requestPipeline2.get("https://example.com"),
 ]);
 
 console.log(`✓ Request 1: ${result1.response.statusCode} (${result1.timing.total}ms)`);
@@ -45,9 +45,9 @@ console.log("\n2. Rendering pipeline with shared HTTP client...");
 
 const sharedRequestPipeline = new RequestPipeline();
 const renderingPipeline = new RenderingPipeline({
-    width: 1024,
-    height: 768,
-    enableJavaScript: false,
+  width: 1024,
+  height: 768,
+  enableJavaScript: false,
 });
 
 // Get rendering pipeline's request pipeline to see its stats
@@ -71,10 +71,10 @@ console.log(`Compositor stats:`, compositorStats);
 console.log("\n3. Full browser with composable access...");
 
 const browser = new Browser({
-    width: 1280,
-    height: 720,
-    enableJavaScript: false,
-    enableStorage: true,
+  width: 1280,
+  height: 720,
+  enableJavaScript: false,
+  enableStorage: true,
 });
 
 // Navigate to a page
@@ -97,7 +97,9 @@ console.log(`DNS cache - hits: ${dnsStats.hits}, misses: ${dnsStats.misses}`);
 // Get connection pool stats
 const connectionPool = browserRequestPipeline.getConnectionPool();
 const poolStats = connectionPool.getStats();
-console.log(`Connection pool - total: ${poolStats.totalConnections}, idle: ${poolStats.idleConnections}`);
+console.log(
+  `Connection pool - total: ${poolStats.totalConnections}, idle: ${poolStats.idleConnections}`,
+);
 
 // Get compositor from rendering pipeline
 const browserCompositor = browserRenderingPipeline.getCompositor();
@@ -109,10 +111,10 @@ localStorage.setItem("visited", "true");
 console.log(`✓ Set localStorage item`);
 
 cookieManager.setCookie("https://example.com", {
-    name: "session",
-    value: "composed-workflow",
-    domain: "example.com",
-    path: "/",
+  name: "session",
+  value: "composed-workflow",
+  domain: "example.com",
+  path: "/",
 });
 console.log(`✓ Set cookie`);
 
@@ -126,9 +128,9 @@ console.log(`✓ Fetched HTML (${htmlResponse.response.body.byteLength} bytes)`)
 
 // Step 2: Parse HTML to DOM
 const customRenderPipeline = new RenderingPipeline({
-    width: 800,
-    height: 600,
-    enableJavaScript: false,
+  width: 800,
+  height: 600,
+  enableJavaScript: false,
 });
 
 const parseResult = await customRenderPipeline.render("https://example.com");
@@ -136,27 +138,27 @@ console.log(`✓ Parsed HTML to DOM (${countNodes(parseResult.dom)} nodes)`);
 
 // Step 3: Execute JavaScript on DOM
 if (parseResult.scriptExecutor) {
-    const executor = parseResult.scriptExecutor;
+  const executor = parseResult.scriptExecutor;
 
-    // Execute custom script
-    const scriptResult = await executor.execute(`
+  // Execute custom script
+  const scriptResult = await executor.execute(`
         // DOM manipulation
         const title = "Custom Workflow";
         console.log("Running in custom workflow:", title);
         title;
     `);
 
-    console.log(`✓ Executed script: ${scriptResult.value}`);
+  console.log(`✓ Executed script: ${scriptResult.value}`);
 
-    // Access V8 subsystems
-    const isolate = executor.getIsolate();
-    const heapStats = isolate.getHeapStatistics();
-    console.log(`  V8 heap used: ${heapStats.usedHeapSize} bytes`);
+  // Access V8 subsystems
+  const isolate = executor.getIsolate();
+  const heapStats = isolate.getHeapStatistics();
+  console.log(`  V8 heap used: ${heapStats.usedHeapSize} bytes`);
 
-    const eventLoop = executor.getEventLoop();
-    console.log(`  Pending tasks: ${eventLoop.hasPendingTasks()}`);
+  const eventLoop = executor.getEventLoop();
+  console.log(`  Pending tasks: ${eventLoop.hasPendingTasks()}`);
 
-    await executor.dispose();
+  await executor.dispose();
 }
 
 // Scenario 5: Performance monitoring across subsystems
@@ -164,16 +166,16 @@ console.log("\n5. Performance monitoring across all subsystems...");
 
 // Collect stats from all components
 const stats = {
-    browser: browser.getStats(),
-    requestPipeline: {
-        dns: browserRequestPipeline.getDNSCache().getStats(),
-        connectionPool: browserRequestPipeline.getConnectionPool().getStats(),
-    },
-    rendering: browserRenderingPipeline.getStats(),
-    storage: {
-        quota: quotaManager.getGlobalQuotaInfo(),
-        cookies: cookieManager.getCookieCount(),
-    },
+  browser: browser.getStats(),
+  requestPipeline: {
+    dns: browserRequestPipeline.getDNSCache().getStats(),
+    connectionPool: browserRequestPipeline.getConnectionPool().getStats(),
+  },
+  rendering: browserRenderingPipeline.getStats(),
+  storage: {
+    quota: quotaManager.getGlobalQuotaInfo(),
+    cookies: cookieManager.getCookieCount(),
+  },
 };
 
 console.log(`\nComprehensive statistics:`);
@@ -203,11 +205,11 @@ console.log("=".repeat(60));
 
 // Helper function
 function countNodes(node: any): number {
-    let count = 1;
-    if (node.childNodes) {
-        for (const child of node.childNodes) {
-            count += countNodes(child);
-        }
+  let count = 1;
+  if (node.childNodes) {
+    for (const child of node.childNodes) {
+      count += countNodes(child);
     }
-    return count;
+  }
+  return count;
 }

@@ -52,7 +52,9 @@ console.log(`DNS cache - hits: ${cacheStats.hits}, misses: ${cacheStats.misses}`
 // Connection pool
 const connectionPool = pipeline.getConnectionPool();
 const poolStats = connectionPool.getStats();
-console.log(`Connection pool - total: ${poolStats.totalConnections}, idle: ${poolStats.idleConnections}`);
+console.log(
+  `Connection pool - total: ${poolStats.totalConnections}, idle: ${poolStats.idleConnections}`,
+);
 
 // Example 4: Make another request (should use cached DNS and connection)
 console.log("\n4. Making second request (should be faster)...");

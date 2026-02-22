@@ -8,10 +8,10 @@
  */
 
 export {
-    OffscreenWebGPU,
-    OffscreenWebGPUState,
-    OffscreenWebGPUError,
-    OffscreenDeviceLostError,
-    type OffscreenWebGPUConfig,
-    type OffscreenWebGPUStatistics,
+  OffscreenDeviceLostError,
+  OffscreenWebGPU,
+  type OffscreenWebGPUConfig,
+  OffscreenWebGPUError,
+  OffscreenWebGPUState,
+  type OffscreenWebGPUStatistics,
 } from "./OffscreenWebGPU.ts";

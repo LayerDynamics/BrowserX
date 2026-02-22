@@ -18,6 +18,7 @@ The browser is designed as a composable toolkit where every component can be use
 **File:** `01-request-pipeline.ts`
 
 Demonstrates using the HTTP networking stack independently:
+
 - DNS resolution with caching
 - Connection pooling
 - HTTP requests with timing
@@ -32,6 +33,7 @@ deno run --allow-net examples/01-request-pipeline.ts
 **File:** `02-rendering-pipeline.ts`
 
 Shows how to render HTML/CSS without a full browser:
+
 - HTML parsing and DOM construction
 - CSS parsing and CSSOM
 - Layout computation
@@ -46,6 +48,7 @@ deno run --allow-net examples/02-rendering-pipeline.ts
 **File:** `03-script-executor.ts`
 
 Demonstrates JavaScript execution with V8:
+
 - Execute JavaScript code
 - Access V8 isolate and context
 - Manage event loop
@@ -60,6 +63,7 @@ deno run examples/03-script-executor.ts
 **File:** `04-webgpu-engine.ts`
 
 Shows GPU-accelerated rendering with WebGPU:
+
 - Initialize WebGPU device
 - Create render pipelines
 - Manage GPU memory
@@ -74,6 +78,7 @@ deno run --allow-all examples/04-webgpu-engine.ts
 **File:** `05-storage-systems.ts`
 
 Demonstrates browser storage APIs:
+
 - localStorage and sessionStorage
 - Cookie management
 - IndexedDB operations
@@ -88,6 +93,7 @@ deno run examples/05-storage-systems.ts
 **File:** `06-composition.ts`
 
 Shows how to compose multiple components:
+
 - Combine HTTP + rendering + JavaScript
 - Share subsystems between components
 - Build custom workflows
@@ -151,6 +157,7 @@ const compositor = webgpuEngine.getCompositor();
 ## API Documentation
 
 All public getter methods include comprehensive JSDoc documentation with:
+
 - Description of the subsystem
 - What it provides
 - How to use it

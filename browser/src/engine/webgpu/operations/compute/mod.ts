@@ -7,15 +7,15 @@
  */
 
 export {
-    ComputePipeline,
-    type WorkgroupDimensions,
-    type DispatchDimensions,
-    type ComputeConfig,
-    type BufferBinding,
-    type TextureBinding,
-    type SamplerBinding,
-    type BindGroupResources,
-    type ComputePassConfig,
-    type ComputeStatistics,
-    ComputePipelineError,
+  type BindGroupResources,
+  type BufferBinding,
+  type ComputeConfig,
+  type ComputePassConfig,
+  ComputePipeline,
+  ComputePipelineError,
+  type ComputeStatistics,
+  type DispatchDimensions,
+  type SamplerBinding,
+  type TextureBinding,
+  type WorkgroupDimensions,
 } from "./ComputePipeline.ts";

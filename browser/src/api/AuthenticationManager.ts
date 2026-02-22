@@ -7,7 +7,7 @@
  */
 
 import { BrowserPage } from "./BrowserPage.ts";
-import { FormAutomation, createFormAutomation, FormFillData } from "./FormAutomation.ts";
+import { createFormAutomation, FormAutomation, FormFillData } from "./FormAutomation.ts";
 
 /**
  * Supported authentication types
@@ -263,7 +263,9 @@ export class AuthenticationManager {
   /**
    * Basic authentication
    */
-  private async authenticateBasic(credentials: BasicAuthCredentials): Promise<AuthenticationResult> {
+  private async authenticateBasic(
+    credentials: BasicAuthCredentials,
+  ): Promise<AuthenticationResult> {
     try {
       const token = btoa(`${credentials.username}:${credentials.password}`);
       const session: AuthSession = {
@@ -290,7 +292,9 @@ export class AuthenticationManager {
   /**
    * Bearer token authentication
    */
-  private async authenticateBearer(credentials: BearerAuthCredentials): Promise<AuthenticationResult> {
+  private async authenticateBearer(
+    credentials: BearerAuthCredentials,
+  ): Promise<AuthenticationResult> {
     try {
       const session: AuthSession = {
         type: "bearer",
@@ -341,7 +345,9 @@ export class AuthenticationManager {
   /**
    * Cookie-based authentication
    */
-  private async authenticateCookie(credentials: CookieAuthCredentials): Promise<AuthenticationResult> {
+  private async authenticateCookie(
+    credentials: CookieAuthCredentials,
+  ): Promise<AuthenticationResult> {
     try {
       // In a full implementation, this would set cookies via the browser's cookie API
       // For now, we store the cookie configuration in the session
@@ -379,7 +385,7 @@ export class AuthenticationManager {
       await this.formAutomation.fillForm(
         credentials.formSelector || "form",
         credentials.formData,
-        { clearFirst: true, validate: false }
+        { clearFirst: true, validate: false },
       );
 
       // Find and click submit button if specified
@@ -465,7 +471,9 @@ export class AuthenticationManager {
   /**
    * OAuth2 Client Credentials grant
    */
-  private async oauth2ClientCredentials(credentials: OAuth2Credentials): Promise<AuthenticationResult> {
+  private async oauth2ClientCredentials(
+    credentials: OAuth2Credentials,
+  ): Promise<AuthenticationResult> {
     // In a real implementation, this would make an HTTP request to the token endpoint
     // For now, we simulate the flow
     console.log(`OAuth2 Client Credentials: POST ${credentials.tokenUrl}`);
@@ -552,7 +560,9 @@ export class AuthenticationManager {
   /**
    * OAuth2 Authorization Code grant
    */
-  private async oauth2AuthorizationCode(credentials: OAuth2Credentials): Promise<AuthenticationResult> {
+  private async oauth2AuthorizationCode(
+    credentials: OAuth2Credentials,
+  ): Promise<AuthenticationResult> {
     if (!credentials.authorizationUrl || !credentials.redirectUri) {
       return {
         success: false,
@@ -601,7 +611,9 @@ export class AuthenticationManager {
   /**
    * Custom authentication
    */
-  private async authenticateCustom(credentials: CustomAuthCredentials): Promise<AuthenticationResult> {
+  private async authenticateCustom(
+    credentials: CustomAuthCredentials,
+  ): Promise<AuthenticationResult> {
     try {
       const result = await credentials.handler(this.page);
 
@@ -622,7 +634,9 @@ export class AuthenticationManager {
   /**
    * Check success indicator after form login
    */
-  private async checkSuccessIndicator(indicator: { type: "url" | "selector"; pattern: string }): Promise<boolean> {
+  private async checkSuccessIndicator(
+    indicator: { type: "url" | "selector"; pattern: string },
+  ): Promise<boolean> {
     if (indicator.type === "url") {
       const currentUrl = this.page.getCurrentURL() || "";
       const pattern = new RegExp(indicator.pattern);

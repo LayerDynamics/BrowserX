@@ -3,11 +3,11 @@
  */
 
 export interface HTMLParserStats {
-    tokensEmitted: number;
-    parseErrors: number;
-    maxStackDepth: number;
+  tokensEmitted: number;
+  parseErrors: number;
+  maxStackDepth: number;
 }
 
 export function createHTMLParserStats(): HTMLParserStats {
-    return { tokensEmitted: 0, parseErrors: 0, maxStackDepth: 0 };
+  return { tokensEmitted: 0, parseErrors: 0, maxStackDepth: 0 };
 }

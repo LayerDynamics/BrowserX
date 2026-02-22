@@ -9,15 +9,15 @@
  * @module webgpu/utils/TensorHelpers
  */
 
-import { WebGPUX, TensorDType, TensorAccess, type TensorMeta } from "@browserx/webgpu_x";
+import { TensorAccess, TensorDType, type TensorMeta, WebGPUX } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 
 function getWebGPUX(): WebGPUX {
-    if (!webgpuXInstance) {
-        webgpuXInstance = new WebGPUX();
-    }
-    return webgpuXInstance;
+  if (!webgpuXInstance) {
+    webgpuXInstance = new WebGPUX();
+  }
+  return webgpuXInstance;
 }
 
 /**
@@ -30,37 +30,37 @@ function getWebGPUX(): WebGPUX {
  * @returns Tensor metadata or null if failed
  */
 export function createTensor(
-    bufferHandle: bigint,
-    shape: number[],
-    dtype: TensorDType,
-    access: TensorAccess
+  bufferHandle: bigint,
+  shape: number[],
+  dtype: TensorDType,
+  access: TensorAccess,
 ): TensorMeta | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.tensorCreate(bufferHandle, shape, dtype, access);
+  const webgpuX = getWebGPUX();
+  return webgpuX.tensorCreate(bufferHandle, shape, dtype, access);
 }
 
 /**
  * Get tensor size in bytes
  */
 export function tensorSizeBytes(tensor: TensorMeta): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.tensorSizeBytes(tensor);
+  const webgpuX = getWebGPUX();
+  return webgpuX.tensorSizeBytes(tensor);
 }
 
 /**
  * Get tensor rank (number of dimensions)
  */
 export function tensorRank(tensor: TensorMeta): number {
-    const webgpuX = getWebGPUX();
-    return webgpuX.tensorRank(tensor);
+  const webgpuX = getWebGPUX();
+  return webgpuX.tensorRank(tensor);
 }
 
 /**
  * Get total number of elements
  */
 export function tensorTotalElements(tensor: TensorMeta): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.tensorTotalElements(tensor);
+  const webgpuX = getWebGPUX();
+  return webgpuX.tensorTotalElements(tensor);
 }
 
 /**
@@ -71,8 +71,8 @@ export function tensorTotalElements(tensor: TensorMeta): bigint {
  * @returns Reshaped tensor or null if invalid
  */
 export function tensorReshape(tensor: TensorMeta, newShape: number[]): TensorMeta | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.tensorReshape(tensor, newShape);
+  const webgpuX = getWebGPUX();
+  return webgpuX.tensorReshape(tensor, newShape);
 }
 
 /**
@@ -82,8 +82,8 @@ export function tensorReshape(tensor: TensorMeta, newShape: number[]): TensorMet
  * @returns Transposed tensor or null if not 2D
  */
 export function tensorTranspose2D(tensor: TensorMeta): TensorMeta | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.tensorTranspose2D(tensor);
+  const webgpuX = getWebGPUX();
+  return webgpuX.tensorTranspose2D(tensor);
 }
 
 /**
@@ -94,18 +94,18 @@ export function tensorTranspose2D(tensor: TensorMeta): TensorMeta | null {
  * @returns Tensor view or null if invalid
  */
 export function tensorView(tensor: TensorMeta, offset: bigint): TensorMeta | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.tensorView(tensor, offset);
+  const webgpuX = getWebGPUX();
+  return webgpuX.tensorView(tensor, offset);
 }
 
 /**
  * Check if tensor memory is contiguous
  */
 export function tensorIsContiguous(tensor: TensorMeta): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.tensorIsContiguous(tensor);
+  const webgpuX = getWebGPUX();
+  return webgpuX.tensorIsContiguous(tensor);
 }
 
 // Re-export types and enums
-export { TensorDType, TensorAccess };
+export { TensorAccess, TensorDType };
 export type { TensorMeta };

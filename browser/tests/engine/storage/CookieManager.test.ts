@@ -63,7 +63,7 @@ Deno.test("CookieManager - expired cookies are not returned (expires)", () => {
 
   manager.setCookie(
     { name: "expired", value: "old", expires: pastDate },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -78,7 +78,7 @@ Deno.test("CookieManager - future expiration cookies are returned", () => {
 
   manager.setCookie(
     { name: "valid", value: "data", expires: futureDate },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -93,7 +93,7 @@ Deno.test("CookieManager - maxAge expiration (expired)", () => {
 
   manager.setCookie(
     { name: "expired", value: "old", maxAge: -10 }, // Negative maxAge
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -107,7 +107,7 @@ Deno.test("CookieManager - maxAge expiration (valid)", () => {
 
   manager.setCookie(
     { name: "valid", value: "data", maxAge: 3600 }, // 1 hour
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -124,7 +124,7 @@ Deno.test("CookieManager - expires takes precedence over maxAge", () => {
   // Implementation checks expires first
   manager.setCookie(
     { name: "test", value: "data", maxAge: -10, expires: futureDate },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -142,7 +142,7 @@ Deno.test("CookieManager - exact domain match", () => {
 
   manager.setCookie(
     { name: "test", value: "data", domain: "example.com" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -156,7 +156,7 @@ Deno.test("CookieManager - subdomain match with leading dot", () => {
 
   manager.setCookie(
     { name: "root", value: "data", domain: ".example.com" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const subCookies = manager.getCookies("https://sub.example.com/");
@@ -173,7 +173,7 @@ Deno.test("CookieManager - subdomain match without leading dot", () => {
 
   manager.setCookie(
     { name: "test", value: "data", domain: "example.com" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const subCookies = manager.getCookies("https://sub.example.com/");
@@ -187,7 +187,7 @@ Deno.test("CookieManager - domain mismatch", () => {
 
   manager.setCookie(
     { name: "test", value: "data", domain: "example.com" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://other.com/");
@@ -202,7 +202,7 @@ Deno.test("CookieManager - cannot set cookie for unrelated domain", () => {
   // Attempting to set cookie for evil.com while on example.com should fail
   manager.setCookie(
     { name: "test", value: "data", domain: "evil.com" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   assertEquals(manager.getCookieCount(), 0); // Cookie should not be stored
@@ -216,7 +216,7 @@ Deno.test("CookieManager - public suffix rejection", () => {
   // Cannot set cookie for public suffix like ".com"
   manager.setCookie(
     { name: "test", value: "data", domain: "com" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   assertEquals(manager.getCookieCount(), 0);
@@ -233,7 +233,7 @@ Deno.test("CookieManager - exact path match", () => {
 
   manager.setCookie(
     { name: "test", value: "data", path: "/api" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/api");
@@ -247,7 +247,7 @@ Deno.test("CookieManager - path prefix match", () => {
 
   manager.setCookie(
     { name: "test", value: "data", path: "/api" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/api/v1/users");
@@ -261,7 +261,7 @@ Deno.test("CookieManager - path mismatch", () => {
 
   manager.setCookie(
     { name: "test", value: "data", path: "/api" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/other");
@@ -275,15 +275,15 @@ Deno.test("CookieManager - path sorting (more specific first)", () => {
 
   manager.setCookie(
     { name: "cookie1", value: "root", path: "/" },
-    "https://example.com/"
+    "https://example.com/",
   );
   manager.setCookie(
     { name: "cookie2", value: "api", path: "/api" },
-    "https://example.com/"
+    "https://example.com/",
   );
   manager.setCookie(
     { name: "cookie3", value: "v1", path: "/api/v1" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/api/v1/users");
@@ -305,7 +305,7 @@ Deno.test("CookieManager - HttpOnly flag is preserved", () => {
 
   manager.setCookie(
     { name: "session", value: "secret", httpOnly: true },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -320,7 +320,7 @@ Deno.test("CookieManager - Secure flag blocks HTTP access", () => {
 
   manager.setCookie(
     { name: "secure", value: "data", secure: true },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   // Should not be returned for HTTP URL
@@ -339,7 +339,7 @@ Deno.test("CookieManager - non-Secure cookie works on both HTTP and HTTPS", () =
 
   manager.setCookie(
     { name: "test", value: "data", secure: false },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const httpCookies = manager.getCookies("http://example.com/");
@@ -360,20 +360,20 @@ Deno.test("CookieManager - SameSite=Strict blocks cross-site requests", () => {
 
   manager.setCookie(
     { name: "session", value: "data", sameSite: "Strict" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   // Same-site request should work
   const sameSite = manager.getCookiesForRequest(
     "https://example.com/",
-    "https://example.com/other"
+    "https://example.com/other",
   );
   assertEquals(sameSite.length, 1);
 
   // Cross-site request should be blocked
   const crossSite = manager.getCookiesForRequest(
     "https://example.com/",
-    "https://other.com/"
+    "https://other.com/",
   );
   assertEquals(crossSite.length, 0);
 
@@ -385,14 +385,14 @@ Deno.test("CookieManager - SameSite=Lax allows top-level safe navigation", () =>
 
   manager.setCookie(
     { name: "session", value: "data", sameSite: "Lax" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   // Same-site GET request should work
   const sameSite = manager.getCookiesForRequest(
     "https://example.com/",
     "https://example.com/other",
-    "GET"
+    "GET",
   );
   assertEquals(sameSite.length, 1);
 
@@ -400,7 +400,7 @@ Deno.test("CookieManager - SameSite=Lax allows top-level safe navigation", () =>
   const crossSiteGet = manager.getCookiesForRequest(
     "https://example.com/",
     "https://other.com/",
-    "GET"
+    "GET",
   );
   assertEquals(crossSiteGet.length, 1);
 
@@ -413,14 +413,14 @@ Deno.test("CookieManager - SameSite=None requires Secure flag", () => {
   // SameSite=None without Secure should be rejected
   manager.setCookie(
     { name: "test", value: "data", sameSite: "None", secure: false },
-    "https://example.com/"
+    "https://example.com/",
   );
   assertEquals(manager.getCookieCount(), 0);
 
   // SameSite=None with Secure should work
   manager.setCookie(
     { name: "test", value: "data", sameSite: "None", secure: true },
-    "https://example.com/"
+    "https://example.com/",
   );
   assertEquals(manager.getCookieCount(), 1);
 
@@ -432,7 +432,7 @@ Deno.test("CookieManager - SameSite defaults to Lax", () => {
 
   manager.setCookie(
     { name: "test", value: "data" }, // No sameSite specified
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -479,7 +479,7 @@ Deno.test("CookieManager - delete cookies for domain", () => {
   assertEquals(manager.getCookieCount(), 2);
 
   const remaining = manager.getAllCookies();
-  const domains = remaining.map(c => c.domain);
+  const domains = remaining.map((c) => c.domain);
   assertEquals(domains.includes("sub.example.com"), true);
   assertEquals(domains.includes("other.com"), true);
 
@@ -586,15 +586,15 @@ Deno.test("CookieManager - multiple cookies with different domains and paths", (
 
   manager.setCookie(
     { name: "root", value: "data", domain: "example.com", path: "/" },
-    "https://example.com/"
+    "https://example.com/",
   );
   manager.setCookie(
     { name: "api", value: "data", domain: "example.com", path: "/api" },
-    "https://example.com/"
+    "https://example.com/",
   );
   manager.setCookie(
     { name: "sub", value: "data", domain: "sub.example.com", path: "/" },
-    "https://sub.example.com/"
+    "https://sub.example.com/",
   );
 
   // Root domain, root path - should get root cookie only
@@ -618,7 +618,7 @@ Deno.test("CookieManager - case-insensitive domain matching", () => {
 
   manager.setCookie(
     { name: "test", value: "data", domain: "Example.COM" },
-    "https://EXAMPLE.com/"
+    "https://EXAMPLE.com/",
   );
 
   const cookies1 = manager.getCookies("https://example.com/");
@@ -654,7 +654,7 @@ Deno.test("CookieManager - path must match from start of path", () => {
 
   manager.setCookie(
     { name: "test", value: "data", path: "/api" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   // Should NOT match /apiary (different word)
@@ -669,7 +669,7 @@ Deno.test("CookieManager - path with trailing slash matches subdirectories", () 
 
   manager.setCookie(
     { name: "test", value: "data", path: "/api/" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies1 = manager.getCookies("https://example.com/api/");
@@ -687,7 +687,7 @@ Deno.test("CookieManager - session cookie (no expiration)", () => {
   // Session cookie - no expires or maxAge
   manager.setCookie(
     { name: "session", value: "data" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/");
@@ -701,14 +701,14 @@ Deno.test("CookieManager - multiple cookies sorted by creation time for same pat
 
   manager.setCookie(
     { name: "first", value: "1", path: "/api" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   // Small delay to ensure different creation times
   // (In practice, same path length should sort by creation time)
   manager.setCookie(
     { name: "second", value: "2", path: "/api" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const cookies = manager.getCookies("https://example.com/api");
@@ -725,14 +725,14 @@ Deno.test("CookieManager - SameSite=Lax blocks cross-site POST", () => {
 
   manager.setCookie(
     { name: "csrf", value: "token", sameSite: "Lax" },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   // Same-site POST should work
   const sameSitePost = manager.getCookiesForRequest(
     "https://example.com/api",
     "https://example.com/form",
-    "POST"
+    "POST",
   );
   assertEquals(sameSitePost.length, 1);
 
@@ -740,7 +740,7 @@ Deno.test("CookieManager - SameSite=Lax blocks cross-site POST", () => {
   const crossSitePost = manager.getCookiesForRequest(
     "https://example.com/api",
     "https://attacker.com/",
-    "POST"
+    "POST",
   );
   assertEquals(crossSitePost.length, 0);
 
@@ -753,12 +753,12 @@ Deno.test("CookieManager - getCookiesForRequest filters by SameSite correctly", 
   // SameSite=None cookies work cross-site (if Secure)
   manager.setCookie(
     { name: "tracking", value: "data", sameSite: "None", secure: true },
-    "https://example.com/"
+    "https://example.com/",
   );
 
   const crossSite = manager.getCookiesForRequest(
     "https://example.com/",
-    "https://other.com/"
+    "https://other.com/",
   );
   assertEquals(crossSite.length, 1);
 
@@ -770,7 +770,7 @@ Deno.test("CookieManager - domain with port number is stripped", () => {
 
   manager.setCookie(
     { name: "test", value: "data" },
-    "https://example.com:8080/"
+    "https://example.com:8080/",
   );
 
   // Port should be stripped from domain

@@ -9,16 +9,16 @@
  * @module webgpu/utils/BufferHelpers
  */
 
-import { WebGPUX, type StagingWrite, type StagingBeltStats } from "@browserx/webgpu_x";
+import { type StagingBeltStats, type StagingWrite, WebGPUX } from "@browserx/webgpu_x";
 
 // Lazy singleton
 let webgpuXInstance: WebGPUX | null = null;
 
 function getWebGPUX(): WebGPUX {
-    if (!webgpuXInstance) {
-        webgpuXInstance = new WebGPUX();
-    }
-    return webgpuXInstance;
+  if (!webgpuXInstance) {
+    webgpuXInstance = new WebGPUX();
+  }
+  return webgpuXInstance;
 }
 
 // ============================================================================
@@ -32,8 +32,8 @@ function getWebGPUX(): WebGPUX {
  * @returns Belt handle ID
  */
 export function createStagingBelt(chunkSize: number = 256 * 1024): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.createStagingBelt(BigInt(chunkSize));
+  const webgpuX = getWebGPUX();
+  return webgpuX.createStagingBelt(BigInt(chunkSize));
 }
 
 /**
@@ -44,32 +44,32 @@ export function createStagingBelt(chunkSize: number = 256 * 1024): bigint {
  * @returns Write descriptor with buffer handle and offset
  */
 export function stagingBeltWrite(beltHandle: bigint, size: bigint): StagingWrite | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.stagingBeltWrite(beltHandle, size);
+  const webgpuX = getWebGPUX();
+  return webgpuX.stagingBeltWrite(beltHandle, size);
 }
 
 /**
  * Finish current frame and recover completed buffers
  */
 export function stagingBeltFinish(beltHandle: bigint): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.stagingBeltFinish(beltHandle);
+  const webgpuX = getWebGPUX();
+  webgpuX.stagingBeltFinish(beltHandle);
 }
 
 /**
  * Get staging belt statistics
  */
 export function stagingBeltStats(beltHandle: bigint): StagingBeltStats | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.stagingBeltStats(beltHandle);
+  const webgpuX = getWebGPUX();
+  return webgpuX.stagingBeltStats(beltHandle);
 }
 
 /**
  * Destroy staging belt and release resources
  */
 export function destroyStagingBelt(beltHandle: bigint): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.destroyStagingBelt(beltHandle);
+  const webgpuX = getWebGPUX();
+  webgpuX.destroyStagingBelt(beltHandle);
 }
 
 // ============================================================================
@@ -84,8 +84,8 @@ export function destroyStagingBelt(beltHandle: bigint): void {
  * @returns Buffer handle (0 if pool exhausted)
  */
 export function bufferPoolAcquire(size: bigint, usage: number): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.acquireBuffer(size, usage);
+  const webgpuX = getWebGPUX();
+  return webgpuX.acquireBuffer(size, usage);
 }
 
 /**
@@ -94,8 +94,8 @@ export function bufferPoolAcquire(size: bigint, usage: number): bigint {
  * @param handle - Buffer handle
  */
 export function bufferPoolRelease(handle: bigint): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.releaseBuffer(handle);
+  const webgpuX = getWebGPUX();
+  webgpuX.releaseBuffer(handle);
 }
 
 /**
@@ -106,8 +106,8 @@ export function bufferPoolRelease(handle: bigint): void {
  * @param usage - GPUBufferUsage flags
  */
 export function bufferPoolAdd(handle: bigint, size: bigint, usage: number): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.addBuffer(handle, size, usage);
+  const webgpuX = getWebGPUX();
+  webgpuX.addBuffer(handle, size, usage);
 }
 
 /**
@@ -116,24 +116,24 @@ export function bufferPoolAdd(handle: bigint, size: bigint, usage: number): void
  * @param handle - Buffer handle
  */
 export function bufferPoolRemove(handle: bigint): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.removeBuffer(handle);
+  const webgpuX = getWebGPUX();
+  webgpuX.removeBuffer(handle);
 }
 
 /**
  * Clear all buffers from the pool
  */
 export function clearBufferPool(): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.clearBufferPool();
+  const webgpuX = getWebGPUX();
+  webgpuX.clearBufferPool();
 }
 
 /**
  * Evict old unused buffers from the pool
  */
 export function evictOldBuffers(): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.evictBuffers();
+  const webgpuX = getWebGPUX();
+  webgpuX.evictBuffers();
 }
 
 // ============================================================================
@@ -148,8 +148,8 @@ export function evictOldBuffers(): void {
  * @returns Aligned size
  */
 export function calculateAlignedSize(size: bigint, alignment: bigint): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.bufferCalculateAlignedSize(size, alignment);
+  const webgpuX = getWebGPUX();
+  return webgpuX.bufferCalculateAlignedSize(size, alignment);
 }
 
 /**
@@ -159,8 +159,8 @@ export function calculateAlignedSize(size: bigint, alignment: bigint): bigint {
  * @returns Required alignment (4 or 256 bytes)
  */
 export function getBufferAlignment(usage: number): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.bufferGetAlignment(usage);
+  const webgpuX = getWebGPUX();
+  return webgpuX.bufferGetAlignment(usage);
 }
 
 // ============================================================================
@@ -176,12 +176,12 @@ export function getBufferAlignment(usage: number): bigint {
  * @returns Total buffer size with row padding
  */
 export function calculateTextureBufferSize(
-    width: number,
-    height: number,
-    bytesPerPixel: number
+  width: number,
+  height: number,
+  bytesPerPixel: number,
 ): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.bufferCalculateTextureBufferSize(width, height, bytesPerPixel);
+  const webgpuX = getWebGPUX();
+  return webgpuX.bufferCalculateTextureBufferSize(width, height, bytesPerPixel);
 }
 
 /**
@@ -191,8 +191,8 @@ export function calculateTextureBufferSize(
  * @returns Padding bytes needed for 256-byte alignment
  */
 export function getRowPadding(rowSize: bigint): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.bufferGetRowPadding(rowSize);
+  const webgpuX = getWebGPUX();
+  return webgpuX.bufferGetRowPadding(rowSize);
 }
 
 /**
@@ -202,9 +202,9 @@ export function getRowPadding(rowSize: bigint): bigint {
  * @returns Padded row size (aligned to 256 bytes)
  */
 export function getPaddedRowSize(rowSize: bigint): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.bufferGetPaddedRowSize(rowSize);
+  const webgpuX = getWebGPUX();
+  return webgpuX.bufferGetPaddedRowSize(rowSize);
 }
 
 // Re-export types
-export type { StagingWrite, StagingBeltStats };
+export type { StagingBeltStats, StagingWrite };

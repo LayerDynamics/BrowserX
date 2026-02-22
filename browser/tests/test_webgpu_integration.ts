@@ -3,14 +3,14 @@
  */
 
 import {
-    detectGPUVendor,
-    getVendorName,
-    isNVIDIA,
-    getOptimalWorkgroupSize,
-    detectPlatform,
-    Platform,
-    isAppleSilicon,
-    getSystemInfo,
+  detectGPUVendor,
+  detectPlatform,
+  getOptimalWorkgroupSize,
+  getSystemInfo,
+  getVendorName,
+  isAppleSilicon,
+  isNVIDIA,
+  Platform,
 } from "./src/engine/webgpu/mod.ts";
 
 console.log("=== WebGPU Integration Test ===\n");
@@ -34,7 +34,7 @@ console.log("Platform Detection:");
 const platform = detectPlatform();
 console.log(`  Platform: ${platform}`);
 if (platform === Platform.Darwin) {
-    console.log(`  Apple Silicon: ${isAppleSilicon()}`);
+  console.log(`  Apple Silicon: ${isAppleSilicon()}`);
 }
 console.log();
 
@@ -44,10 +44,10 @@ const systemInfo = getSystemInfo();
 console.log(`  Platform: ${systemInfo.platform}`);
 console.log(`  Version: ${systemInfo.version}`);
 if (systemInfo.preferredBackend) {
-    console.log(`  Preferred Backend: ${systemInfo.preferredBackend}`);
+  console.log(`  Preferred Backend: ${systemInfo.preferredBackend}`);
 }
 if (systemInfo.memoryStrategy) {
-    console.log(`  Memory Strategy: ${systemInfo.memoryStrategy}`);
+  console.log(`  Memory Strategy: ${systemInfo.memoryStrategy}`);
 }
 console.log();
 

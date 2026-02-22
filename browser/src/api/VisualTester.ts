@@ -226,7 +226,9 @@ export class VisualTester {
     } finally {
       // Restore hidden elements - use the stored display values
       for (const hidden of hiddenElements) {
-        await this.page.evaluate(`document.querySelector('${hidden.selector}').style.display = '${hidden.originalDisplay}'`);
+        await this.page.evaluate(
+          `document.querySelector('${hidden.selector}').style.display = '${hidden.originalDisplay}'`,
+        );
       }
     }
 
@@ -236,7 +238,8 @@ export class VisualTester {
     // Get dimensions from the screenshot (simplified - would need image parsing)
     // Using clip dimensions if provided, otherwise default viewport
     const width = config.clip?.width || defaultViewportSize.width;
-    const height = config.clip?.height || (config.fullPage ? defaultViewportSize.height * 2 : defaultViewportSize.height);
+    const height = config.clip?.height ||
+      (config.fullPage ? defaultViewportSize.height * 2 : defaultViewportSize.height);
 
     return {
       data: base64,
@@ -250,7 +253,10 @@ export class VisualTester {
   /**
    * Take a screenshot of a specific element
    */
-  async screenshotElement(selector: string, config: Omit<ScreenshotConfig, "selector"> = {}): Promise<ScreenshotResult> {
+  async screenshotElement(
+    selector: string,
+    config: Omit<ScreenshotConfig, "selector"> = {},
+  ): Promise<ScreenshotResult> {
     return this.screenshot({ ...config, selector });
   }
 
@@ -260,7 +266,7 @@ export class VisualTester {
   async compare(
     image1: string | Uint8Array,
     image2: string | Uint8Array,
-    options: ComparisonOptions = {}
+    options: ComparisonOptions = {},
   ): Promise<ComparisonResult> {
     const threshold = options.threshold ?? 0.1;
 
@@ -268,36 +274,57 @@ export class VisualTester {
     const data1 = typeof image1 === "string" ? this.base64ToArrayBuffer(image1) : image1;
     const data2 = typeof image2 === "string" ? this.base64ToArrayBuffer(image2) : image2;
 
-    // Simplified comparison - in real implementation, this would decode images and compare pixels
-    // For now, we do a byte-level comparison
-    const sameDimensions = data1.length === data2.length;
+    // Decode PNG images to raw RGBA pixels for accurate comparison
+    const decoded1 = await this.decodePNGToRGBA(data1);
+    const decoded2 = await this.decodePNGToRGBA(data2);
 
-    let diffCount = 0;
-    const minLength = Math.min(data1.length, data2.length);
+    const sameDimensions = decoded1.width === decoded2.width && decoded1.height === decoded2.height;
+    const width = Math.max(decoded1.width, decoded2.width);
+    const height = Math.max(decoded1.height, decoded2.height);
+    const totalPixels = width * height;
 
-    for (let i = 0; i < minLength; i++) {
-      if (Math.abs(data1[i] - data2[i]) > threshold * 255) {
-        diffCount++;
+    // Compare decoded RGBA pixels
+    let diffPixelCount = 0;
+    const thresholdValue = threshold * 255;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i1 = (y * decoded1.width + x) * 4;
+        const i2 = (y * decoded2.width + x) * 4;
+
+        // Out-of-bounds pixels count as different
+        if (
+          x >= decoded1.width || y >= decoded1.height ||
+          x >= decoded2.width || y >= decoded2.height
+        ) {
+          diffPixelCount++;
+          continue;
+        }
+
+        // Compare RGBA channels
+        const dr = Math.abs(decoded1.pixels[i1] - decoded2.pixels[i2]);
+        const dg = Math.abs(decoded1.pixels[i1 + 1] - decoded2.pixels[i2 + 1]);
+        const db = Math.abs(decoded1.pixels[i1 + 2] - decoded2.pixels[i2 + 2]);
+        const da = Math.abs(decoded1.pixels[i1 + 3] - decoded2.pixels[i2 + 3]);
+
+        if (
+          dr > thresholdValue || dg > thresholdValue ||
+          db > thresholdValue || da > thresholdValue
+        ) {
+          diffPixelCount++;
+        }
       }
     }
 
-    // Add remaining bytes as differences
-    diffCount += Math.abs(data1.length - data2.length);
-
-    const totalPixels = Math.max(data1.length, data2.length) / 4; // Assuming RGBA
-    const diffPixelCount = Math.ceil(diffCount / 4);
-    const diffPercentage = (diffPixelCount / totalPixels) * 100;
+    const diffPercentage = totalPixels > 0 ? (diffPixelCount / totalPixels) * 100 : 0;
 
     return {
       match: diffPercentage <= threshold * 100,
       diffPercentage,
       diffPixelCount,
-      totalPixels: Math.floor(totalPixels),
+      totalPixels,
       sameDimensions,
-      dimensions: {
-        width: 0, // Would need image decoding to get actual dimensions
-        height: 0,
-      },
+      dimensions: { width, height },
     };
   }
 
@@ -307,7 +334,7 @@ export class VisualTester {
   async compareWithBaseline(
     baselineName: string,
     config: ScreenshotConfig = {},
-    options: ComparisonOptions = {}
+    options: ComparisonOptions = {},
   ): Promise<ComparisonResult & { baselineExists: boolean }> {
     const baseline = this.baselineSnapshots.get(baselineName);
 
@@ -338,7 +365,7 @@ export class VisualTester {
   async saveBaseline(
     name: string,
     config: ScreenshotConfig = {},
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
   ): Promise<SnapshotMetadata> {
     const screenshot = await this.screenshot(config);
     // Default viewport size (standard desktop) - BrowserPage doesn't expose viewport
@@ -378,7 +405,7 @@ export class VisualTester {
    * List all stored baseline snapshots
    */
   listBaselines(): SnapshotMetadata[] {
-    return Array.from(this.baselineSnapshots.values()).map(b => b.metadata);
+    return Array.from(this.baselineSnapshots.values()).map((b) => b.metadata);
   }
 
   /**
@@ -411,8 +438,7 @@ export class VisualTester {
     const rect = await this.getElementBoundingBox(element);
 
     // Determine visibility
-    const isVisible =
-      display !== "none" &&
+    const isVisible = display !== "none" &&
       visibility !== "hidden" &&
       (opacity === null || opacity > 0) &&
       rect !== null &&
@@ -467,7 +493,7 @@ export class VisualTester {
       minHeight?: number;
       maxHeight?: number;
     },
-    tolerance: number = 1
+    tolerance: number = 1,
   ): Promise<LayoutCheckResult> {
     const elements = await this.page.query(selector);
 
@@ -540,7 +566,7 @@ export class VisualTester {
     selector1: string,
     selector2: string,
     relationship: "above" | "below" | "left" | "right" | "overlapping" | "adjacent",
-    tolerance: number = 1
+    tolerance: number = 1,
   ): Promise<{ passed: boolean; details: string }> {
     const elements1 = await this.page.query(selector1);
     const elements2 = await this.page.query(selector2);
@@ -567,25 +593,33 @@ export class VisualTester {
         passed = rect1.y + rect1.height <= rect2.y + tolerance;
         details = passed
           ? `${selector1} is above ${selector2}`
-          : `${selector1} bottom (${rect1.y + rect1.height}) is not above ${selector2} top (${rect2.y})`;
+          : `${selector1} bottom (${
+            rect1.y + rect1.height
+          }) is not above ${selector2} top (${rect2.y})`;
         break;
       case "below":
         passed = rect1.y >= rect2.y + rect2.height - tolerance;
         details = passed
           ? `${selector1} is below ${selector2}`
-          : `${selector1} top (${rect1.y}) is not below ${selector2} bottom (${rect2.y + rect2.height})`;
+          : `${selector1} top (${rect1.y}) is not below ${selector2} bottom (${
+            rect2.y + rect2.height
+          })`;
         break;
       case "left":
         passed = rect1.x + rect1.width <= rect2.x + tolerance;
         details = passed
           ? `${selector1} is left of ${selector2}`
-          : `${selector1} right (${rect1.x + rect1.width}) is not left of ${selector2} left (${rect2.x})`;
+          : `${selector1} right (${
+            rect1.x + rect1.width
+          }) is not left of ${selector2} left (${rect2.x})`;
         break;
       case "right":
         passed = rect1.x >= rect2.x + rect2.width - tolerance;
         details = passed
           ? `${selector1} is right of ${selector2}`
-          : `${selector1} left (${rect1.x}) is not right of ${selector2} right (${rect2.x + rect2.width})`;
+          : `${selector1} left (${rect1.x}) is not right of ${selector2} right (${
+            rect2.x + rect2.width
+          })`;
         break;
       case "overlapping":
         passed = !(
@@ -599,11 +633,9 @@ export class VisualTester {
           : `${selector1} does not overlap with ${selector2}`;
         break;
       case "adjacent":
-        const horizontallyAdjacent =
-          Math.abs(rect1.x + rect1.width - rect2.x) <= tolerance ||
+        const horizontallyAdjacent = Math.abs(rect1.x + rect1.width - rect2.x) <= tolerance ||
           Math.abs(rect2.x + rect2.width - rect1.x) <= tolerance;
-        const verticallyAdjacent =
-          Math.abs(rect1.y + rect1.height - rect2.y) <= tolerance ||
+        const verticallyAdjacent = Math.abs(rect1.y + rect1.height - rect2.y) <= tolerance ||
           Math.abs(rect2.y + rect2.height - rect1.y) <= tolerance;
         passed = horizontallyAdjacent || verticallyAdjacent;
         details = passed
@@ -618,7 +650,10 @@ export class VisualTester {
   /**
    * Wait for visual stability (no more layout changes)
    */
-  async waitForVisualStability(timeout: number = 5000, checkInterval: number = 100): Promise<boolean> {
+  async waitForVisualStability(
+    timeout: number = 5000,
+    checkInterval: number = 100,
+  ): Promise<boolean> {
     let previousScreenshot: string | null = null;
     const startTime = Date.now();
 
@@ -646,7 +681,7 @@ export class VisualTester {
    * Get element bounding box
    */
   private async getElementBoundingBox(
-    element: DOMElement
+    element: DOMElement,
   ): Promise<{ x: number; y: number; width: number; height: number } | null> {
     try {
       // Get bounding rect properties
@@ -695,7 +730,218 @@ export class VisualTester {
    * Sleep utility
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Decode PNG file bytes to raw RGBA pixel data.
+   * Parses PNG chunks, decompresses IDAT, applies scanline filters,
+   * converts all color types to RGBA.
+   */
+  private async decodePNGToRGBA(pngData: Uint8Array): Promise<{
+    pixels: Uint8Array;
+    width: number;
+    height: number;
+  }> {
+    const empty = { pixels: new Uint8Array(0), width: 0, height: 0 };
+
+    // Validate PNG signature
+    if (
+      pngData.length < 8 || pngData[0] !== 0x89 || pngData[1] !== 0x50 ||
+      pngData[2] !== 0x4E || pngData[3] !== 0x47
+    ) {
+      // Not PNG — treat raw bytes as RGBA
+      const totalPixels = Math.floor(pngData.length / 4);
+      const side = Math.ceil(Math.sqrt(totalPixels));
+      return { pixels: pngData, width: side, height: side };
+    }
+
+    // Parse chunks
+    let offset = 8;
+    let width = 0, height = 0, bitDepth = 0, colorType = 0;
+    let palette: Uint8Array | null = null;
+    const idatChunks: Uint8Array[] = [];
+
+    while (offset + 8 <= pngData.length) {
+      const chunkLen = (pngData[offset] << 24) | (pngData[offset + 1] << 16) |
+        (pngData[offset + 2] << 8) | pngData[offset + 3];
+      const chunkType = String.fromCharCode(
+        pngData[offset + 4],
+        pngData[offset + 5],
+        pngData[offset + 6],
+        pngData[offset + 7],
+      );
+      const dataStart = offset + 8;
+
+      if (chunkType === "IHDR") {
+        width = (pngData[dataStart] << 24) | (pngData[dataStart + 1] << 16) |
+          (pngData[dataStart + 2] << 8) | pngData[dataStart + 3];
+        height = (pngData[dataStart + 4] << 24) | (pngData[dataStart + 5] << 16) |
+          (pngData[dataStart + 6] << 8) | pngData[dataStart + 7];
+        bitDepth = pngData[dataStart + 8];
+        colorType = pngData[dataStart + 9];
+      } else if (chunkType === "PLTE") {
+        palette = pngData.slice(dataStart, dataStart + chunkLen);
+      } else if (chunkType === "IDAT") {
+        idatChunks.push(pngData.slice(dataStart, dataStart + chunkLen));
+      } else if (chunkType === "IEND") {
+        break;
+      }
+      offset = dataStart + chunkLen + 4; // +4 for CRC
+    }
+
+    if (width === 0 || height === 0 || idatChunks.length === 0) return empty;
+
+    // Concatenate and decompress IDAT
+    const totalLen = idatChunks.reduce((s, c) => s + c.length, 0);
+    const compressed = new Uint8Array(totalLen);
+    let pos = 0;
+    for (const chunk of idatChunks) {
+      compressed.set(chunk, pos);
+      pos += chunk.length;
+    }
+
+    let decompressed: Uint8Array;
+    try {
+      const ds = new DecompressionStream("deflate");
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      const writeP = writer.write(compressed).then(() => writer.close());
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      await writeP;
+      const dLen = chunks.reduce((s, c) => s + c.length, 0);
+      decompressed = new Uint8Array(dLen);
+      let dPos = 0;
+      for (const c of chunks) {
+        decompressed.set(c, dPos);
+        dPos += c.length;
+      }
+    } catch {
+      return empty;
+    }
+
+    // Bytes per pixel
+    const bpp = this.pngBytesPerPixel(colorType, bitDepth);
+    const scanlineBytes = width * bpp;
+
+    // Apply scanline filters
+    const filtered = new Uint8Array(height * scanlineBytes);
+    const stride = scanlineBytes + 1;
+
+    for (let y = 0; y < height; y++) {
+      const filterByte = decompressed[y * stride];
+      const srcOff = y * stride + 1;
+      const dstOff = y * scanlineBytes;
+      const priorOff = (y - 1) * scanlineBytes;
+
+      for (let x = 0; x < scanlineBytes; x++) {
+        const raw = decompressed[srcOff + x];
+        const a = x >= bpp ? filtered[dstOff + x - bpp] : 0;
+        const b = y > 0 ? filtered[priorOff + x] : 0;
+        const c = (x >= bpp && y > 0) ? filtered[priorOff + x - bpp] : 0;
+
+        let v: number;
+        switch (filterByte) {
+          case 0:
+            v = raw;
+            break;
+          case 1:
+            v = (raw + a) & 0xFF;
+            break;
+          case 2:
+            v = (raw + b) & 0xFF;
+            break;
+          case 3:
+            v = (raw + Math.floor((a + b) / 2)) & 0xFF;
+            break;
+          case 4: {
+            const p = a + b - c;
+            const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+            const pr = (pa <= pb && pa <= pc) ? a : (pb <= pc) ? b : c;
+            v = (raw + pr) & 0xFF;
+            break;
+          }
+          default:
+            v = raw;
+        }
+        filtered[dstOff + x] = v;
+      }
+    }
+
+    // Convert to RGBA
+    const rgba = new Uint8Array(width * height * 4);
+    const totalPixels = width * height;
+
+    switch (colorType) {
+      case 0: // Grayscale
+        for (let i = 0; i < totalPixels; i++) {
+          const g = filtered[i];
+          rgba[i * 4] = g;
+          rgba[i * 4 + 1] = g;
+          rgba[i * 4 + 2] = g;
+          rgba[i * 4 + 3] = 255;
+        }
+        break;
+      case 2: // RGB
+        for (let i = 0; i < totalPixels; i++) {
+          rgba[i * 4] = filtered[i * 3];
+          rgba[i * 4 + 1] = filtered[i * 3 + 1];
+          rgba[i * 4 + 2] = filtered[i * 3 + 2];
+          rgba[i * 4 + 3] = 255;
+        }
+        break;
+      case 3: // Indexed
+        if (palette) {
+          for (let i = 0; i < totalPixels; i++) {
+            const idx = filtered[i] * 3;
+            rgba[i * 4] = palette[idx];
+            rgba[i * 4 + 1] = palette[idx + 1];
+            rgba[i * 4 + 2] = palette[idx + 2];
+            rgba[i * 4 + 3] = 255;
+          }
+        }
+        break;
+      case 4: // Grayscale + Alpha
+        for (let i = 0; i < totalPixels; i++) {
+          const g = filtered[i * 2];
+          rgba[i * 4] = g;
+          rgba[i * 4 + 1] = g;
+          rgba[i * 4 + 2] = g;
+          rgba[i * 4 + 3] = filtered[i * 2 + 1];
+        }
+        break;
+      case 6: // RGBA
+        rgba.set(filtered.slice(0, totalPixels * 4));
+        break;
+    }
+
+    return { pixels: rgba, width, height };
+  }
+
+  /**
+   * Bytes per pixel for PNG color type
+   */
+  private pngBytesPerPixel(colorType: number, bitDepth: number): number {
+    const cb = Math.max(1, bitDepth / 8);
+    switch (colorType) {
+      case 0:
+        return cb;
+      case 2:
+        return cb * 3;
+      case 3:
+        return 1;
+      case 4:
+        return cb * 2;
+      case 6:
+        return cb * 4;
+      default:
+        return cb * 4;
+    }
   }
 }
 

@@ -16,7 +16,7 @@ console.log("=".repeat(60));
 
 // Create browser instance to access storage systems
 const browser = new Browser({
-    enableStorage: true,
+  enableStorage: true,
 });
 
 // 1. Storage Manager (localStorage and sessionStorage)
@@ -61,34 +61,34 @@ const cookieManager = browser.getCookieManager();
 
 // Set cookies
 cookieManager.setCookie(origin, {
-    name: "session",
-    value: "xyz789",
-    domain: "example.com",
-    path: "/",
-    secure: true,
-    httpOnly: true,
-    sameSite: "Strict",
-    expires: new Date(Date.now() + 86400000), // 24 hours
+  name: "session",
+  value: "xyz789",
+  domain: "example.com",
+  path: "/",
+  secure: true,
+  httpOnly: true,
+  sameSite: "Strict",
+  expires: new Date(Date.now() + 86400000), // 24 hours
 });
 console.log(`✓ Set session cookie`);
 
 cookieManager.setCookie(origin, {
-    name: "preferences",
-    value: JSON.stringify({ theme: "dark", lang: "en" }),
-    domain: "example.com",
-    path: "/",
-    secure: true,
-    sameSite: "Lax",
-    expires: new Date(Date.now() + 2592000000), // 30 days
+  name: "preferences",
+  value: JSON.stringify({ theme: "dark", lang: "en" }),
+  domain: "example.com",
+  path: "/",
+  secure: true,
+  sameSite: "Lax",
+  expires: new Date(Date.now() + 2592000000), // 30 days
 });
 console.log(`✓ Set preferences cookie`);
 
 cookieManager.setCookie(origin, {
-    name: "tracking",
-    value: "disabled",
-    domain: "example.com",
-    path: "/",
-    expires: new Date(Date.now() + 31536000000), // 1 year
+  name: "tracking",
+  value: "disabled",
+  domain: "example.com",
+  path: "/",
+  expires: new Date(Date.now() + 31536000000), // 1 year
 });
 console.log(`✓ Set tracking cookie`);
 
@@ -96,9 +96,9 @@ console.log(`✓ Set tracking cookie`);
 const cookies = cookieManager.getCookies(origin);
 console.log(`✓ Retrieved ${cookies.length} cookies for ${origin}:`);
 for (const cookie of cookies) {
-    console.log(`  ${cookie.name}=${cookie.value}`);
-    console.log(`    domain: ${cookie.domain}, path: ${cookie.path}`);
-    console.log(`    secure: ${cookie.secure}, httpOnly: ${cookie.httpOnly}`);
+  console.log(`  ${cookie.name}=${cookie.value}`);
+  console.log(`    domain: ${cookie.domain}, path: ${cookie.path}`);
+  console.log(`    secure: ${cookie.secure}, httpOnly: ${cookie.httpOnly}`);
 }
 
 // Get cookie string (for HTTP requests)
@@ -137,10 +137,10 @@ console.log(`  Usage: ${originQuota.usage} bytes`);
 
 // Request quota (simulated)
 try {
-    const granted = quotaManager.requestQuota(origin, 10 * 1024 * 1024); // 10MB
-    console.log(`✓ Requested 10MB quota: ${granted ? "granted" : "denied"}`);
+  const granted = quotaManager.requestQuota(origin, 10 * 1024 * 1024); // 10MB
+  console.log(`✓ Requested 10MB quota: ${granted ? "granted" : "denied"}`);
 } catch (error) {
-    console.log(`Quota request failed: ${error}`);
+  console.log(`Quota request failed: ${error}`);
 }
 
 // 4. IndexedDB
@@ -153,74 +153,74 @@ console.log(`✓ Got IndexedDB instance`);
 const openRequest = idb.open("exampleDB", 1);
 
 openRequest.onupgradeneeded = (event: any) => {
-    const db = event.target.result;
+  const db = event.target.result;
 
-    // Create object store
-    const objectStore = db.createObjectStore("users", { keyPath: "id", autoIncrement: true });
+  // Create object store
+  const objectStore = db.createObjectStore("users", { keyPath: "id", autoIncrement: true });
 
-    // Create indexes
-    objectStore.createIndex("email", "email", { unique: true });
-    objectStore.createIndex("name", "name", { unique: false });
+  // Create indexes
+  objectStore.createIndex("email", "email", { unique: true });
+  objectStore.createIndex("name", "name", { unique: false });
 
-    console.log(`✓ Created object store with indexes`);
+  console.log(`✓ Created object store with indexes`);
 };
 
 openRequest.onsuccess = (event: any) => {
-    const db = event.target.result;
-    console.log(`✓ Opened database: ${db.name} (version ${db.version})`);
+  const db = event.target.result;
+  console.log(`✓ Opened database: ${db.name} (version ${db.version})`);
 
-    // Start transaction
-    const transaction = db.transaction(["users"], "readwrite");
-    const objectStore = transaction.objectStore("users");
+  // Start transaction
+  const transaction = db.transaction(["users"], "readwrite");
+  const objectStore = transaction.objectStore("users");
 
-    // Add data
-    const user1 = objectStore.add({
-        name: "Alice",
-        email: "alice@example.com",
-        age: 30,
-    });
+  // Add data
+  const user1 = objectStore.add({
+    name: "Alice",
+    email: "alice@example.com",
+    age: 30,
+  });
 
-    const user2 = objectStore.add({
-        name: "Bob",
-        email: "bob@example.com",
-        age: 25,
-    });
+  const user2 = objectStore.add({
+    name: "Bob",
+    email: "bob@example.com",
+    age: 25,
+  });
 
-    user1.onsuccess = () => console.log(`✓ Added user: Alice`);
-    user2.onsuccess = () => console.log(`✓ Added user: Bob`);
+  user1.onsuccess = () => console.log(`✓ Added user: Alice`);
+  user2.onsuccess = () => console.log(`✓ Added user: Bob`);
 
-    transaction.oncomplete = () => {
-        console.log(`✓ Transaction completed`);
+  transaction.oncomplete = () => {
+    console.log(`✓ Transaction completed`);
 
-        // Read data
-        const readTransaction = db.transaction(["users"], "readonly");
-        const readStore = readTransaction.objectStore("users");
+    // Read data
+    const readTransaction = db.transaction(["users"], "readonly");
+    const readStore = readTransaction.objectStore("users");
 
-        const getAllRequest = readStore.getAll();
-        getAllRequest.onsuccess = () => {
-            const users = getAllRequest.result;
-            console.log(`✓ Retrieved ${users.length} users from database`);
-            for (const user of users) {
-                console.log(`  ${user.name} (${user.email}), age ${user.age}`);
-            }
-        };
-
-        // Query by index
-        const index = readStore.index("email");
-        const getByEmailRequest = index.get("alice@example.com");
-        getByEmailRequest.onsuccess = () => {
-            const user = getByEmailRequest.result;
-            if (user) {
-                console.log(`✓ Found user by email: ${user.name}`);
-            }
-        };
-
-        db.close();
+    const getAllRequest = readStore.getAll();
+    getAllRequest.onsuccess = () => {
+      const users = getAllRequest.result;
+      console.log(`✓ Retrieved ${users.length} users from database`);
+      for (const user of users) {
+        console.log(`  ${user.name} (${user.email}), age ${user.age}`);
+      }
     };
+
+    // Query by index
+    const index = readStore.index("email");
+    const getByEmailRequest = index.get("alice@example.com");
+    getByEmailRequest.onsuccess = () => {
+      const user = getByEmailRequest.result;
+      if (user) {
+        console.log(`✓ Found user by email: ${user.name}`);
+      }
+    };
+
+    db.close();
+  };
 };
 
 openRequest.onerror = (event: any) => {
-    console.error(`IndexedDB error:`, event.target.error);
+  console.error(`IndexedDB error:`, event.target.error);
 };
 
 // Wait a bit for IDB operations to complete
@@ -238,36 +238,36 @@ console.log(`✓ Opened cache: api-cache`);
 
 // Put request/response in cache (simulated)
 const request = {
-    id: "req-1" as any,
-    method: "GET" as any,
-    url: "https://example.com/api/data" as any,
-    version: "1.1" as any,
-    headers: new Map([["accept", "application/json"]]),
-    createdAt: Date.now(),
+  id: "req-1" as any,
+  method: "GET" as any,
+  url: "https://example.com/api/data" as any,
+  version: "1.1" as any,
+  headers: new Map([["accept", "application/json"]]),
+  createdAt: Date.now(),
 };
 
 const response = {
-    id: "req-1" as any,
-    statusCode: 200,
-    statusText: "OK",
-    version: "1.1" as any,
-    headers: new Map([
-        ["content-type", "application/json"],
-        ["cache-control", "max-age=3600"],
-    ]),
-    body: new TextEncoder().encode(JSON.stringify({ data: "example" })),
-    receivedAt: Date.now(),
-    fromCache: false,
-    timings: {
-        dnsStart: 0,
-        dnsEnd: 0,
-        connectStart: 0,
-        connectEnd: 0,
-        requestStart: 0,
-        responseStart: 0,
-        responseEnd: 0,
-        duration: 0,
-    },
+  id: "req-1" as any,
+  statusCode: 200,
+  statusText: "OK",
+  version: "1.1" as any,
+  headers: new Map([
+    ["content-type", "application/json"],
+    ["cache-control", "max-age=3600"],
+  ]),
+  body: new TextEncoder().encode(JSON.stringify({ data: "example" })),
+  receivedAt: Date.now(),
+  fromCache: false,
+  timings: {
+    dnsStart: 0,
+    dnsEnd: 0,
+    connectStart: 0,
+    connectEnd: 0,
+    requestStart: 0,
+    responseStart: 0,
+    responseEnd: 0,
+    duration: 0,
+  },
 };
 
 await cache.put(request, response);
@@ -276,8 +276,8 @@ console.log(`✓ Cached API response`);
 // Match from cache
 const cachedResponse = await cache.match(request);
 if (cachedResponse) {
-    console.log(`✓ Retrieved response from cache`);
-    console.log(`  Status: ${cachedResponse.statusCode}`);
+  console.log(`✓ Retrieved response from cache`);
+  console.log(`  Status: ${cachedResponse.statusCode}`);
 }
 
 // List all caches
@@ -291,7 +291,9 @@ const finalStats = browser.getStats();
 console.log(`Storage statistics:`);
 console.log(`  Cookies: ${finalStats.storage.cookies}`);
 console.log(`  Origins with data: ${finalStats.storage.origins.length}`);
-console.log(`  Global quota used: ${finalStats.storage.quota.usage} / ${finalStats.storage.quota.quota} bytes`);
+console.log(
+  `  Global quota used: ${finalStats.storage.quota.usage} / ${finalStats.storage.quota.quota} bytes`,
+);
 
 // Cleanup
 console.log("\n7. Cleanup...");

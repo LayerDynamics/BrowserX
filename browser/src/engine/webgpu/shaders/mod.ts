@@ -206,30 +206,30 @@ fn fs_main_multiply(input: VertexOutput) -> @location(0) vec4<f32> {
  * Compositor shader entry points for different blend modes.
  */
 export const CompositorEntryPoints = {
-    /** Standard vertex shader entry point */
-    vertex: "vs_main",
+  /** Standard vertex shader entry point */
+  vertex: "vs_main",
 
-    /** Fragment shader for premultiplied alpha (default) */
-    fragmentPremultiplied: "fs_main",
+  /** Fragment shader for premultiplied alpha (default) */
+  fragmentPremultiplied: "fs_main",
 
-    /** Fragment shader for straight (non-premultiplied) alpha */
-    fragmentStraightAlpha: "fs_main_straight_alpha",
+  /** Fragment shader for straight (non-premultiplied) alpha */
+  fragmentStraightAlpha: "fs_main_straight_alpha",
 
-    /** Fragment shader for additive blending */
-    fragmentAdditive: "fs_main_additive",
+  /** Fragment shader for additive blending */
+  fragmentAdditive: "fs_main_additive",
 
-    /** Fragment shader for multiply blending */
-    fragmentMultiply: "fs_main_multiply",
+  /** Fragment shader for multiply blending */
+  fragmentMultiply: "fs_main_multiply",
 } as const;
 
 /**
  * Type for compositor fragment entry points
  */
 export type CompositorFragmentEntryPoint =
-    | typeof CompositorEntryPoints.fragmentPremultiplied
-    | typeof CompositorEntryPoints.fragmentStraightAlpha
-    | typeof CompositorEntryPoints.fragmentAdditive
-    | typeof CompositorEntryPoints.fragmentMultiply;
+  | typeof CompositorEntryPoints.fragmentPremultiplied
+  | typeof CompositorEntryPoints.fragmentStraightAlpha
+  | typeof CompositorEntryPoints.fragmentAdditive
+  | typeof CompositorEntryPoints.fragmentMultiply;
 
 // ============================================================================
 // Uniform Buffer Layout
@@ -240,14 +240,14 @@ export type CompositorFragmentEntryPoint =
  * Use for writing individual uniform values to the buffer.
  */
 export const CompositorUniformOffsets = {
-    /** Offset of transform matrix (mat4x4<f32>) */
-    transform: 0,
-    /** Offset of opacity value (f32) */
-    opacity: 64,
-    /** Offset of padding (vec3<f32>) - internal use only */
-    _padding: 68,
-    /** Total size of uniform buffer in bytes */
-    totalSize: 80,
+  /** Offset of transform matrix (mat4x4<f32>) */
+  transform: 0,
+  /** Offset of opacity value (f32) */
+  opacity: 64,
+  /** Offset of padding (vec3<f32>) - internal use only */
+  _padding: 68,
+  /** Total size of uniform buffer in bytes */
+  totalSize: 80,
 } as const;
 
 /**
@@ -255,12 +255,12 @@ export const CompositorUniformOffsets = {
  * Describes the interleaved vertex data format.
  */
 export const CompositorVertexLayout = {
-    /** Stride between vertices in bytes (position: vec2 + texcoord: vec2) */
-    stride: 16,
-    /** Position attribute offset in bytes */
-    positionOffset: 0,
-    /** Texcoord attribute offset in bytes */
-    texcoordOffset: 8,
+  /** Stride between vertices in bytes (position: vec2 + texcoord: vec2) */
+  stride: 16,
+  /** Position attribute offset in bytes */
+  positionOffset: 0,
+  /** Texcoord attribute offset in bytes */
+  texcoordOffset: 8,
 } as const;
 
 // ============================================================================
@@ -275,13 +275,13 @@ export const CompositorVertexLayout = {
  * @returns GPUShaderModule
  */
 export function createCompositorShaderModule(
-    device: GPUDevice,
-    label = "compositor-shader"
+  device: GPUDevice,
+  label = "compositor-shader",
 ): GPUShaderModule {
-    return device.createShaderModule({
-        label,
-        code: COMPOSITOR_SHADER,
-    });
+  return device.createShaderModule({
+    label,
+    code: COMPOSITOR_SHADER,
+  });
 }
 
 /**
@@ -292,14 +292,14 @@ export function createCompositorShaderModule(
  * @returns GPUBuffer configured for compositor uniforms
  */
 export function createCompositorUniformBuffer(
-    device: GPUDevice,
-    label = "compositor-uniforms"
+  device: GPUDevice,
+  label = "compositor-uniforms",
 ): GPUBuffer {
-    return device.createBuffer({
-        label,
-        size: CompositorUniformOffsets.totalSize,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+  return device.createBuffer({
+    label,
+    size: CompositorUniformOffsets.totalSize,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
 }
 
 /**
@@ -311,26 +311,26 @@ export function createCompositorUniformBuffer(
  * @param opacity - Layer opacity (0.0 to 1.0)
  */
 export function writeCompositorUniforms(
-    device: GPUDevice,
-    buffer: GPUBuffer,
-    transform: Float32Array,
-    opacity: number
+  device: GPUDevice,
+  buffer: GPUBuffer,
+  transform: Float32Array,
+  opacity: number,
 ): void {
-    // Create uniform data array
-    // Layout: mat4x4 (16 floats) + opacity (1 float) + padding (3 floats) = 20 floats
-    const data = new Float32Array(20);
+  // Create uniform data array
+  // Layout: mat4x4 (16 floats) + opacity (1 float) + padding (3 floats) = 20 floats
+  const data = new Float32Array(20);
 
-    // Write transform matrix (floats 0-15)
-    data.set(transform, 0);
+  // Write transform matrix (floats 0-15)
+  data.set(transform, 0);
 
-    // Write opacity (float 16)
-    data[16] = opacity;
+  // Write opacity (float 16)
+  data[16] = opacity;
 
-    // Padding is zero-initialized (floats 17-19)
+  // Padding is zero-initialized (floats 17-19)
 
-    // Write to GPU buffer
-    // Cast to BufferSource for TypeScript compatibility with Deno's stricter types
-    device.queue.writeBuffer(buffer, 0, data as unknown as BufferSource);
+  // Write to GPU buffer
+  // Cast to BufferSource for TypeScript compatibility with Deno's stricter types
+  device.queue.writeBuffer(buffer, 0, data as unknown as BufferSource);
 }
 
 /**
@@ -339,12 +339,24 @@ export function writeCompositorUniforms(
  * @returns Float32Array containing 4x4 identity matrix
  */
 export function createIdentityTransform(): Float32Array {
-    return new Float32Array([
-        1, 0, 0, 0, // Column 0
-        0, 1, 0, 0, // Column 1
-        0, 0, 1, 0, // Column 2
-        0, 0, 0, 1, // Column 3
-    ]);
+  return new Float32Array([
+    1,
+    0,
+    0,
+    0, // Column 0
+    0,
+    1,
+    0,
+    0, // Column 1
+    0,
+    0,
+    1,
+    0, // Column 2
+    0,
+    0,
+    0,
+    1, // Column 3
+  ]);
 }
 
 /**
@@ -355,12 +367,24 @@ export function createIdentityTransform(): Float32Array {
  * @returns Float32Array containing 4x4 translation matrix
  */
 export function createTranslationTransform(x: number, y: number): Float32Array {
-    return new Float32Array([
-        1, 0, 0, 0, // Column 0
-        0, 1, 0, 0, // Column 1
-        0, 0, 1, 0, // Column 2
-        x, y, 0, 1, // Column 3
-    ]);
+  return new Float32Array([
+    1,
+    0,
+    0,
+    0, // Column 0
+    0,
+    1,
+    0,
+    0, // Column 1
+    0,
+    0,
+    1,
+    0, // Column 2
+    x,
+    y,
+    0,
+    1, // Column 3
+  ]);
 }
 
 /**
@@ -371,12 +395,24 @@ export function createTranslationTransform(x: number, y: number): Float32Array {
  * @returns Float32Array containing 4x4 scale matrix
  */
 export function createScaleTransform(scaleX: number, scaleY: number): Float32Array {
-    return new Float32Array([
-        scaleX, 0, 0, 0, // Column 0
-        0, scaleY, 0, 0, // Column 1
-        0, 0, 1, 0, // Column 2
-        0, 0, 0, 1, // Column 3
-    ]);
+  return new Float32Array([
+    scaleX,
+    0,
+    0,
+    0, // Column 0
+    0,
+    scaleY,
+    0,
+    0, // Column 1
+    0,
+    0,
+    1,
+    0, // Column 2
+    0,
+    0,
+    0,
+    1, // Column 3
+  ]);
 }
 
 /**
@@ -387,38 +423,38 @@ export function createScaleTransform(scaleX: number, scaleY: number): Float32Arr
  * @returns GPUBindGroupLayout for compositor pipeline
  */
 export function createCompositorBindGroupLayout(
-    device: GPUDevice,
-    label = "compositor-bind-group-layout"
+  device: GPUDevice,
+  label = "compositor-bind-group-layout",
 ): GPUBindGroupLayout {
-    return device.createBindGroupLayout({
-        label,
-        entries: [
-            {
-                // Uniforms
-                binding: 0,
-                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-                buffer: {
-                    type: "uniform" as GPUBufferBindingType,
-                },
-            },
-            {
-                // Layer texture
-                binding: 1,
-                visibility: GPUShaderStage.FRAGMENT,
-                texture: {
-                    sampleType: "float" as GPUTextureSampleType,
-                },
-            },
-            {
-                // Sampler
-                binding: 2,
-                visibility: GPUShaderStage.FRAGMENT,
-                sampler: {
-                    type: "filtering" as GPUSamplerBindingType,
-                },
-            },
-        ],
-    });
+  return device.createBindGroupLayout({
+    label,
+    entries: [
+      {
+        // Uniforms
+        binding: 0,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+        buffer: {
+          type: "uniform" as GPUBufferBindingType,
+        },
+      },
+      {
+        // Layer texture
+        binding: 1,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: {
+          sampleType: "float" as GPUTextureSampleType,
+        },
+      },
+      {
+        // Sampler
+        binding: 2,
+        visibility: GPUShaderStage.FRAGMENT,
+        sampler: {
+          type: "filtering" as GPUSamplerBindingType,
+        },
+      },
+    ],
+  });
 }
 
 /**
@@ -433,33 +469,33 @@ export function createCompositorBindGroupLayout(
  * @returns GPUBindGroup for compositor rendering
  */
 export function createCompositorBindGroup(
-    device: GPUDevice,
-    layout: GPUBindGroupLayout,
-    uniformBuffer: GPUBuffer,
-    textureView: GPUTextureView,
-    sampler: GPUSampler,
-    label = "compositor-bind-group"
+  device: GPUDevice,
+  layout: GPUBindGroupLayout,
+  uniformBuffer: GPUBuffer,
+  textureView: GPUTextureView,
+  sampler: GPUSampler,
+  label = "compositor-bind-group",
 ): GPUBindGroup {
-    return device.createBindGroup({
-        label,
-        layout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: uniformBuffer,
-                },
-            },
-            {
-                binding: 1,
-                resource: textureView,
-            },
-            {
-                binding: 2,
-                resource: sampler,
-            },
-        ],
-    });
+  return device.createBindGroup({
+    label,
+    layout,
+    entries: [
+      {
+        binding: 0,
+        resource: {
+          buffer: uniformBuffer,
+        },
+      },
+      {
+        binding: 1,
+        resource: textureView,
+      },
+      {
+        binding: 2,
+        resource: sampler,
+      },
+    ],
+  });
 }
 
 // ============================================================================
@@ -473,19 +509,37 @@ export function createCompositorBindGroup(
  * @returns Float32Array with 6 vertices (2 triangles)
  */
 export function createFullScreenQuadVertices(): Float32Array {
-    // Two triangles forming a full-screen quad
-    // Each vertex: position.x, position.y, texcoord.u, texcoord.v
-    return new Float32Array([
-        // Triangle 1
-        -1.0, -1.0, 0.0, 1.0, // Bottom-left
-        1.0, -1.0, 1.0, 1.0, // Bottom-right
-        -1.0, 1.0, 0.0, 0.0, // Top-left
+  // Two triangles forming a full-screen quad
+  // Each vertex: position.x, position.y, texcoord.u, texcoord.v
+  return new Float32Array([
+    // Triangle 1
+    -1.0,
+    -1.0,
+    0.0,
+    1.0, // Bottom-left
+    1.0,
+    -1.0,
+    1.0,
+    1.0, // Bottom-right
+    -1.0,
+    1.0,
+    0.0,
+    0.0, // Top-left
 
-        // Triangle 2
-        -1.0, 1.0, 0.0, 0.0, // Top-left
-        1.0, -1.0, 1.0, 1.0, // Bottom-right
-        1.0, 1.0, 1.0, 0.0, // Top-right
-    ]);
+    // Triangle 2
+    -1.0,
+    1.0,
+    0.0,
+    0.0, // Top-left
+    1.0,
+    -1.0,
+    1.0,
+    1.0, // Bottom-right
+    1.0,
+    1.0,
+    1.0,
+    0.0, // Top-right
+  ]);
 }
 
 /**
@@ -496,19 +550,19 @@ export function createFullScreenQuadVertices(): Float32Array {
  * @returns GPUBuffer containing quad vertex data
  */
 export function createFullScreenQuadBuffer(
-    device: GPUDevice,
-    label = "compositor-quad-vertices"
+  device: GPUDevice,
+  label = "compositor-quad-vertices",
 ): GPUBuffer {
-    const vertices = createFullScreenQuadVertices();
+  const vertices = createFullScreenQuadVertices();
 
-    const buffer = device.createBuffer({
-        label,
-        size: vertices.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
+  const buffer = device.createBuffer({
+    label,
+    size: vertices.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
 
-    // Cast to BufferSource for TypeScript compatibility with Deno's stricter types
-    device.queue.writeBuffer(buffer, 0, vertices as unknown as BufferSource);
+  // Cast to BufferSource for TypeScript compatibility with Deno's stricter types
+  device.queue.writeBuffer(buffer, 0, vertices as unknown as BufferSource);
 
-    return buffer;
+  return buffer;
 }

@@ -12,11 +12,11 @@
 // ============================================================================
 
 export {
-    WebGPUEngine,
-    WebGPUEngineState,
-    type WebGPUEngineConfig,
-    type WebGPUEngineStatistics,
-    WebGPUEngineError,
+  WebGPUEngine,
+  type WebGPUEngineConfig,
+  WebGPUEngineError,
+  WebGPUEngineState,
+  type WebGPUEngineStatistics,
 } from "./WebGPU.ts";
 
 // ============================================================================
@@ -24,51 +24,44 @@ export {
 // ============================================================================
 
 export type {
-    GPUDeviceID,
-    GPUBufferID,
-    GPUTextureID,
-    GPURenderPipelineID,
-    GPUComputePipelineID,
-    GPUBindGroupID,
-    GPUShaderModuleID,
-    GPUCommandBufferID,
-    GPUCommandEncoderID,
-    GPURenderPassID,
-    GPUComputePassID,
-    PipelineID,
-    GPUSize,
-    GPUIndex,
-    Timestamp,
-    Duration,
-    Nanoseconds,
-    ByteCount,
-    Pixels,
+  ByteCount,
+  Duration,
+  GPUBindGroupID,
+  GPUBufferID,
+  GPUCommandBufferID,
+  GPUCommandEncoderID,
+  GPUComputePassID,
+  GPUComputePipelineID,
+  GPUDeviceID,
+  GPUIndex,
+  GPURenderPassID,
+  GPURenderPipelineID,
+  GPUShaderModuleID,
+  GPUSize,
+  GPUTextureID,
+  Nanoseconds,
+  PipelineID,
+  Pixels,
+  Timestamp,
 } from "../../types/webgpu.ts";
 
 // LayerID from types
 export type { LayerID } from "../../types/webgpu.ts";
 
 export {
-    GPUDeviceState,
-    GPUBufferState,
-    GPUBufferUsageFlags,
-    GPUVendor,
+  GPUBufferState,
+  GPUBufferUsageFlags,
+  GPUDeviceState,
+  GPUVendor,
 } from "../../types/webgpu.ts";
 
 // ============================================================================
 // Device and Driver
 // ============================================================================
 
-export {
-    WebGPUDevice,
-    type DeviceConfig,
-} from "./adapter/Device.ts";
+export { type DeviceConfig, WebGPUDevice } from "./adapter/Device.ts";
 
-export {
-    WebGPUDriver,
-    DriverState,
-    type DriverConfig,
-} from "./driver/mod.ts";
+export { type DriverConfig, DriverState, WebGPUDriver } from "./driver/mod.ts";
 
 // ============================================================================
 // Buffer Management
@@ -81,12 +74,12 @@ export * from "./buffer/mod.ts";
 // ============================================================================
 
 export {
-    MemoryManager,
-    BufferPool,
-    MemoryAllocator,
-    type BufferPoolConfig,
-    type BufferPoolStatistics,
-    type StagingRingConfig,
+  BufferPool,
+  type BufferPoolConfig,
+  type BufferPoolStatistics,
+  MemoryAllocator,
+  MemoryManager,
+  type StagingRingConfig,
 } from "./memory/mod.ts";
 
 // ============================================================================
@@ -94,18 +87,19 @@ export {
 // ============================================================================
 
 export {
-    PipelineManager,
-    RenderPipelineManager,
-    ComputePipelineManager,
-    type RenderPipelineDescriptor,
-    type ComputePipelineDescriptor,
-    type PipelineManagerConfig,
+  type ComputePipelineDescriptor,
+  ComputePipelineManager,
+  PipelineManager,
+  type PipelineManagerConfig,
+  type PipelineResult,
+  type RenderPipelineDescriptor,
+  RenderPipelineManager,
 } from "./pipelines/mod.ts";
 
 export {
-    CompositingPipeline,
-    type CompositingPipelineConfig,
-    type CompositingUniforms,
+  CompositingPipeline,
+  type CompositingPipelineConfig,
+  type CompositingUniforms,
 } from "./pipelines/CompositingPipeline.ts";
 
 // ============================================================================
@@ -113,22 +107,22 @@ export {
 // ============================================================================
 
 export {
-    WebGPUCompositorThread,
-    CompositorState,
-    BlendMode,
-    type CompositorConfig,
-    type LayerDescriptor,
-    type Transform,
-    type DamageRect,
-    type FrameTiming,
-    type CompositorStatistics,
+  BlendMode,
+  type CompositorConfig,
+  CompositorState,
+  type CompositorStatistics,
+  type DamageRect,
+  type FrameTiming,
+  type LayerDescriptor,
+  type Transform,
+  WebGPUCompositorThread,
 } from "./compositor/WebGPUCompositorThread.ts";
 
 export {
-    WebGPUCompositorLayer,
-    LayerState,
-    LayerType,
-    type LayerConfig,
+  type LayerConfig,
+  LayerState,
+  LayerType,
+  WebGPUCompositorLayer,
 } from "./compositor/WebGPUCompositorLayer.ts";
 
 // ============================================================================
@@ -136,9 +130,9 @@ export {
 // ============================================================================
 
 export {
-    WebGPUCanvasContext,
-    CanvasState,
-    type CanvasContextConfig,
+  type CanvasContextConfig,
+  CanvasState,
+  WebGPUCanvasContext,
 } from "./canvas/CanvasContext.ts";
 
 // ============================================================================
@@ -146,9 +140,9 @@ export {
 // ============================================================================
 
 export {
-    WebGPUTextureManager,
-    type TextureDescriptor,
-    type SamplerDescriptor,
+  type SamplerDescriptor,
+  type TextureDescriptor,
+  WebGPUTextureManager,
 } from "./operations/render/TextureManager.ts";
 
 // ============================================================================
@@ -156,43 +150,41 @@ export {
 // ============================================================================
 
 export {
-    ComputePipeline,
-    type WorkgroupDimensions,
-    type DispatchDimensions,
-    type ComputeConfig,
-    type BufferBinding,
-    type TextureBinding,
-    type SamplerBinding,
-    type BindGroupResources,
-    type ComputePassConfig,
-    type ComputeStatistics,
-    ComputePipelineError,
+  type BindGroupResources,
+  type BufferBinding,
+  type ComputeConfig,
+  type ComputePassConfig,
+  ComputePipeline,
+  ComputePipelineError,
+  type ComputeStatistics,
+  type DispatchDimensions,
+  type SamplerBinding,
+  type TextureBinding,
+  type WorkgroupDimensions,
 } from "./operations/compute/mod.ts";
 
 // ============================================================================
 // Command Encoding
 // ============================================================================
 
-export {
-    WebGPUCommandEncoder,
-} from "./encoder/mod.ts";
+export { WebGPUCommandEncoder } from "./encoder/mod.ts";
 
 // ============================================================================
 // Errors
 // ============================================================================
 
 export {
-    WebGPUError,
-    GPUDeviceError,
-    GPUDeviceInitializationError,
-    GPUDeviceLostError,
-    GPUValidationError,
-    GPUBufferError,
-    GPUBufferMapError,
-    GPUBufferUsageError,
-    GPUBufferStateError,
-    GPUPipelineError,
-    GPUMemoryError,
+  GPUBufferError,
+  GPUBufferMapError,
+  GPUBufferStateError,
+  GPUBufferUsageError,
+  GPUDeviceError,
+  GPUDeviceInitializationError,
+  GPUDeviceLostError,
+  GPUMemoryError,
+  GPUPipelineError,
+  GPUValidationError,
+  WebGPUError,
 } from "./errors.ts";
 
 // ============================================================================
@@ -201,15 +193,15 @@ export {
 
 // GPU Type Detection
 export {
-    detectGPUVendor,
-    getVendorName,
-    isNVIDIA,
-    isAMD,
-    isIntel,
-    isApple,
-    getOptimalWorkgroupSize,
-    getOptimalWorkgroupSizeForDevice,
-    getVendorFeatures,
+  detectGPUVendor,
+  getOptimalWorkgroupSize,
+  getOptimalWorkgroupSizeForDevice,
+  getVendorFeatures,
+  getVendorName,
+  isAMD,
+  isApple,
+  isIntel,
+  isNVIDIA,
 } from "./utils/DetectGPUType.ts";
 
 // Re-export webgpu_x GPUVendor with alias to avoid conflict with types/webgpu.ts GPUVendor
@@ -217,47 +209,47 @@ export { GPUVendor as WebGPUXVendor } from "./utils/DetectGPUType.ts";
 
 // System Detection
 export {
-    Platform,
-    MetalFamily,
-    ROCmArchitecture,
-    detectPlatform,
-    isDarwin,
-    isLinux,
-    isWindows,
-    isAppleSilicon,
-    darwinPreferredBackend,
-    darwinRecommendedMemoryStrategy,
-    linuxIsArm,
-    linuxGetCpuCount,
-    linuxGetPageSize,
-    linuxGetTotalMemory,
-    linuxHasNvidiaDriver,
-    linuxHasRocmDriver,
-    linuxHasIntelGpu,
-    linuxPreferredBackend,
-    linuxRecommendedMemoryStrategy,
-    windowsIsArm,
-    windowsGetLogicalProcessorCount,
-    windowsGetPageSize,
-    windowsHasNvidiaDriver,
-    windowsHasAmdDriver,
-    windowsHasIntelDriver,
-    windowsHasDx12,
-    windowsPreferredBackend,
-    windowsRecommendedMemoryStrategy,
-    getMetalCapabilities,
-    getROCmCapabilities,
-    calculateROCmOccupancy,
-    getCUDACapabilities,
-    calculateCUDAOccupancy,
-    vulkanOptimalWorkgroupSize,
-    vulkanSupportsVersion,
-    vulkanSupportsRaytracing,
-    vulkanRecommendedDescriptorSets,
-    openclOptimalWorkgroupSize,
-    openclSupportsVersion,
-    openclSupportsFp64,
-    getSystemInfo,
+  calculateCUDAOccupancy,
+  calculateROCmOccupancy,
+  darwinPreferredBackend,
+  darwinRecommendedMemoryStrategy,
+  detectPlatform,
+  getCUDACapabilities,
+  getMetalCapabilities,
+  getROCmCapabilities,
+  getSystemInfo,
+  isAppleSilicon,
+  isDarwin,
+  isLinux,
+  isWindows,
+  linuxGetCpuCount,
+  linuxGetPageSize,
+  linuxGetTotalMemory,
+  linuxHasIntelGpu,
+  linuxHasNvidiaDriver,
+  linuxHasRocmDriver,
+  linuxIsArm,
+  linuxPreferredBackend,
+  linuxRecommendedMemoryStrategy,
+  MetalFamily,
+  openclOptimalWorkgroupSize,
+  openclSupportsFp64,
+  openclSupportsVersion,
+  Platform,
+  ROCmArchitecture,
+  vulkanOptimalWorkgroupSize,
+  vulkanRecommendedDescriptorSets,
+  vulkanSupportsRaytracing,
+  vulkanSupportsVersion,
+  windowsGetLogicalProcessorCount,
+  windowsGetPageSize,
+  windowsHasAmdDriver,
+  windowsHasDx12,
+  windowsHasIntelDriver,
+  windowsHasNvidiaDriver,
+  windowsIsArm,
+  windowsPreferredBackend,
+  windowsRecommendedMemoryStrategy,
 } from "./utils/DetectSystem.ts";
 
 // ============================================================================
@@ -265,18 +257,18 @@ export {
 // ============================================================================
 
 export {
-    createStagingBelt,
-    stagingBeltWrite,
-    stagingBeltFinish,
-    stagingBeltStats,
-    destroyStagingBelt,
-    calculateAlignedSize,
-    getBufferAlignment,
-    calculateTextureBufferSize,
-    getRowPadding,
-    getPaddedRowSize,
-    type StagingWrite,
-    type StagingBeltStats,
+  calculateAlignedSize,
+  calculateTextureBufferSize,
+  createStagingBelt,
+  destroyStagingBelt,
+  getBufferAlignment,
+  getPaddedRowSize,
+  getRowPadding,
+  stagingBeltFinish,
+  type StagingBeltStats,
+  stagingBeltStats,
+  stagingBeltWrite,
+  type StagingWrite,
 } from "./utils/BufferHelpers.ts";
 
 // ============================================================================
@@ -284,11 +276,11 @@ export {
 // ============================================================================
 
 export {
-    calculateMipLevels,
-    getMipSize,
-    getMipSize3D,
-    type MipSize,
-    type MipSize3D,
+  calculateMipLevels,
+  getMipSize,
+  getMipSize3D,
+  type MipSize,
+  type MipSize3D,
 } from "./utils/TextureHelpers.ts";
 
 // ============================================================================
@@ -296,18 +288,18 @@ export {
 // ============================================================================
 
 export {
-    createShaderCache,
-    loadShader,
-    hasShaderChanged,
-    clearShaderCache,
-    getShaderCacheStats,
-    destroyShaderCache,
-    wgslBindingBuffer,
-    wgslBindingTexture,
-    wgslBindingSampler,
-    wgslComputeEntry,
-    type ShaderCacheStats,
-    type ShaderSource,
+  clearShaderCache,
+  createShaderCache,
+  destroyShaderCache,
+  getShaderCacheStats,
+  hasShaderChanged,
+  loadShader,
+  type ShaderCacheStats,
+  type ShaderSource,
+  wgslBindingBuffer,
+  wgslBindingSampler,
+  wgslBindingTexture,
+  wgslComputeEntry,
 } from "./utils/ShaderHelpers.ts";
 
 // ============================================================================
@@ -315,13 +307,13 @@ export {
 // ============================================================================
 
 export {
-    generateKernel,
-    generateAddKernel,
-    generateMatMulKernel,
-    generateConv2DKernel,
-    generateReluKernel,
-    generateSoftmaxKernel,
-    KernelOperation,
+  generateAddKernel,
+  generateConv2DKernel,
+  generateKernel,
+  generateMatMulKernel,
+  generateReluKernel,
+  generateSoftmaxKernel,
+  KernelOperation,
 } from "./utils/ComputeKernels.ts";
 
 // ============================================================================
@@ -329,17 +321,17 @@ export {
 // ============================================================================
 
 export {
-    createTensor,
-    tensorSizeBytes,
-    tensorRank,
-    tensorTotalElements,
-    tensorReshape,
-    tensorTranspose2D,
-    tensorView,
-    tensorIsContiguous,
-    TensorDType,
-    TensorAccess,
-    type TensorMeta,
+  createTensor,
+  TensorAccess,
+  TensorDType,
+  tensorIsContiguous,
+  type TensorMeta,
+  tensorRank,
+  tensorReshape,
+  tensorSizeBytes,
+  tensorTotalElements,
+  tensorTranspose2D,
+  tensorView,
 } from "./utils/TensorHelpers.ts";
 
 // ============================================================================
@@ -347,13 +339,13 @@ export {
 // ============================================================================
 
 export {
-    getDefaultDeviceConfig,
-    getOpenGLToWGPUMatrix,
-    createPerspectiveMatrix,
-    createOrthographicMatrix,
-    createViewMatrix,
-    createModelMatrix,
-    type DeviceConfig as WebGPUXDeviceConfig,
+  createModelMatrix,
+  createOrthographicMatrix,
+  createPerspectiveMatrix,
+  createViewMatrix,
+  type DeviceConfig as WebGPUXDeviceConfig,
+  getDefaultDeviceConfig,
+  getOpenGLToWGPUMatrix,
 } from "./utils/FrameworkHelpers.ts";
 
 // ============================================================================
@@ -361,12 +353,12 @@ export {
 // ============================================================================
 
 export {
-    OffscreenWebGPU,
-    OffscreenWebGPUState,
-    OffscreenWebGPUError,
-    OffscreenDeviceLostError,
-    type OffscreenWebGPUConfig,
-    type OffscreenWebGPUStatistics,
+  OffscreenDeviceLostError,
+  OffscreenWebGPU,
+  type OffscreenWebGPUConfig,
+  OffscreenWebGPUError,
+  OffscreenWebGPUState,
+  type OffscreenWebGPUStatistics,
 } from "./offscreen/mod.ts";
 
 // ============================================================================
@@ -374,26 +366,23 @@ export {
 // ============================================================================
 
 export {
-    // Shader sources
-    COMPOSITOR_SHADER,
-    CompositorEntryPoints,
-    type CompositorFragmentEntryPoint,
-
-    // Uniform buffer layout
-    CompositorUniformOffsets,
-    CompositorVertexLayout,
-
-    // Helper functions
-    createCompositorShaderModule,
-    createCompositorUniformBuffer,
-    writeCompositorUniforms,
-    createIdentityTransform,
-    createTranslationTransform,
-    createScaleTransform,
-    createCompositorBindGroupLayout,
-    createCompositorBindGroup,
-
-    // Vertex data
-    createFullScreenQuadVertices,
-    createFullScreenQuadBuffer,
+  // Shader sources
+  COMPOSITOR_SHADER,
+  CompositorEntryPoints,
+  type CompositorFragmentEntryPoint,
+  // Uniform buffer layout
+  CompositorUniformOffsets,
+  CompositorVertexLayout,
+  createCompositorBindGroup,
+  createCompositorBindGroupLayout,
+  // Helper functions
+  createCompositorShaderModule,
+  createCompositorUniformBuffer,
+  createFullScreenQuadBuffer,
+  // Vertex data
+  createFullScreenQuadVertices,
+  createIdentityTransform,
+  createScaleTransform,
+  createTranslationTransform,
+  writeCompositorUniforms,
 } from "./shaders/mod.ts";

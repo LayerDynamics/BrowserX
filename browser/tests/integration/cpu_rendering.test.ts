@@ -47,7 +47,7 @@ Deno.test({
     // At least some pixels should not be white (255,255,255,255)
     let nonWhitePixels = 0;
     for (let i = 0; i < pixels.length; i += 4) {
-      if (pixels[i] !== 255 || pixels[i+1] !== 255 || pixels[i+2] !== 255) {
+      if (pixels[i] !== 255 || pixels[i + 1] !== 255 || pixels[i + 2] !== 255) {
         nonWhitePixels++;
       }
     }
@@ -196,8 +196,8 @@ Deno.test({
     let coloredPixels = 0;
     for (let i = 0; i < pixels.length; i += 4) {
       const r = pixels[i];
-      const g = pixels[i+1];
-      const b = pixels[i+2];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
 
       // Count non-white pixels (approximate)
       if (r < 250 || g < 250 || b < 250) {
@@ -261,7 +261,7 @@ Deno.test({
       assertEquals(
         (error as Error).message.includes("no render tree set"),
         true,
-        "Should fail with 'no render tree set' error"
+        "Should fail with 'no render tree set' error",
       );
     }
 

@@ -9,15 +9,15 @@
  * @module webgpu/utils/FrameworkHelpers
  */
 
-import { WebGPUX, type DeviceConfig } from "@browserx/webgpu_x";
+import { type DeviceConfig, WebGPUX } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 
 function getWebGPUX(): WebGPUX {
-    if (!webgpuXInstance) {
-        webgpuXInstance = new WebGPUX();
-    }
-    return webgpuXInstance;
+  if (!webgpuXInstance) {
+    webgpuXInstance = new WebGPUX();
+  }
+  return webgpuXInstance;
 }
 
 // ============================================================================
@@ -30,8 +30,8 @@ function getWebGPUX(): WebGPUX {
  * @returns Default device config with common features and limits
  */
 export function getDefaultDeviceConfig(): DeviceConfig | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.frameworkDeviceConfigDefault();
+  const webgpuX = getWebGPUX();
+  return webgpuX.frameworkDeviceConfigDefault();
 }
 
 // ============================================================================
@@ -44,8 +44,8 @@ export function getDefaultDeviceConfig(): DeviceConfig | null {
  * @returns 4x4 transformation matrix (column-major, 16 elements)
  */
 export function getOpenGLToWGPUMatrix(): Float32Array | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.frameworkMatrixOpenGLToWGPU();
+  const webgpuX = getWebGPUX();
+  return webgpuX.frameworkMatrixOpenGLToWGPU();
 }
 
 /**
@@ -58,13 +58,13 @@ export function getOpenGLToWGPUMatrix(): Float32Array | null {
  * @returns 4x4 perspective matrix (column-major)
  */
 export function createPerspectiveMatrix(
-    fovY: number,
-    aspect: number,
-    near: number,
-    far: number
+  fovY: number,
+  aspect: number,
+  near: number,
+  far: number,
 ): Float32Array | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.frameworkMatrixPerspective(fovY, aspect, near, far);
+  const webgpuX = getWebGPUX();
+  return webgpuX.frameworkMatrixPerspective(fovY, aspect, near, far);
 }
 
 /**
@@ -79,15 +79,15 @@ export function createPerspectiveMatrix(
  * @returns 4x4 orthographic matrix (column-major)
  */
 export function createOrthographicMatrix(
-    left: number,
-    right: number,
-    bottom: number,
-    top: number,
-    near: number,
-    far: number
+  left: number,
+  right: number,
+  bottom: number,
+  top: number,
+  near: number,
+  far: number,
 ): Float32Array | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.frameworkMatrixOrthographic(left, right, bottom, top, near, far);
+  const webgpuX = getWebGPUX();
+  return webgpuX.frameworkMatrixOrthographic(left, right, bottom, top, near, far);
 }
 
 /**
@@ -99,12 +99,12 @@ export function createOrthographicMatrix(
  * @returns 4x4 view matrix (column-major)
  */
 export function createViewMatrix(
-    eye: [number, number, number],
-    target: [number, number, number],
-    up: [number, number, number]
+  eye: [number, number, number],
+  target: [number, number, number],
+  up: [number, number, number],
 ): Float32Array | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.frameworkMatrixView(eye, target, up);
+  const webgpuX = getWebGPUX();
+  return webgpuX.frameworkMatrixView(eye, target, up);
 }
 
 /**
@@ -116,12 +116,12 @@ export function createViewMatrix(
  * @returns 4x4 model matrix (column-major)
  */
 export function createModelMatrix(
-    translation: [number, number, number],
-    rotation: [number, number, number],
-    scale: [number, number, number]
+  translation: [number, number, number],
+  rotation: [number, number, number],
+  scale: [number, number, number],
 ): Float32Array | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.frameworkMatrixModel(translation, rotation, scale);
+  const webgpuX = getWebGPUX();
+  return webgpuX.frameworkMatrixModel(translation, rotation, scale);
 }
 
 // Re-export types

@@ -17,9 +17,9 @@ console.log("=".repeat(60));
 
 // Create a standalone rendering pipeline
 const pipeline = new RenderingPipeline({
-    width: 1024,
-    height: 768,
-    enableJavaScript: false, // Disable JS for this example
+  width: 1024,
+  height: 768,
+  enableJavaScript: false, // Disable JS for this example
 });
 
 // Example 1: Render a simple page
@@ -39,13 +39,13 @@ console.log(`  Total: ${result.timing.total}ms`);
 // Example 2: Access DOM tree
 console.log("\n2. Inspecting DOM:");
 function countNodes(node: any): number {
-    let count = 1;
-    if (node.childNodes) {
-        for (const child of node.childNodes) {
-            count += countNodes(child);
-        }
+  let count = 1;
+  if (node.childNodes) {
+    for (const child of node.childNodes) {
+      count += countNodes(child);
     }
-    return count;
+  }
+  return count;
 }
 
 const domNodeCount = countNodes(result.dom);
@@ -80,7 +80,11 @@ console.log(`Compositor - layers: ${compositorStats.layerCount}`);
 // Example 6: Resources loaded
 console.log("\n6. Resources loaded:");
 for (const resource of result.resources) {
-    console.log(`  ${resource.type}: ${resource.url} (${resource.size} bytes, ${resource.cached ? "cached" : "fetched"})`);
+  console.log(
+    `  ${resource.type}: ${resource.url} (${resource.size} bytes, ${
+      resource.cached ? "cached" : "fetched"
+    })`,
+  );
 }
 
 // Example 7: Pipeline statistics

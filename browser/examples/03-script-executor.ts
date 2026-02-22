@@ -11,7 +11,7 @@
 
 import { ScriptExecutor } from "../src/engine/javascript/ScriptExecutor.ts";
 import { DOMNodeType } from "../src/types/dom.ts";
-import type { DOMNode, DOMElement } from "../src/types/dom.ts";
+import type { DOMElement, DOMNode } from "../src/types/dom.ts";
 
 console.log("=".repeat(60));
 console.log("Example 3: Script Executor - JavaScript Engine");
@@ -19,63 +19,63 @@ console.log("=".repeat(60));
 
 // Create a simple DOM structure for testing
 const document: DOMNode = {
-    id: "doc-1" as any,
-    nodeType: DOMNodeType.DOCUMENT,
-    nodeName: "#document",
-    nodeValue: null,
-    parentNode: null,
-    childNodes: [],
-    appendChild(child: DOMNode) {
-        this.childNodes.push(child);
-        child.parentNode = this;
-        return child;
-    },
-    removeChild(child: DOMNode) {
-        const index = this.childNodes.indexOf(child);
-        if (index !== -1) {
-            this.childNodes.splice(index, 1);
-            child.parentNode = null;
-        }
-        return child;
-    },
-    insertBefore(newChild: DOMNode, refChild: DOMNode | null) {
-        if (!refChild) {
-            return this.appendChild(newChild);
-        }
-        const index = this.childNodes.indexOf(refChild);
-        if (index !== -1) {
-            this.childNodes.splice(index, 0, newChild);
-            newChild.parentNode = this;
-        }
-        return newChild;
-    },
-    replaceChild(newChild: DOMNode, oldChild: DOMNode) {
-        const index = this.childNodes.indexOf(oldChild);
-        if (index !== -1) {
-            this.childNodes[index] = newChild;
-            newChild.parentNode = this;
-            oldChild.parentNode = null;
-        }
-        return oldChild;
-    },
-    cloneNode() {
-        return { ...this };
-    },
-    contains() {
-        return false;
-    },
-    get firstChild() {
-        return this.childNodes[0] || null;
-    },
-    get lastChild() {
-        return this.childNodes[this.childNodes.length - 1] || null;
-    },
-    get nextSibling() {
-        return null;
-    },
-    get previousSibling() {
-        return null;
-    },
+  id: "doc-1" as any,
+  nodeType: DOMNodeType.DOCUMENT,
+  nodeName: "#document",
+  nodeValue: null,
+  parentNode: null,
+  childNodes: [],
+  appendChild(child: DOMNode) {
+    this.childNodes.push(child);
+    child.parentNode = this;
+    return child;
+  },
+  removeChild(child: DOMNode) {
+    const index = this.childNodes.indexOf(child);
+    if (index !== -1) {
+      this.childNodes.splice(index, 1);
+      child.parentNode = null;
+    }
+    return child;
+  },
+  insertBefore(newChild: DOMNode, refChild: DOMNode | null) {
+    if (!refChild) {
+      return this.appendChild(newChild);
+    }
+    const index = this.childNodes.indexOf(refChild);
+    if (index !== -1) {
+      this.childNodes.splice(index, 0, newChild);
+      newChild.parentNode = this;
+    }
+    return newChild;
+  },
+  replaceChild(newChild: DOMNode, oldChild: DOMNode) {
+    const index = this.childNodes.indexOf(oldChild);
+    if (index !== -1) {
+      this.childNodes[index] = newChild;
+      newChild.parentNode = this;
+      oldChild.parentNode = null;
+    }
+    return oldChild;
+  },
+  cloneNode() {
+    return { ...this };
+  },
+  contains() {
+    return false;
+  },
+  get firstChild() {
+    return this.childNodes[0] || null;
+  },
+  get lastChild() {
+    return this.childNodes[this.childNodes.length - 1] || null;
+  },
+  get nextSibling() {
+    return null;
+  },
+  get previousSibling() {
+    return null;
+  },
 };
 
 // Create script executor
@@ -122,9 +122,12 @@ console.log(`Window object available`);
 
 // Example 4: Execute async code
 console.log("\n4. Executing async code:");
-const result3 = await executor.execute(`
+const result3 = await executor.execute(
+  `
     Promise.resolve(42)
-`, { async: true });
+`,
+  { async: true },
+);
 console.log(`Async result: ${result3.value}`);
 
 // Example 5: Evaluate expressions

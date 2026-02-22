@@ -145,7 +145,7 @@ const OPTIMAL_WORKGROUP_SIZES: Record<GPUVendor, number> = {
 export function getOptimalWorkgroupSize(
   problemSize: number,
   maxWorkgroupSize: number,
-  vendorId: number
+  vendorId: number,
 ): number {
   const vendor = detectGPUVendor(vendorId);
   const preferredSize = OPTIMAL_WORKGROUP_SIZES[vendor];

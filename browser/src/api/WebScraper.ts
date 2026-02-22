@@ -275,7 +275,7 @@ export class WebScraper {
    */
   private async extractFromElement(
     element: DOMElement,
-    rules: ExtractionRule[]
+    rules: ExtractionRule[],
   ): Promise<Record<string, unknown>> {
     const result: Record<string, unknown> = {};
 
@@ -299,7 +299,7 @@ export class WebScraper {
    */
   private async extractByRule(
     rootElement: DOMElement,
-    rule: ExtractionRule
+    rule: ExtractionRule,
   ): Promise<unknown> {
     // Query elements within the root context
     // Use rootElement to validate context and filter appropriately
@@ -309,13 +309,11 @@ export class WebScraper {
     // This ensures scoped extraction when a root selector is specified
     const rootTagName = await rootElement.getProperty("tagName") as string | null;
     const rootTag = rootTagName?.toLowerCase() || "html";
-    const filteredElements = rootTag === "html"
-      ? elements
-      : elements.filter(el => {
-          // Check if the element is contained within the root element
-          const root = rootElement.getInternalElement();
-          return root.contains(el.getInternalElement());
-        });
+    const filteredElements = rootTag === "html" ? elements : elements.filter((el) => {
+      // Check if the element is contained within the root element
+      const root = rootElement.getInternalElement();
+      return root.contains(el.getInternalElement());
+    });
 
     if (filteredElements.length === 0) {
       if (rule.required) {
@@ -408,7 +406,9 @@ export class WebScraper {
         }
       } else if (config.firstRowAsHeaders) {
         const firstRowSelector = config.rowSelector || "tr";
-        const firstRowCells = await this.page.query(`${config.selector} ${firstRowSelector}:first-child td, ${config.selector} ${firstRowSelector}:first-child th`);
+        const firstRowCells = await this.page.query(
+          `${config.selector} ${firstRowSelector}:first-child td, ${config.selector} ${firstRowSelector}:first-child th`,
+        );
         for (const cell of firstRowCells) {
           headers.push(await cell.getText());
         }
@@ -435,7 +435,9 @@ export class WebScraper {
           console.debug(`Row ${i} is a ${rowTag} element`);
         }
 
-        const cells = await this.page.query(`${config.selector} ${rowSelector}:nth-child(${i + 1}) ${cellSelector}`);
+        const cells = await this.page.query(
+          `${config.selector} ${rowSelector}:nth-child(${i + 1}) ${cellSelector}`,
+        );
         const rowData: Record<string, string> = {};
 
         for (let j = 0; j < cells.length; j++) {
@@ -677,7 +679,7 @@ export class WebScraper {
    */
   async scrapePaginated<T = Record<string, unknown>>(
     scrapeConfig: ScrapeConfig,
-    paginationConfig: PaginationConfig
+    paginationConfig: PaginationConfig,
   ): Promise<PaginatedScrapeResult<T>> {
     const allData: T[] = [];
     const urls: string[] = [];
@@ -721,7 +723,7 @@ export class WebScraper {
       try {
         const nextElements = await this.page.query(
           paginationConfig.nextSelector,
-          paginationConfig.selectorType || "css"
+          paginationConfig.selectorType || "css",
         );
 
         if (nextElements.length === 0) {
@@ -729,7 +731,10 @@ export class WebScraper {
         }
 
         // Click next button
-        await this.page.click(paginationConfig.nextSelector, paginationConfig.selectorType || "css");
+        await this.page.click(
+          paginationConfig.nextSelector,
+          paginationConfig.selectorType || "css",
+        );
 
         // Wait for navigation or content to load
         if (paginationConfig.waitForSelector) {

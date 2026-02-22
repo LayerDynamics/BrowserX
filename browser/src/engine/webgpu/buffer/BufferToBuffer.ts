@@ -13,30 +13,30 @@ import type { GPUSize } from "../../../types/webgpu.ts";
  * Buffer-to-buffer copy options
  */
 export interface BufferToBufferOptions {
-    /** Source offset in bytes */
-    sourceOffset?: GPUSize;
-    /** Destination offset in bytes */
-    destinationOffset?: GPUSize;
-    /** Number of bytes to copy */
-    size?: GPUSize;
+  /** Source offset in bytes */
+  sourceOffset?: GPUSize;
+  /** Destination offset in bytes */
+  destinationOffset?: GPUSize;
+  /** Number of bytes to copy */
+  size?: GPUSize;
 }
 
 /**
  * Copy data from one buffer to another
  */
 export function bufferToBuffer(
-    device: WebGPUDevice,
-    source: WebGPUBuffer,
-    destination: WebGPUBuffer,
-    options: BufferToBufferOptions = {}
+  device: WebGPUDevice,
+  source: WebGPUBuffer,
+  destination: WebGPUBuffer,
+  options: BufferToBufferOptions = {},
 ): void {
-    const size = options.size ?? source.size;
+  const size = options.size ?? source.size;
 
-    copyBufferToBuffer(device, {
-        source,
-        sourceOffset: options.sourceOffset,
-        destination,
-        destinationOffset: options.destinationOffset,
-        size,
-    });
+  copyBufferToBuffer(device, {
+    source,
+    sourceOffset: options.sourceOffset,
+    destination,
+    destinationOffset: options.destinationOffset,
+    size,
+  });
 }

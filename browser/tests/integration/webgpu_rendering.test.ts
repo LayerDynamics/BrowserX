@@ -46,7 +46,11 @@ Deno.test({
     const pixels = await offscreen.getPixels();
 
     // RGBA = 4 bytes per pixel
-    assertEquals(pixels.length, width * height * 4, "Pixel buffer should be width * height * 4 bytes");
+    assertEquals(
+      pixels.length,
+      width * height * 4,
+      "Pixel buffer should be width * height * 4 bytes",
+    );
 
     offscreen.dispose();
   },
@@ -98,16 +102,17 @@ Deno.test({
 
     // Create command encoder and clear to red
     const encoder = device.createCommandEncoder();
+    const colorAttachment = {
+      view: texture.createView(),
+      clearValue: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
+      loadOp: "clear" as const,
+      storeOp: "store" as const,
+    };
     const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view: texture.createView(),
-        clearValue: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
-        loadOp: "clear",
-        storeOp: "store",
-      }],
+      colorAttachments: Array.of(colorAttachment) as GPURenderPassColorAttachment[],
     });
     pass.end();
-    device.queue.submit([encoder.finish()]);
+    device.queue.submit(Array.of(encoder.finish()) as GPUCommandBuffer[]);
 
     // Read back pixels
     const pixels = await offscreen.getPixels();

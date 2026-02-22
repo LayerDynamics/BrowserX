@@ -5,16 +5,16 @@
  * table/list extraction, link/image extraction, and pagination.
  */
 
-import { assertEquals, assertExists, assert } from "@std/assert";
+import { assert, assertEquals, assertExists } from "@std/assert";
 import {
-  WebScraper,
+  ExtractedImage,
+  ExtractedLink,
   ExtractionRule,
-  ScrapeConfig,
-  TableConfig,
   ListConfig,
   PaginationConfig,
-  ExtractedLink,
-  ExtractedImage,
+  ScrapeConfig,
+  TableConfig,
+  WebScraper,
 } from "../../src/api/WebScraper.ts";
 import { BrowserPage, DOMElement } from "../../src/api/BrowserPage.ts";
 
@@ -32,7 +32,9 @@ function createMockPage(overrides: Partial<BrowserPage> = {}): BrowserPage {
     type: async (_selector: string, _text: string, _options?: { delay?: number }) => {},
     evaluate: async (_script: string) => ({}),
     getCurrentURL: () => "https://example.com",
-    wait: async (_options: { type: string; selector?: string; timeout?: number; duration?: number }) => {},
+    wait: async (
+      _options: { type: string; selector?: string; timeout?: number; duration?: number },
+    ) => {},
     navigate: async (_url: string, _options?: { waitFor?: string; timeout?: number }) => {},
     ...overrides,
   } as BrowserPage;
@@ -70,7 +72,7 @@ function createMockElement(
   textContent: string = "",
   attributes: Record<string, string | null> = {},
   properties: Record<string, unknown> = {},
-  internalElement?: MockInternalElement
+  internalElement?: MockInternalElement,
 ): DOMElement {
   const internal = internalElement ?? createMockInternalElement();
   return {
@@ -933,7 +935,7 @@ Deno.test({
     const scraper = new WebScraper(page);
     const result = await scraper.scrapePaginated(
       { rules: [{ name: "text", selector: ".item", extract: "text" }] },
-      { nextSelector: ".next" }
+      { nextSelector: ".next" },
     );
 
     assert(result.success);
@@ -963,7 +965,7 @@ Deno.test({
     const scraper = new WebScraper(page);
     const result = await scraper.scrapePaginated(
       { rules: [{ name: "text", selector: ".item", extract: "text" }] },
-      { nextSelector: ".next", maxPages: 3 }
+      { nextSelector: ".next", maxPages: 3 },
     );
 
     assert(result.success);
@@ -993,7 +995,7 @@ Deno.test({
     const scraper = new WebScraper(page);
     const result = await scraper.scrapePaginated(
       { rules: [{ name: "text", selector: ".item", extract: "text" }] },
-      { nextSelector: ".next", stopSelector: ".last-page", maxPages: 10 }
+      { nextSelector: ".next", stopSelector: ".last-page", maxPages: 10 },
     );
 
     assertEquals(result.pageCount, 2);
@@ -1005,7 +1007,8 @@ Deno.test({
   async fn() {
     let pageNum = 1;
     const page = createMockPage({
-      getCurrentURL: () => pageNum === 3 ? "https://example.com/last" : `https://example.com/page${pageNum}`,
+      getCurrentURL: () =>
+        pageNum === 3 ? "https://example.com/last" : `https://example.com/page${pageNum}`,
       query: async (selector: string) => {
         if (selector === "html") return [createMockElement()];
         if (selector === ".item") return [createMockElement(`Item ${pageNum}`)];
@@ -1021,7 +1024,7 @@ Deno.test({
     const scraper = new WebScraper(page);
     const result = await scraper.scrapePaginated(
       { rules: [{ name: "text", selector: ".item", extract: "text" }] },
-      { nextSelector: ".next", stopUrlPattern: /\/last$/, maxPages: 10 }
+      { nextSelector: ".next", stopUrlPattern: /\/last$/, maxPages: 10 },
     );
 
     assertEquals(result.pageCount, 3);
@@ -1052,7 +1055,7 @@ Deno.test({
     const scraper = new WebScraper(page);
     const result = await scraper.scrapePaginated(
       { rules: [{ name: "text", selector: ".item", extract: "text", required: true }] },
-      { nextSelector: ".next", maxPages: 3 }
+      { nextSelector: ".next", maxPages: 3 },
     );
 
     assertEquals(result.success, false); // Has errors

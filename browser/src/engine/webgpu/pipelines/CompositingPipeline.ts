@@ -25,43 +25,43 @@ import { WebGPUError } from "../errors.ts";
  * Blend mode for compositing
  */
 export enum BlendMode {
-    NORMAL = "NORMAL",
-    MULTIPLY = "MULTIPLY",
-    SCREEN = "SCREEN",
-    OVERLAY = "OVERLAY",
-    DARKEN = "DARKEN",
-    LIGHTEN = "LIGHTEN",
-    COLOR_DODGE = "COLOR_DODGE",
-    COLOR_BURN = "COLOR_BURN",
-    HARD_LIGHT = "HARD_LIGHT",
-    SOFT_LIGHT = "SOFT_LIGHT",
-    DIFFERENCE = "DIFFERENCE",
-    EXCLUSION = "EXCLUSION",
-    ADD = "ADD",
-    SUBTRACT = "SUBTRACT",
+  NORMAL = "NORMAL",
+  MULTIPLY = "MULTIPLY",
+  SCREEN = "SCREEN",
+  OVERLAY = "OVERLAY",
+  DARKEN = "DARKEN",
+  LIGHTEN = "LIGHTEN",
+  COLOR_DODGE = "COLOR_DODGE",
+  COLOR_BURN = "COLOR_BURN",
+  HARD_LIGHT = "HARD_LIGHT",
+  SOFT_LIGHT = "SOFT_LIGHT",
+  DIFFERENCE = "DIFFERENCE",
+  EXCLUSION = "EXCLUSION",
+  ADD = "ADD",
+  SUBTRACT = "SUBTRACT",
 }
 
 /**
  * Compositing uniforms
  */
 export interface CompositingUniforms {
-    /** Transform matrix (4x4) */
-    transformMatrix: Float32Array;
-    /** Layer opacity (0.0 to 1.0) */
-    opacity: number;
-    /** Source texture size */
-    sourceSize: [Pixels, Pixels];
-    /** Destination texture size */
-    destSize: [Pixels, Pixels];
+  /** Transform matrix (4x4) */
+  transformMatrix: Float32Array;
+  /** Layer opacity (0.0 to 1.0) */
+  opacity: number;
+  /** Source texture size */
+  sourceSize: [Pixels, Pixels];
+  /** Destination texture size */
+  destSize: [Pixels, Pixels];
 }
 
 /**
  * Compositing pipeline configuration
  */
 export interface CompositingPipelineConfig {
-    blendMode: BlendMode;
-    format: GPUTextureFormat;
-    sampleCount?: number;
+  blendMode: BlendMode;
+  format: GPUTextureFormat;
+  sampleCount?: number;
 }
 
 // ============================================================================
@@ -72,14 +72,14 @@ export interface CompositingPipelineConfig {
  * Error related to compositing pipeline
  */
 export class CompositingPipelineError extends WebGPUError {
-    constructor(message: string, context?: Record<string, unknown>) {
-        super(message, {
-            recoverable: false,
-            code: "COMPOSITING_PIPELINE_ERROR",
-            context,
-        });
-        this.name = "CompositingPipelineError";
-    }
+  constructor(message: string, context?: Record<string, unknown>) {
+    super(message, {
+      recoverable: false,
+      code: "COMPOSITING_PIPELINE_ERROR",
+      context,
+    });
+    this.name = "CompositingPipelineError";
+  }
 }
 
 // ============================================================================
@@ -150,9 +150,9 @@ fn main(input: VertexInput) -> VertexOutput {
  * Get fragment shader for blend mode
  */
 function getFragmentShader(blendMode: BlendMode): string {
-    const blendFunction = getBlendFunction(blendMode);
+  const blendFunction = getBlendFunction(blendMode);
 
-    return `
+  return `
 struct FragmentInput {
     @location(0) tex_coords: vec2<f32>,
 }
@@ -190,30 +190,30 @@ fn main(input: FragmentInput) -> @location(0) vec4<f32> {
  * Get blend function for specific blend mode
  */
 function getBlendFunction(blendMode: BlendMode): string {
-    switch (blendMode) {
-        case BlendMode.NORMAL:
-            return `
+  switch (blendMode) {
+    case BlendMode.NORMAL:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return source;
 }
 `;
 
-        case BlendMode.MULTIPLY:
-            return `
+    case BlendMode.MULTIPLY:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return source * dest;
 }
 `;
 
-        case BlendMode.SCREEN:
-            return `
+    case BlendMode.SCREEN:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(1.0) - (vec3<f32>(1.0) - source) * (vec3<f32>(1.0) - dest);
 }
 `;
 
-        case BlendMode.OVERLAY:
-            return `
+    case BlendMode.OVERLAY:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     var result: vec3<f32>;
 
@@ -239,22 +239,22 @@ fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
 }
 `;
 
-        case BlendMode.DARKEN:
-            return `
+    case BlendMode.DARKEN:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return min(source, dest);
 }
 `;
 
-        case BlendMode.LIGHTEN:
-            return `
+    case BlendMode.LIGHTEN:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return max(source, dest);
 }
 `;
 
-        case BlendMode.COLOR_DODGE:
-            return `
+    case BlendMode.COLOR_DODGE:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     var result: vec3<f32>;
 
@@ -266,8 +266,8 @@ fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
 }
 `;
 
-        case BlendMode.COLOR_BURN:
-            return `
+    case BlendMode.COLOR_BURN:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     var result: vec3<f32>;
 
@@ -279,8 +279,8 @@ fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
 }
 `;
 
-        case BlendMode.HARD_LIGHT:
-            return `
+    case BlendMode.HARD_LIGHT:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     var result: vec3<f32>;
 
@@ -306,8 +306,8 @@ fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
 }
 `;
 
-        case BlendMode.SOFT_LIGHT:
-            return `
+    case BlendMode.SOFT_LIGHT:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     var result: vec3<f32>;
 
@@ -336,41 +336,41 @@ fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
 }
 `;
 
-        case BlendMode.DIFFERENCE:
-            return `
+    case BlendMode.DIFFERENCE:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return abs(dest - source);
 }
 `;
 
-        case BlendMode.EXCLUSION:
-            return `
+    case BlendMode.EXCLUSION:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return source + dest - 2.0 * source * dest;
 }
 `;
 
-        case BlendMode.ADD:
-            return `
+    case BlendMode.ADD:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return min(vec3<f32>(1.0), source + dest);
 }
 `;
 
-        case BlendMode.SUBTRACT:
-            return `
+    case BlendMode.SUBTRACT:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return max(vec3<f32>(0.0), dest - source);
 }
 `;
 
-        default:
-            return `
+    default:
+      return `
 fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
     return source;
 }
 `;
-    }
+  }
 }
 
 // ============================================================================
@@ -381,312 +381,313 @@ fn blend(source: vec3<f32>, dest: vec3<f32>) -> vec3<f32> {
  * Manages compositing pipelines for layer blending
  */
 export class CompositingPipeline {
-    private readonly device: WebGPUDevice;
-    private readonly pipelineManager: PipelineManager;
+  private readonly device: WebGPUDevice;
+  private readonly pipelineManager: PipelineManager;
 
-    // Pipeline cache by blend mode and format
-    private readonly pipelineCache: Map<string, GPURenderPipeline> = new Map();
+  // Pipeline cache by blend mode and format
+  private readonly pipelineCache: Map<string, GPURenderPipeline> = new Map();
 
-    // Bind group layouts
-    private bindGroupLayout: GPUBindGroupLayout | null = null;
+  // Bind group layouts
+  private bindGroupLayout: GPUBindGroupLayout | null = null;
 
-    // Samplers
-    private linearSampler: GPUSampler | null = null;
-    private nearestSampler: GPUSampler | null = null;
+  // Samplers
+  private linearSampler: GPUSampler | null = null;
+  private nearestSampler: GPUSampler | null = null;
 
-    constructor(device: WebGPUDevice, pipelineManager: PipelineManager) {
-        this.device = device;
-        this.pipelineManager = pipelineManager;
+  constructor(device: WebGPUDevice, pipelineManager: PipelineManager) {
+    this.device = device;
+    this.pipelineManager = pipelineManager;
 
-        this.initialize();
+    this.initialize();
+  }
+
+  // ========================================================================
+  // Initialization
+  // ========================================================================
+
+  /**
+   * Initialize compositing pipeline resources
+   */
+  private initialize(): void {
+    this.createBindGroupLayout();
+    this.createSamplers();
+  }
+
+  /**
+   * Create bind group layout
+   */
+  private createBindGroupLayout(): void {
+    const gpuDevice = this.device.getDevice();
+
+    this.bindGroupLayout = gpuDevice.createBindGroupLayout({
+      label: "compositing-bind-group-layout",
+      entries: [
+        {
+          // Uniforms
+          binding: 0,
+          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+          buffer: {
+            type: "uniform" as GPUBufferBindingType,
+          },
+        },
+        {
+          // Source texture
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: {
+            sampleType: "float" as GPUTextureSampleType,
+          },
+        },
+        {
+          // Sampler
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          sampler: {
+            type: "filtering" as GPUSamplerBindingType,
+          },
+        },
+      ],
+    });
+  }
+
+  /**
+   * Create texture samplers
+   */
+  private createSamplers(): void {
+    const gpuDevice = this.device.getDevice();
+
+    this.linearSampler = gpuDevice.createSampler({
+      label: "compositing-linear-sampler",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+      magFilter: "linear",
+      minFilter: "linear",
+    });
+
+    this.nearestSampler = gpuDevice.createSampler({
+      label: "compositing-nearest-sampler",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+      magFilter: "nearest",
+      minFilter: "nearest",
+    });
+  }
+
+  // ========================================================================
+  // Pipeline Management
+  // ========================================================================
+
+  /**
+   * Get or create pipeline for blend mode
+   */
+  getPipeline(config: CompositingPipelineConfig): GPURenderPipeline {
+    const key = this.getPipelineKey(config);
+
+    let pipeline = this.pipelineCache.get(key);
+    if (pipeline) {
+      return pipeline;
     }
 
-    // ========================================================================
-    // Initialization
-    // ========================================================================
+    pipeline = this.createPipeline(config);
+    this.pipelineCache.set(key, pipeline);
 
-    /**
-     * Initialize compositing pipeline resources
-     */
-    private initialize(): void {
-        this.createBindGroupLayout();
-        this.createSamplers();
+    return pipeline;
+  }
+
+  /**
+   * Create pipeline key for caching
+   */
+  private getPipelineKey(config: CompositingPipelineConfig): string {
+    return `${config.blendMode}_${config.format}_${config.sampleCount || 1}`;
+  }
+
+  /**
+   * Create render pipeline
+   */
+  private createPipeline(config: CompositingPipelineConfig): GPURenderPipeline {
+    const gpuDevice = this.device.getDevice();
+
+    if (!this.bindGroupLayout) {
+      throw new CompositingPipelineError("Bind group layout not initialized");
     }
 
-    /**
-     * Create bind group layout
-     */
-    private createBindGroupLayout(): void {
-        const gpuDevice = this.device.getDevice();
+    // Create shader modules
+    const vertexModule = gpuDevice.createShaderModule({
+      label: "compositing-vertex-shader",
+      code: COMPOSITING_VERTEX_SHADER,
+    });
 
-        this.bindGroupLayout = gpuDevice.createBindGroupLayout({
-            label: "compositing-bind-group-layout",
-            entries: [
-                {
-                    // Uniforms
-                    binding: 0,
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-                    buffer: {
-                        type: "uniform" as GPUBufferBindingType,
-                    },
-                },
-                {
-                    // Source texture
-                    binding: 1,
-                    visibility: GPUShaderStage.FRAGMENT,
-                    texture: {
-                        sampleType: "float" as GPUTextureSampleType,
-                    },
-                },
-                {
-                    // Sampler
-                    binding: 2,
-                    visibility: GPUShaderStage.FRAGMENT,
-                    sampler: {
-                        type: "filtering" as GPUSamplerBindingType,
-                    },
-                },
-            ],
-        });
+    const fragmentModule = gpuDevice.createShaderModule({
+      label: `compositing-fragment-shader-${config.blendMode}`,
+      code: getFragmentShader(config.blendMode),
+    });
+
+    // Create pipeline layout
+    // Use Array.of for bindGroupLayouts to work around Deno WebIDL sequence conversion bug
+    const pipelineLayout = gpuDevice.createPipelineLayout({
+      label: "compositing-pipeline-layout",
+      bindGroupLayouts: Array.of(this.bindGroupLayout) as GPUBindGroupLayout[],
+    });
+
+    // Create render pipeline
+    // Use Array.of for targets to work around Deno WebIDL sequence conversion bug
+    const colorTarget: GPUColorTargetState = {
+      format: config.format,
+      blend: {
+        color: {
+          srcFactor: "src-alpha" as GPUBlendFactor,
+          dstFactor: "one-minus-src-alpha" as GPUBlendFactor,
+          operation: "add" as GPUBlendOperation,
+        },
+        alpha: {
+          srcFactor: "one" as GPUBlendFactor,
+          dstFactor: "one-minus-src-alpha" as GPUBlendFactor,
+          operation: "add" as GPUBlendOperation,
+        },
+      },
+    };
+    const pipeline = gpuDevice.createRenderPipeline({
+      label: `compositing-pipeline-${config.blendMode}`,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "main",
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "main",
+        targets: Array.of(colorTarget) as GPUColorTargetState[],
+      },
+      primitive: {
+        topology: "triangle-list",
+        cullMode: "none",
+      },
+      multisample: {
+        count: config.sampleCount || 1,
+      },
+    });
+
+    return pipeline;
+  }
+
+  // ========================================================================
+  // Bind Groups
+  // ========================================================================
+
+  /**
+   * Create bind group for compositing
+   */
+  createBindGroup(
+    uniformBuffer: GPUBuffer,
+    sourceTextureView: GPUTextureView,
+    useLinearSampling: boolean = true,
+  ): GPUBindGroup {
+    const gpuDevice = this.device.getDevice();
+
+    if (!this.bindGroupLayout) {
+      throw new CompositingPipelineError("Bind group layout not initialized");
     }
 
-    /**
-     * Create texture samplers
-     */
-    private createSamplers(): void {
-        const gpuDevice = this.device.getDevice();
+    const sampler = useLinearSampling ? this.linearSampler : this.nearestSampler;
 
-        this.linearSampler = gpuDevice.createSampler({
-            label: "compositing-linear-sampler",
-            addressModeU: "clamp-to-edge",
-            addressModeV: "clamp-to-edge",
-            magFilter: "linear",
-            minFilter: "linear",
-        });
-
-        this.nearestSampler = gpuDevice.createSampler({
-            label: "compositing-nearest-sampler",
-            addressModeU: "clamp-to-edge",
-            addressModeV: "clamp-to-edge",
-            magFilter: "nearest",
-            minFilter: "nearest",
-        });
+    if (!sampler) {
+      throw new CompositingPipelineError("Samplers not initialized");
     }
 
-    // ========================================================================
-    // Pipeline Management
-    // ========================================================================
+    return gpuDevice.createBindGroup({
+      label: "compositing-bind-group",
+      layout: this.bindGroupLayout,
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: uniformBuffer,
+          },
+        },
+        {
+          binding: 1,
+          resource: sourceTextureView,
+        },
+        {
+          binding: 2,
+          resource: sampler,
+        },
+      ],
+    });
+  }
 
-    /**
-     * Get or create pipeline for blend mode
-     */
-    getPipeline(config: CompositingPipelineConfig): GPURenderPipeline {
-        const key = this.getPipelineKey(config);
+  // ========================================================================
+  // Uniforms
+  // ========================================================================
 
-        let pipeline = this.pipelineCache.get(key);
-        if (pipeline) {
-            return pipeline;
-        }
+  /**
+   * Create uniform buffer
+   */
+  createUniformBuffer(): GPUBuffer {
+    const gpuDevice = this.device.getDevice();
 
-        pipeline = this.createPipeline(config);
-        this.pipelineCache.set(key, pipeline);
+    // Uniforms layout:
+    // - transform_matrix: mat4x4<f32> = 16 floats = 64 bytes
+    // - opacity: f32 = 4 bytes
+    // - source_width: f32 = 4 bytes
+    // - source_height: f32 = 4 bytes
+    // - dest_width: f32 = 4 bytes
+    // - dest_height: f32 = 4 bytes
+    // - padding: 12 bytes (for alignment)
+    // Total: 96 bytes
 
-        return pipeline;
-    }
+    return gpuDevice.createBuffer({
+      label: "compositing-uniform-buffer",
+      size: 96,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+  }
 
-    /**
-     * Create pipeline key for caching
-     */
-    private getPipelineKey(config: CompositingPipelineConfig): string {
-        return `${config.blendMode}_${config.format}_${config.sampleCount || 1}`;
-    }
+  /**
+   * Update uniform buffer
+   */
+  updateUniformBuffer(buffer: GPUBuffer, uniforms: CompositingUniforms): void {
+    const gpuDevice = this.device.getDevice();
 
-    /**
-     * Create render pipeline
-     */
-    private createPipeline(config: CompositingPipelineConfig): GPURenderPipeline {
-        const gpuDevice = this.device.getDevice();
+    // Create uniform data
+    const data = new Float32Array(24); // 96 bytes / 4 bytes per float
 
-        if (!this.bindGroupLayout) {
-            throw new CompositingPipelineError("Bind group layout not initialized");
-        }
+    // Transform matrix (16 floats)
+    data.set(uniforms.transformMatrix, 0);
 
-        // Create shader modules
-        const vertexModule = gpuDevice.createShaderModule({
-            label: "compositing-vertex-shader",
-            code: COMPOSITING_VERTEX_SHADER,
-        });
+    // Opacity (1 float at offset 16)
+    data[16] = uniforms.opacity;
 
-        const fragmentModule = gpuDevice.createShaderModule({
-            label: `compositing-fragment-shader-${config.blendMode}`,
-            code: getFragmentShader(config.blendMode),
-        });
+    // Source size (2 floats at offset 17-18)
+    data[17] = uniforms.sourceSize[0];
+    data[18] = uniforms.sourceSize[1];
 
-        // Create pipeline layout
-        const pipelineLayout = gpuDevice.createPipelineLayout({
-            label: "compositing-pipeline-layout",
-            bindGroupLayouts: [this.bindGroupLayout],
-        });
+    // Dest size (2 floats at offset 19-20)
+    data[19] = uniforms.destSize[0];
+    data[20] = uniforms.destSize[1];
 
-        // Create render pipeline
-        const pipeline = gpuDevice.createRenderPipeline({
-            label: `compositing-pipeline-${config.blendMode}`,
-            layout: pipelineLayout,
-            vertex: {
-                module: vertexModule,
-                entryPoint: "main",
-            },
-            fragment: {
-                module: fragmentModule,
-                entryPoint: "main",
-                targets: [
-                    {
-                        format: config.format,
-                        blend: {
-                            color: {
-                                srcFactor: "src-alpha" as GPUBlendFactor,
-                                dstFactor: "one-minus-src-alpha" as GPUBlendFactor,
-                                operation: "add" as GPUBlendOperation,
-                            },
-                            alpha: {
-                                srcFactor: "one" as GPUBlendFactor,
-                                dstFactor: "one-minus-src-alpha" as GPUBlendFactor,
-                                operation: "add" as GPUBlendOperation,
-                            },
-                        },
-                    },
-                ],
-            },
-            primitive: {
-                topology: "triangle-list",
-                cullMode: "none",
-            },
-            multisample: {
-                count: config.sampleCount || 1,
-            },
-        });
+    // Write to buffer
+    gpuDevice.queue.writeBuffer(buffer, 0, data);
+  }
 
-        return pipeline;
-    }
+  // ========================================================================
+  // Cleanup
+  // ========================================================================
 
-    // ========================================================================
-    // Bind Groups
-    // ========================================================================
+  /**
+   * Clear pipeline cache
+   */
+  clearCache(): void {
+    this.pipelineCache.clear();
+  }
 
-    /**
-     * Create bind group for compositing
-     */
-    createBindGroup(
-        uniformBuffer: GPUBuffer,
-        sourceTextureView: GPUTextureView,
-        useLinearSampling: boolean = true
-    ): GPUBindGroup {
-        const gpuDevice = this.device.getDevice();
-
-        if (!this.bindGroupLayout) {
-            throw new CompositingPipelineError("Bind group layout not initialized");
-        }
-
-        const sampler = useLinearSampling ? this.linearSampler : this.nearestSampler;
-
-        if (!sampler) {
-            throw new CompositingPipelineError("Samplers not initialized");
-        }
-
-        return gpuDevice.createBindGroup({
-            label: "compositing-bind-group",
-            layout: this.bindGroupLayout,
-            entries: [
-                {
-                    binding: 0,
-                    resource: {
-                        buffer: uniformBuffer,
-                    },
-                },
-                {
-                    binding: 1,
-                    resource: sourceTextureView,
-                },
-                {
-                    binding: 2,
-                    resource: sampler,
-                },
-            ],
-        });
-    }
-
-    // ========================================================================
-    // Uniforms
-    // ========================================================================
-
-    /**
-     * Create uniform buffer
-     */
-    createUniformBuffer(): GPUBuffer {
-        const gpuDevice = this.device.getDevice();
-
-        // Uniforms layout:
-        // - transform_matrix: mat4x4<f32> = 16 floats = 64 bytes
-        // - opacity: f32 = 4 bytes
-        // - source_width: f32 = 4 bytes
-        // - source_height: f32 = 4 bytes
-        // - dest_width: f32 = 4 bytes
-        // - dest_height: f32 = 4 bytes
-        // - padding: 12 bytes (for alignment)
-        // Total: 96 bytes
-
-        return gpuDevice.createBuffer({
-            label: "compositing-uniform-buffer",
-            size: 96,
-            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        });
-    }
-
-    /**
-     * Update uniform buffer
-     */
-    updateUniformBuffer(buffer: GPUBuffer, uniforms: CompositingUniforms): void {
-        const gpuDevice = this.device.getDevice();
-
-        // Create uniform data
-        const data = new Float32Array(24); // 96 bytes / 4 bytes per float
-
-        // Transform matrix (16 floats)
-        data.set(uniforms.transformMatrix, 0);
-
-        // Opacity (1 float at offset 16)
-        data[16] = uniforms.opacity;
-
-        // Source size (2 floats at offset 17-18)
-        data[17] = uniforms.sourceSize[0];
-        data[18] = uniforms.sourceSize[1];
-
-        // Dest size (2 floats at offset 19-20)
-        data[19] = uniforms.destSize[0];
-        data[20] = uniforms.destSize[1];
-
-        // Write to buffer
-        gpuDevice.queue.writeBuffer(buffer, 0, data);
-    }
-
-    // ========================================================================
-    // Cleanup
-    // ========================================================================
-
-    /**
-     * Clear pipeline cache
-     */
-    clearCache(): void {
-        this.pipelineCache.clear();
-    }
-
-    /**
-     * Destroy compositing pipeline resources
-     */
-    destroy(): void {
-        this.clearCache();
-        this.bindGroupLayout = null;
-        this.linearSampler = null;
-        this.nearestSampler = null;
-    }
+  /**
+   * Destroy compositing pipeline resources
+   */
+  destroy(): void {
+    this.clearCache();
+    this.bindGroupLayout = null;
+    this.linearSampler = null;
+    this.nearestSampler = null;
+  }
 }

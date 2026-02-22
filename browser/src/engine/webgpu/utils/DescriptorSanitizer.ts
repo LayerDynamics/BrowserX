@@ -22,23 +22,23 @@
  * Sanitized bind group layout descriptor
  */
 export interface SanitizedBindGroupLayoutDescriptor {
-    label?: string;
-    entries: GPUBindGroupLayoutEntry[];
+  label?: string;
+  entries: GPUBindGroupLayoutEntry[];
 }
 
 /**
  * Sanitized pipeline layout descriptor
  */
 export interface SanitizedPipelineLayoutDescriptor {
-    label?: string;
-    bindGroupLayouts: GPUBindGroupLayout[];
+  label?: string;
+  bindGroupLayouts: GPUBindGroupLayout[];
 }
 
 /**
  * Sanitized texture descriptor
  */
-export interface SanitizedTextureDescriptor extends Omit<GPUTextureDescriptor, 'viewFormats'> {
-    viewFormats?: GPUTextureFormat[];
+export interface SanitizedTextureDescriptor extends Omit<GPUTextureDescriptor, "viewFormats"> {
+  viewFormats?: GPUTextureFormat[];
 }
 
 // ============================================================================
@@ -53,11 +53,11 @@ export interface SanitizedTextureDescriptor extends Omit<GPUTextureDescriptor, '
  * @returns A properly formatted array or undefined if empty
  */
 export function sanitizeArray<T>(arr: T[] | undefined): T[] | undefined {
-    if (!arr || arr.length === 0) {
-        return undefined;
-    }
-    // Create new array through explicit mapping to ensure proper structure
-    return arr.map(item => item);
+  if (!arr || arr.length === 0) {
+    return undefined;
+  }
+  // Create new array through explicit mapping to ensure proper structure
+  return arr.map((item) => item);
 }
 
 /**
@@ -68,11 +68,11 @@ export function sanitizeArray<T>(arr: T[] | undefined): T[] | undefined {
  * @returns A properly formatted array
  */
 export function sanitizeArrayRequired<T>(arr: T[] | undefined): T[] {
-    if (!arr || arr.length === 0) {
-        // Return a newly constructed array - this sometimes helps with FFI
-        return Array.from<T>([]);
-    }
-    return Array.from(arr);
+  if (!arr || arr.length === 0) {
+    // Return a newly constructed array - this sometimes helps with FFI
+    return Array.from<T>([]);
+  }
+  return Array.from(arr);
 }
 
 // ============================================================================
@@ -92,22 +92,22 @@ export function sanitizeArrayRequired<T>(arr: T[] | undefined): T[] {
  * @returns Created bind group layout
  */
 export function createBindGroupLayout(
-    device: GPUDevice,
-    descriptor: GPUBindGroupLayoutDescriptor
+  device: GPUDevice,
+  descriptor: GPUBindGroupLayoutDescriptor,
 ): GPUBindGroupLayout {
-    // WORKAROUND: Omit entries entirely when empty - Deno FFI can't serialize []
-    // but treats missing properties as empty sequences
-    if (descriptor.entries && descriptor.entries.length > 0) {
-        return device.createBindGroupLayout({
-            label: descriptor.label,
-            entries: Array.from(descriptor.entries),
-        });
-    }
-
-    // When entries is empty or undefined, omit the property entirely
+  // WORKAROUND: Omit entries entirely when empty - Deno FFI can't serialize []
+  // but treats missing properties as empty sequences
+  if (descriptor.entries && descriptor.entries.length > 0) {
     return device.createBindGroupLayout({
-        label: descriptor.label,
-    } as GPUBindGroupLayoutDescriptor);
+      label: descriptor.label,
+      entries: Array.from(descriptor.entries),
+    });
+  }
+
+  // When entries is empty or undefined, omit the property entirely
+  return device.createBindGroupLayout({
+    label: descriptor.label,
+  } as GPUBindGroupLayoutDescriptor);
 }
 
 /**
@@ -122,22 +122,22 @@ export function createBindGroupLayout(
  * @returns Created pipeline layout
  */
 export function createPipelineLayout(
-    device: GPUDevice,
-    descriptor: GPUPipelineLayoutDescriptor
+  device: GPUDevice,
+  descriptor: GPUPipelineLayoutDescriptor,
 ): GPUPipelineLayout {
-    // WORKAROUND: Omit bindGroupLayouts entirely when empty - Deno FFI can't serialize []
-    // but treats missing properties as empty sequences
-    if (descriptor.bindGroupLayouts && descriptor.bindGroupLayouts.length > 0) {
-        return device.createPipelineLayout({
-            label: descriptor.label,
-            bindGroupLayouts: Array.from(descriptor.bindGroupLayouts as Iterable<GPUBindGroupLayout>),
-        });
-    }
-
-    // When bindGroupLayouts is empty or undefined, omit the property entirely
+  // WORKAROUND: Omit bindGroupLayouts entirely when empty - Deno FFI can't serialize []
+  // but treats missing properties as empty sequences
+  if (descriptor.bindGroupLayouts && descriptor.bindGroupLayouts.length > 0) {
     return device.createPipelineLayout({
-        label: descriptor.label,
-    } as GPUPipelineLayoutDescriptor);
+      label: descriptor.label,
+      bindGroupLayouts: Array.from(descriptor.bindGroupLayouts as Iterable<GPUBindGroupLayout>),
+    });
+  }
+
+  // When bindGroupLayouts is empty or undefined, omit the property entirely
+  return device.createPipelineLayout({
+    label: descriptor.label,
+  } as GPUPipelineLayoutDescriptor);
 }
 
 // ============================================================================
@@ -152,22 +152,22 @@ export function createPipelineLayout(
  * @returns Sanitized texture descriptor
  */
 export function sanitizeTextureDescriptor(
-    descriptor: GPUTextureDescriptor
+  descriptor: GPUTextureDescriptor,
 ): GPUTextureDescriptor {
-    const {
-        viewFormats,
-        ...rest
-    } = descriptor;
+  const {
+    viewFormats,
+    ...rest
+  } = descriptor;
 
-    // Only include viewFormats if non-empty
-    if (viewFormats && viewFormats.length > 0) {
-        return {
-            ...rest,
-            viewFormats: Array.from(viewFormats),
-        };
-    }
+  // Only include viewFormats if non-empty
+  if (viewFormats && viewFormats.length > 0) {
+    return {
+      ...rest,
+      viewFormats: Array.from(viewFormats),
+    };
+  }
 
-    return rest;
+  return rest;
 }
 
 /**
@@ -178,10 +178,10 @@ export function sanitizeTextureDescriptor(
  * @returns Created texture
  */
 export function createTexture(
-    device: GPUDevice,
-    descriptor: GPUTextureDescriptor
+  device: GPUDevice,
+  descriptor: GPUTextureDescriptor,
 ): GPUTexture {
-    return device.createTexture(sanitizeTextureDescriptor(descriptor));
+  return device.createTexture(sanitizeTextureDescriptor(descriptor));
 }
 
 // ============================================================================
@@ -200,13 +200,13 @@ export function createTexture(
  * @returns Sanitized targets array or undefined if empty
  */
 export function sanitizeFragmentTargets(
-    targets: (GPUColorTargetState | null)[] | undefined
+  targets: (GPUColorTargetState | null)[] | undefined,
 ): (GPUColorTargetState | null)[] | undefined {
-    if (!targets || targets.length === 0) {
-        // Return undefined to omit from descriptor - empty targets is an error condition
-        return undefined;
-    }
-    return Array.from(targets);
+  if (!targets || targets.length === 0) {
+    // Return undefined to omit from descriptor - empty targets is an error condition
+    return undefined;
+  }
+  return Array.from(targets);
 }
 
 /**
@@ -219,37 +219,36 @@ export function sanitizeFragmentTargets(
  * @returns Sanitized descriptor
  */
 export function sanitizeRenderPipelineDescriptor(
-    descriptor: GPURenderPipelineDescriptor
+  descriptor: GPURenderPipelineDescriptor,
 ): GPURenderPipelineDescriptor {
-    const result: GPURenderPipelineDescriptor = {
-        ...descriptor,
-        vertex: {
-            ...descriptor.vertex,
-            // Sanitize vertex buffers - omit if empty
-            ...(descriptor.vertex.buffers && descriptor.vertex.buffers.length > 0
-                ? { buffers: Array.from(descriptor.vertex.buffers) }
-                : {}
-            ),
-        },
-    };
+  const result: GPURenderPipelineDescriptor = {
+    ...descriptor,
+    vertex: {
+      ...descriptor.vertex,
+      // Sanitize vertex buffers - omit if empty
+      ...(descriptor.vertex.buffers && descriptor.vertex.buffers.length > 0
+        ? { buffers: Array.from(descriptor.vertex.buffers) }
+        : {}),
+    },
+  };
 
-    // Sanitize fragment targets if present
-    if (descriptor.fragment) {
-        const sanitizedTargets = sanitizeFragmentTargets(descriptor.fragment.targets);
-        if (sanitizedTargets) {
-            result.fragment = {
-                ...descriptor.fragment,
-                targets: sanitizedTargets,
-            };
-        } else {
-            // If targets is empty, this is likely an error - but we still need to set fragment
-            // Omit targets entirely and let WebGPU report the error
-            const { targets: _targets, ...restFragment } = descriptor.fragment;
-            result.fragment = restFragment as GPUFragmentState;
-        }
+  // Sanitize fragment targets if present
+  if (descriptor.fragment) {
+    const sanitizedTargets = sanitizeFragmentTargets(descriptor.fragment.targets);
+    if (sanitizedTargets) {
+      result.fragment = {
+        ...descriptor.fragment,
+        targets: sanitizedTargets,
+      };
+    } else {
+      // If targets is empty, this is likely an error - but we still need to set fragment
+      // Omit targets entirely and let WebGPU report the error
+      const { targets: _targets, ...restFragment } = descriptor.fragment;
+      result.fragment = restFragment as GPUFragmentState;
     }
+  }
 
-    return result;
+  return result;
 }
 
 /**
@@ -260,10 +259,10 @@ export function sanitizeRenderPipelineDescriptor(
  * @returns Created render pipeline
  */
 export function createRenderPipeline(
-    device: GPUDevice,
-    descriptor: GPURenderPipelineDescriptor
+  device: GPUDevice,
+  descriptor: GPURenderPipelineDescriptor,
 ): GPURenderPipeline {
-    return device.createRenderPipeline(sanitizeRenderPipelineDescriptor(descriptor));
+  return device.createRenderPipeline(sanitizeRenderPipelineDescriptor(descriptor));
 }
 
 /**
@@ -274,10 +273,10 @@ export function createRenderPipeline(
  * @returns Promise resolving to created render pipeline
  */
 export async function createRenderPipelineAsync(
-    device: GPUDevice,
-    descriptor: GPURenderPipelineDescriptor
+  device: GPUDevice,
+  descriptor: GPURenderPipelineDescriptor,
 ): Promise<GPURenderPipeline> {
-    return await device.createRenderPipelineAsync(sanitizeRenderPipelineDescriptor(descriptor));
+  return await device.createRenderPipelineAsync(sanitizeRenderPipelineDescriptor(descriptor));
 }
 
 // ============================================================================
@@ -291,15 +290,15 @@ export async function createRenderPipelineAsync(
  * @returns Sanitized descriptor
  */
 export function sanitizeComputePipelineDescriptor(
-    descriptor: GPUComputePipelineDescriptor
+  descriptor: GPUComputePipelineDescriptor,
 ): GPUComputePipelineDescriptor {
-    return {
-        ...descriptor,
-        compute: {
-            ...descriptor.compute,
-            // Constants object doesn't need array sanitization
-        },
-    };
+  return {
+    ...descriptor,
+    compute: {
+      ...descriptor.compute,
+      // Constants object doesn't need array sanitization
+    },
+  };
 }
 
 /**
@@ -310,10 +309,10 @@ export function sanitizeComputePipelineDescriptor(
  * @returns Created compute pipeline
  */
 export function createComputePipeline(
-    device: GPUDevice,
-    descriptor: GPUComputePipelineDescriptor
+  device: GPUDevice,
+  descriptor: GPUComputePipelineDescriptor,
 ): GPUComputePipeline {
-    return device.createComputePipeline(sanitizeComputePipelineDescriptor(descriptor));
+  return device.createComputePipeline(sanitizeComputePipelineDescriptor(descriptor));
 }
 
 // ============================================================================
@@ -330,19 +329,19 @@ export function createComputePipeline(
  * @returns Sanitized descriptor
  */
 export function sanitizeBindGroupDescriptor(
-    descriptor: GPUBindGroupDescriptor
+  descriptor: GPUBindGroupDescriptor,
 ): GPUBindGroupDescriptor {
-    // Omit entries entirely when empty - Deno FFI can't serialize []
-    if (descriptor.entries && descriptor.entries.length > 0) {
-        return {
-            ...descriptor,
-            entries: Array.from(descriptor.entries),
-        };
-    }
+  // Omit entries entirely when empty - Deno FFI can't serialize []
+  if (descriptor.entries && descriptor.entries.length > 0) {
+    return {
+      ...descriptor,
+      entries: Array.from(descriptor.entries),
+    };
+  }
 
-    // Omit entries property when empty
-    const { entries: _entries, ...rest } = descriptor;
-    return rest as GPUBindGroupDescriptor;
+  // Omit entries property when empty
+  const { entries: _entries, ...rest } = descriptor;
+  return rest as GPUBindGroupDescriptor;
 }
 
 /**
@@ -353,8 +352,8 @@ export function sanitizeBindGroupDescriptor(
  * @returns Created bind group
  */
 export function createBindGroup(
-    device: GPUDevice,
-    descriptor: GPUBindGroupDescriptor
+  device: GPUDevice,
+  descriptor: GPUBindGroupDescriptor,
 ): GPUBindGroup {
-    return device.createBindGroup(sanitizeBindGroupDescriptor(descriptor));
+  return device.createBindGroup(sanitizeBindGroupDescriptor(descriptor));
 }

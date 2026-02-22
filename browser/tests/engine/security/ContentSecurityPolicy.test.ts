@@ -1,6 +1,9 @@
 import { assertEquals } from "https://deno.land/std@0.208.0/assert/assert_equals.ts";
 import { assert } from "https://deno.land/std@0.208.0/assert/assert.ts";
-import { ContentSecurityPolicy, CSPViolation } from "../../../src/engine/security/ContentSecurityPolicy.ts";
+import {
+  ContentSecurityPolicy,
+  CSPViolation,
+} from "../../../src/engine/security/ContentSecurityPolicy.ts";
 
 Deno.test("CSP: parse default-src 'self' header", () => {
   const csp = new ContentSecurityPolicy("default-src 'self'");
@@ -26,7 +29,10 @@ Deno.test("CSP: allows() falls back to default-src when specific directive missi
 
 Deno.test("CSP: allows() with 'none' blocks everything", () => {
   const csp = new ContentSecurityPolicy("script-src 'none'");
-  assertEquals(csp.allows("script-src", "https://example.com/app.js", "https://example.com"), false);
+  assertEquals(
+    csp.allows("script-src", "https://example.com/app.js", "https://example.com"),
+    false,
+  );
 });
 
 Deno.test("CSP: allows() with * allows everything", () => {
@@ -128,7 +134,9 @@ Deno.test("CSP: clearViolations() empties violation list", () => {
 });
 
 Deno.test("CSP: multiple directives parsed correctly", () => {
-  const csp = new ContentSecurityPolicy("default-src 'self'; script-src 'unsafe-inline'; img-src https: *.cdn.com; report-uri /csp-report");
+  const csp = new ContentSecurityPolicy(
+    "default-src 'self'; script-src 'unsafe-inline'; img-src https: *.cdn.com; report-uri /csp-report",
+  );
   const directives = csp.getDirectives();
   assertEquals(directives.get("default-src"), ["'self'"]);
   assertEquals(directives.get("script-src"), ["'unsafe-inline'"]);
@@ -167,5 +175,8 @@ Deno.test("CSP: CSPViolation constructor sets all fields", () => {
 Deno.test("CSP: allows() with full URL host-source match", () => {
   const csp = new ContentSecurityPolicy("script-src https://cdn.example.com");
   assert(csp.allows("script-src", "https://cdn.example.com/app.js", "https://example.com"));
-  assertEquals(csp.allows("script-src", "http://cdn.example.com/app.js", "https://example.com"), false);
+  assertEquals(
+    csp.allows("script-src", "http://cdn.example.com/app.js", "https://example.com"),
+    false,
+  );
 });

@@ -5,10 +5,10 @@
  * Defines identifiers, enums, interfaces, and statistics types.
  */
 
-import type { Timestamp, Duration, Nanoseconds, ByteCount, Pixels } from "./identifiers.ts";
+import type { ByteCount, Duration, Nanoseconds, Pixels, Timestamp } from "./identifiers.ts";
 
 // Re-export commonly used types
-export type { Timestamp, Duration, Nanoseconds, ByteCount, Pixels };
+export type { ByteCount, Duration, Nanoseconds, Pixels, Timestamp };
 
 // ============================================================================
 // IDENTIFIERS
@@ -97,164 +97,164 @@ export type GPUIndex = number;
  * HTML Image Element interface
  */
 export interface HTMLImageElement {
-    src: string;
-    width: number;
-    height: number;
-    naturalWidth: number;
-    naturalHeight: number;
-    complete: boolean;
-    decode(): Promise<void>;
+  src: string;
+  width: number;
+  height: number;
+  naturalWidth: number;
+  naturalHeight: number;
+  complete: boolean;
+  decode(): Promise<void>;
 }
 
 /**
  * HTML Canvas Element interface
  */
 export interface HTMLCanvasElement {
-    width: number;
-    height: number;
-    getContext(contextId: "2d"): CanvasRenderingContext2D | null;
-    getContext(contextId: "webgpu"): GPUCanvasContext | null;
-    getContext(contextId: "webgl" | "webgl2"): WebGLRenderingContext | null;
-    toDataURL(type?: string, quality?: number): string;
-    toBlob(callback: (blob: Blob | null) => void, type?: string, quality?: number): void;
-    getBoundingClientRect(): DOMRect;
+  width: number;
+  height: number;
+  getContext(contextId: "2d"): CanvasRenderingContext2D | null;
+  getContext(contextId: "webgpu"): GPUCanvasContext | null;
+  getContext(contextId: "webgl" | "webgl2"): WebGLRenderingContext | null;
+  toDataURL(type?: string, quality?: number): string;
+  toBlob(callback: (blob: Blob | null) => void, type?: string, quality?: number): void;
+  getBoundingClientRect(): DOMRect;
 }
 
 /**
  * Offscreen Canvas interface
  */
 export interface OffscreenCanvas {
-    width: number;
-    height: number;
-    getContext(contextId: "2d"): OffscreenCanvasRenderingContext2D | null;
-    getContext(contextId: "webgpu"): GPUCanvasContext | null;
-    getContext(contextId: "webgl" | "webgl2"): WebGLRenderingContext | null;
-    convertToBlob(options?: { type?: string; quality?: number }): Promise<Blob>;
-    transferToImageBitmap(): ImageBitmap;
+  width: number;
+  height: number;
+  getContext(contextId: "2d"): OffscreenCanvasRenderingContext2D | null;
+  getContext(contextId: "webgpu"): GPUCanvasContext | null;
+  getContext(contextId: "webgl" | "webgl2"): WebGLRenderingContext | null;
+  convertToBlob(options?: { type?: string; quality?: number }): Promise<Blob>;
+  transferToImageBitmap(): ImageBitmap;
 }
 
 /**
  * Canvas Rendering Context 2D interface (minimal)
  */
 export interface CanvasRenderingContext2D {
-    canvas: HTMLCanvasElement;
-    fillStyle: string | CanvasGradient | CanvasPattern;
-    strokeStyle: string | CanvasGradient | CanvasPattern;
-    fillRect(x: number, y: number, width: number, height: number): void;
-    clearRect(x: number, y: number, width: number, height: number): void;
-    strokeRect(x: number, y: number, width: number, height: number): void;
-    getImageData(sx: number, sy: number, sw: number, sh: number): ImageData;
-    putImageData(imageData: ImageData, dx: number, dy: number): void;
+  canvas: HTMLCanvasElement;
+  fillStyle: string | CanvasGradient | CanvasPattern;
+  strokeStyle: string | CanvasGradient | CanvasPattern;
+  fillRect(x: number, y: number, width: number, height: number): void;
+  clearRect(x: number, y: number, width: number, height: number): void;
+  strokeRect(x: number, y: number, width: number, height: number): void;
+  getImageData(sx: number, sy: number, sw: number, sh: number): ImageData;
+  putImageData(imageData: ImageData, dx: number, dy: number): void;
 }
 
 /**
  * Offscreen Canvas Rendering Context 2D interface (minimal)
  */
 export interface OffscreenCanvasRenderingContext2D {
-    canvas: OffscreenCanvas;
-    fillStyle: string | CanvasGradient | CanvasPattern;
-    strokeStyle: string | CanvasGradient | CanvasPattern;
-    fillRect(x: number, y: number, width: number, height: number): void;
-    clearRect(x: number, y: number, width: number, height: number): void;
-    strokeRect(x: number, y: number, width: number, height: number): void;
-    getImageData(sx: number, sy: number, sw: number, sh: number): ImageData;
-    putImageData(imageData: ImageData, dx: number, dy: number): void;
+  canvas: OffscreenCanvas;
+  fillStyle: string | CanvasGradient | CanvasPattern;
+  strokeStyle: string | CanvasGradient | CanvasPattern;
+  fillRect(x: number, y: number, width: number, height: number): void;
+  clearRect(x: number, y: number, width: number, height: number): void;
+  strokeRect(x: number, y: number, width: number, height: number): void;
+  getImageData(sx: number, sy: number, sw: number, sh: number): ImageData;
+  putImageData(imageData: ImageData, dx: number, dy: number): void;
 }
 
 /**
  * WebGL Rendering Context (minimal stub)
  */
 export interface WebGLRenderingContext {
-    canvas: HTMLCanvasElement | OffscreenCanvas;
-    drawingBufferWidth: number;
-    drawingBufferHeight: number;
+  canvas: HTMLCanvasElement | OffscreenCanvas;
+  drawingBufferWidth: number;
+  drawingBufferHeight: number;
 }
 
 /**
  * Canvas Gradient interface
  */
 export interface CanvasGradient {
-    addColorStop(offset: number, color: string): void;
+  addColorStop(offset: number, color: string): void;
 }
 
 /**
  * Canvas Pattern interface
  */
 export interface CanvasPattern {
-    setTransform(transform?: DOMMatrix): void;
+  setTransform(transform?: DOMMatrix): void;
 }
 
 /**
  * DOM Rect interface
  */
 export interface DOMRect {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    top: number;
-    right: number;
-    bottom: number;
-    left: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
 }
 
 /**
  * DOM Matrix interface (minimal)
  */
 export interface DOMMatrix {
-    a: number;
-    b: number;
-    c: number;
-    d: number;
-    e: number;
-    f: number;
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  e: number;
+  f: number;
 }
 
 /**
  * Blob interface
  */
 export interface Blob {
-    readonly size: number;
-    readonly type: string;
-    arrayBuffer(): Promise<ArrayBuffer>;
-    slice(start?: number, end?: number, contentType?: string): Blob;
-    stream(): ReadableStream<Uint8Array>;
-    text(): Promise<string>;
+  readonly size: number;
+  readonly type: string;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  slice(start?: number, end?: number, contentType?: string): Blob;
+  stream(): ReadableStream<Uint8Array>;
+  text(): Promise<string>;
 }
 
 /**
  * ResizeObserver interface
  */
 export interface ResizeObserver {
-    observe(target: Element): void;
-    unobserve(target: Element): void;
-    disconnect(): void;
+  observe(target: Element): void;
+  unobserve(target: Element): void;
+  disconnect(): void;
 }
 
 /**
  * ResizeObserver entry
  */
 export interface ResizeObserverEntry {
-    readonly target: Element;
-    readonly contentRect: DOMRect;
-    readonly borderBoxSize: ReadonlyArray<ResizeObserverSize>;
-    readonly contentBoxSize: ReadonlyArray<ResizeObserverSize>;
-    readonly devicePixelContentBoxSize: ReadonlyArray<ResizeObserverSize>;
+  readonly target: Element;
+  readonly contentRect: DOMRect;
+  readonly borderBoxSize: ReadonlyArray<ResizeObserverSize>;
+  readonly contentBoxSize: ReadonlyArray<ResizeObserverSize>;
+  readonly devicePixelContentBoxSize: ReadonlyArray<ResizeObserverSize>;
 }
 
 /**
  * ResizeObserver size
  */
 export interface ResizeObserverSize {
-    readonly inlineSize: number;
-    readonly blockSize: number;
+  readonly inlineSize: number;
+  readonly blockSize: number;
 }
 
 /**
  * Element interface (minimal)
  */
 export interface Element {
-    readonly tagName: string;
+  readonly tagName: string;
 }
 
 // ============================================================================

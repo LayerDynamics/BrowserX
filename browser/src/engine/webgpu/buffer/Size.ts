@@ -7,11 +7,11 @@
  * Uses webgpu_x Rust FFI for optimized alignment and texture buffer calculations.
  */
 
-import type { GPUSize, ByteCount } from "../../../types/webgpu.ts";
+import type { ByteCount, GPUSize } from "../../../types/webgpu.ts";
 import {
-    calculateAlignedSize as webgpuCalculateAlignedSize,
-    getPaddedRowSize,
-    calculateTextureBufferSize as webgpuCalculateTextureBufferSize,
+  calculateAlignedSize as webgpuCalculateAlignedSize,
+  calculateTextureBufferSize as webgpuCalculateTextureBufferSize,
+  getPaddedRowSize,
 } from "../utils/BufferHelpers.ts";
 
 // ============================================================================
@@ -62,81 +62,81 @@ export const TEXTURE_DATA_ALIGNMENT = 256;
  * WGSL scalar type sizes (bytes)
  */
 export const WGSL_TYPE_SIZES = {
-    i32: 4,
-    u32: 4,
-    f32: 4,
-    f16: 2,
-    bool: 4, // Stored as u32
+  i32: 4,
+  u32: 4,
+  f32: 4,
+  f16: 2,
+  bool: 4, // Stored as u32
 } as const;
 
 /**
  * WGSL vector type sizes (bytes)
  */
 export const WGSL_VECTOR_SIZES = {
-    vec2i: 8,
-    vec2u: 8,
-    vec2f: 8,
-    vec2h: 4,
-    vec3i: 12,
-    vec3u: 12,
-    vec3f: 12,
-    vec3h: 6,
-    vec4i: 16,
-    vec4u: 16,
-    vec4f: 16,
-    vec4h: 8,
+  vec2i: 8,
+  vec2u: 8,
+  vec2f: 8,
+  vec2h: 4,
+  vec3i: 12,
+  vec3u: 12,
+  vec3f: 12,
+  vec3h: 6,
+  vec4i: 16,
+  vec4u: 16,
+  vec4f: 16,
+  vec4h: 8,
 } as const;
 
 /**
  * WGSL matrix type sizes (bytes)
  */
 export const WGSL_MATRIX_SIZES = {
-    mat2x2f: 16,
-    mat2x3f: 24,
-    mat2x4f: 32,
-    mat3x2f: 24,
-    mat3x3f: 48,
-    mat3x4f: 48,
-    mat4x2f: 32,
-    mat4x3f: 48,
-    mat4x4f: 64,
+  mat2x2f: 16,
+  mat2x3f: 24,
+  mat2x4f: 32,
+  mat3x2f: 24,
+  mat3x3f: 48,
+  mat3x4f: 48,
+  mat4x2f: 32,
+  mat4x3f: 48,
+  mat4x4f: 64,
 } as const;
 
 /**
  * WGSL type alignments (bytes)
  */
 export const WGSL_TYPE_ALIGNMENTS = {
-    // Scalars
-    i32: 4,
-    u32: 4,
-    f32: 4,
-    f16: 2,
-    bool: 4,
-    // Vec2
-    vec2i: 8,
-    vec2u: 8,
-    vec2f: 8,
-    vec2h: 4,
-    // Vec3
-    vec3i: 16,
-    vec3u: 16,
-    vec3f: 16,
-    vec3h: 8,
-    // Vec4
-    vec4i: 16,
-    vec4u: 16,
-    vec4f: 16,
-    vec4h: 8,
-    // Matrices (column-major)
-    mat2x2f: 8,
-    mat2x3f: 16,
-    mat2x4f: 16,
-    mat3x2f: 8,
-    mat3x3f: 16,
-    mat3x4f: 16,
-    mat4x2f: 8,
-    mat4x3f: 16,
-    mat4x4f: 16,
+  // Scalars
+  i32: 4,
+  u32: 4,
+  f32: 4,
+  f16: 2,
+  bool: 4,
+  // Vec2
+  vec2i: 8,
+  vec2u: 8,
+  vec2f: 8,
+  vec2h: 4,
+  // Vec3
+  vec3i: 16,
+  vec3u: 16,
+  vec3f: 16,
+  vec3h: 8,
+  // Vec4
+  vec4i: 16,
+  vec4u: 16,
+  vec4f: 16,
+  vec4h: 8,
+  // Matrices (column-major)
+  mat2x2f: 8,
+  mat2x3f: 16,
+  mat2x4f: 16,
+  mat3x2f: 8,
+  mat3x3f: 16,
+  mat3x4f: 16,
+  mat4x2f: 8,
+  mat4x3f: 16,
+  mat4x4f: 16,
 } as const;
 
 // ============================================================================
@@ -153,16 +153,16 @@ export const WGSL_TYPE_ALIGNMENTS = {
  * @returns Aligned size
  */
 export function alignSize(size: GPUSize, alignment: number): GPUSize {
-    if (alignment === 0) {
-        throw new Error("Alignment must be non-zero");
-    }
+  if (alignment === 0) {
+    throw new Error("Alignment must be non-zero");
+  }
 
-    if (!isPowerOf2(alignment)) {
-        throw new Error(`Alignment must be power of 2, got ${alignment}`);
-    }
+  if (!isPowerOf2(alignment)) {
+    throw new Error(`Alignment must be power of 2, got ${alignment}`);
+  }
 
-    // Use webgpu_x Rust FFI for alignment calculation
-    return Number(webgpuCalculateAlignedSize(BigInt(size), BigInt(alignment))) as GPUSize;
+  // Use webgpu_x Rust FFI for alignment calculation
+  return Number(webgpuCalculateAlignedSize(BigInt(size), BigInt(alignment))) as GPUSize;
 }
 
 /**
@@ -173,7 +173,7 @@ export function alignSize(size: GPUSize, alignment: number): GPUSize {
  * @returns True if size is aligned
  */
 export function isAligned(size: GPUSize, alignment: number): boolean {
-    return (size % alignment) === 0;
+  return (size % alignment) === 0;
 }
 
 /**
@@ -184,8 +184,8 @@ export function isAligned(size: GPUSize, alignment: number): boolean {
  * @returns Padding bytes needed
  */
 export function calculatePadding(size: GPUSize, alignment: number): GPUSize {
-    const aligned = alignSize(size, alignment);
-    return (aligned - size) as GPUSize;
+  const aligned = alignSize(size, alignment);
+  return (aligned - size) as GPUSize;
 }
 
 // ============================================================================
@@ -201,7 +201,7 @@ export function calculatePadding(size: GPUSize, alignment: number): GPUSize {
  * @returns Aligned buffer size
  */
 export function calculateUniformBufferSize(dataSize: GPUSize): GPUSize {
-    return alignSize(dataSize, UNIFORM_BUFFER_ALIGNMENT);
+  return alignSize(dataSize, UNIFORM_BUFFER_ALIGNMENT);
 }
 
 /**
@@ -213,7 +213,7 @@ export function calculateUniformBufferSize(dataSize: GPUSize): GPUSize {
  * @returns Aligned buffer size
  */
 export function calculateStorageBufferSize(dataSize: GPUSize): GPUSize {
-    return alignSize(dataSize, STORAGE_BUFFER_ALIGNMENT);
+  return alignSize(dataSize, STORAGE_BUFFER_ALIGNMENT);
 }
 
 /**
@@ -225,7 +225,7 @@ export function calculateStorageBufferSize(dataSize: GPUSize): GPUSize {
  * @returns Aligned buffer size
  */
 export function calculateVertexBufferSize(dataSize: GPUSize): GPUSize {
-    return alignSize(dataSize, VERTEX_BUFFER_ALIGNMENT);
+  return alignSize(dataSize, VERTEX_BUFFER_ALIGNMENT);
 }
 
 /**
@@ -236,15 +236,15 @@ export function calculateVertexBufferSize(dataSize: GPUSize): GPUSize {
  * @returns Aligned buffer size
  */
 export function calculateIndexBufferSize(
-    indexCount: number,
-    indexFormat: "uint16" | "uint32",
+  indexCount: number,
+  indexFormat: "uint16" | "uint32",
 ): GPUSize {
-    const bytesPerIndex = indexFormat === "uint32" ? 4 : 2;
-    const size = (indexCount * bytesPerIndex) as GPUSize;
-    const alignment = indexFormat === "uint32"
-        ? INDEX_BUFFER_ALIGNMENT_U32
-        : INDEX_BUFFER_ALIGNMENT_U16;
-    return alignSize(size, alignment);
+  const bytesPerIndex = indexFormat === "uint32" ? 4 : 2;
+  const size = (indexCount * bytesPerIndex) as GPUSize;
+  const alignment = indexFormat === "uint32"
+    ? INDEX_BUFFER_ALIGNMENT_U32
+    : INDEX_BUFFER_ALIGNMENT_U16;
+  return alignSize(size, alignment);
 }
 
 /**
@@ -256,7 +256,7 @@ export function calculateIndexBufferSize(
  * @returns Aligned buffer size
  */
 export function calculateStagingBufferSize(dataSize: GPUSize): GPUSize {
-    return alignSize(dataSize, COPY_BUFFER_ALIGNMENT);
+  return alignSize(dataSize, COPY_BUFFER_ALIGNMENT);
 }
 
 // ============================================================================
@@ -271,32 +271,32 @@ export function calculateStagingBufferSize(dataSize: GPUSize): GPUSize {
  * @returns Total struct size with padding
  */
 export function calculateStructSize(
-    fields: GPUSize[],
-    alignments: number[],
+  fields: GPUSize[],
+  alignments: number[],
 ): GPUSize {
-    if (fields.length !== alignments.length) {
-        throw new Error("Fields and alignments arrays must have same length");
-    }
+  if (fields.length !== alignments.length) {
+    throw new Error("Fields and alignments arrays must have same length");
+  }
 
-    let offset = 0 as GPUSize;
-    let maxAlignment = 0;
+  let offset = 0 as GPUSize;
+  let maxAlignment = 0;
 
-    for (let i = 0; i < fields.length; i++) {
-        const fieldSize = fields[i];
-        const fieldAlignment = alignments[i];
+  for (let i = 0; i < fields.length; i++) {
+    const fieldSize = fields[i];
+    const fieldAlignment = alignments[i];
 
-        // Track maximum alignment for struct alignment
-        maxAlignment = Math.max(maxAlignment, fieldAlignment);
+    // Track maximum alignment for struct alignment
+    maxAlignment = Math.max(maxAlignment, fieldAlignment);
 
-        // Align field offset
-        offset = alignSize(offset, fieldAlignment);
+    // Align field offset
+    offset = alignSize(offset, fieldAlignment);
 
-        // Add field size
-        offset = (offset + fieldSize) as GPUSize;
-    }
+    // Add field size
+    offset = (offset + fieldSize) as GPUSize;
+  }
 
-    // Final struct size must be aligned to maximum field alignment
-    return alignSize(offset, maxAlignment);
+  // Final struct size must be aligned to maximum field alignment
+  return alignSize(offset, maxAlignment);
 }
 
 /**
@@ -308,13 +308,13 @@ export function calculateStructSize(
  * @returns Total array size
  */
 export function calculateArraySize(
-    elementSize: GPUSize,
-    elementAlignment: number,
-    elementCount: number,
+  elementSize: GPUSize,
+  elementAlignment: number,
+  elementCount: number,
 ): GPUSize {
-    // Array stride is element size aligned to element alignment
-    const stride = alignSize(elementSize, elementAlignment);
-    return (stride * elementCount) as GPUSize;
+  // Array stride is element size aligned to element alignment
+  const stride = alignSize(elementSize, elementAlignment);
+  return (stride * elementCount) as GPUSize;
 }
 
 /**
@@ -327,10 +327,10 @@ export function calculateArraySize(
  * @returns Array stride
  */
 export function calculateArrayStride(
-    elementSize: GPUSize,
-    elementAlignment: number,
+  elementSize: GPUSize,
+  elementAlignment: number,
 ): GPUSize {
-    return alignSize(elementSize, elementAlignment);
+  return alignSize(elementSize, elementAlignment);
 }
 
 // ============================================================================
@@ -348,12 +348,12 @@ export function calculateArrayStride(
  * @returns Aligned bytes per row
  */
 export function calculateBytesPerRow(
-    width: number,
-    bytesPerPixel: number,
+  width: number,
+  bytesPerPixel: number,
 ): number {
-    const unalignedBytesPerRow = width * bytesPerPixel;
-    // Use webgpu_x Rust FFI for padded row size calculation
-    return Number(getPaddedRowSize(BigInt(unalignedBytesPerRow)));
+  const unalignedBytesPerRow = width * bytesPerPixel;
+  // Use webgpu_x Rust FFI for padded row size calculation
+  return Number(getPaddedRowSize(BigInt(unalignedBytesPerRow)));
 }
 
 /**
@@ -368,12 +368,12 @@ export function calculateBytesPerRow(
  * @returns Total buffer size for texture
  */
 export function calculateTextureBufferSize(
-    width: number,
-    height: number,
-    bytesPerPixel: number,
+  width: number,
+  height: number,
+  bytesPerPixel: number,
 ): GPUSize {
-    // Use webgpu_x Rust FFI for texture buffer size calculation
-    return Number(webgpuCalculateTextureBufferSize(width, height, bytesPerPixel)) as GPUSize;
+  // Use webgpu_x Rust FFI for texture buffer size calculation
+  return Number(webgpuCalculateTextureBufferSize(width, height, bytesPerPixel)) as GPUSize;
 }
 
 // ============================================================================
@@ -387,7 +387,7 @@ export function calculateTextureBufferSize(
  * @returns True if power of 2
  */
 export function isPowerOf2(n: number): boolean {
-    return n > 0 && (n & (n - 1)) === 0;
+  return n > 0 && (n & (n - 1)) === 0;
 }
 
 /**
@@ -397,14 +397,14 @@ export function isPowerOf2(n: number): boolean {
  * @returns Next power of 2
  */
 export function nextPowerOf2(n: number): number {
-    if (n <= 0) return 1;
-    if (isPowerOf2(n)) return n;
+  if (n <= 0) return 1;
+  if (isPowerOf2(n)) return n;
 
-    let power = 1;
-    while (power < n) {
-        power *= 2;
-    }
-    return power;
+  let power = 1;
+  while (power < n) {
+    power *= 2;
+  }
+  return power;
 }
 
 /**
@@ -416,9 +416,9 @@ export function nextPowerOf2(n: number): number {
  * @returns Total buffer size
  */
 export function calculateInstanceBufferSize(
-    instanceSize: GPUSize,
-    instanceAlignment: number,
-    instanceCount: number,
+  instanceSize: GPUSize,
+  instanceAlignment: number,
+  instanceCount: number,
 ): GPUSize {
-    return calculateArraySize(instanceSize, instanceAlignment, instanceCount);
+  return calculateArraySize(instanceSize, instanceAlignment, instanceCount);
 }

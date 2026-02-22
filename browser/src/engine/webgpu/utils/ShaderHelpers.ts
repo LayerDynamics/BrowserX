@@ -9,15 +9,15 @@
  * @module webgpu/utils/ShaderHelpers
  */
 
-import { WebGPUX, type ShaderCacheStats, type ShaderSource } from "@browserx/webgpu_x";
+import { type ShaderCacheStats, type ShaderSource, WebGPUX } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 
 function getWebGPUX(): WebGPUX {
-    if (!webgpuXInstance) {
-        webgpuXInstance = new WebGPUX();
-    }
-    return webgpuXInstance;
+  if (!webgpuXInstance) {
+    webgpuXInstance = new WebGPUX();
+  }
+  return webgpuXInstance;
 }
 
 // ============================================================================
@@ -30,8 +30,8 @@ function getWebGPUX(): WebGPUX {
  * @returns Cache handle ID
  */
 export function createShaderCache(): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.createShaderCache();
+  const webgpuX = getWebGPUX();
+  return webgpuX.createShaderCache();
 }
 
 /**
@@ -42,8 +42,8 @@ export function createShaderCache(): bigint {
  * @returns Shader source object with code and metadata, or null if failed
  */
 export function loadShader(cacheHandle: bigint, filePath: string): ShaderSource | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.shaderCacheLoad(cacheHandle, filePath);
+  const webgpuX = getWebGPUX();
+  return webgpuX.shaderCacheLoad(cacheHandle, filePath);
 }
 
 /**
@@ -54,32 +54,32 @@ export function loadShader(cacheHandle: bigint, filePath: string): ShaderSource 
  * @returns true if file changed, false otherwise
  */
 export function hasShaderChanged(cacheHandle: bigint, filePath: string): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.shaderCacheHasChanged(cacheHandle, filePath);
+  const webgpuX = getWebGPUX();
+  return webgpuX.shaderCacheHasChanged(cacheHandle, filePath);
 }
 
 /**
  * Clear shader cache
  */
 export function clearShaderCache(cacheHandle: bigint): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.shaderCacheClear(cacheHandle);
+  const webgpuX = getWebGPUX();
+  webgpuX.shaderCacheClear(cacheHandle);
 }
 
 /**
  * Get shader cache statistics
  */
 export function getShaderCacheStats(cacheHandle: bigint): ShaderCacheStats | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.shaderCacheStats(cacheHandle);
+  const webgpuX = getWebGPUX();
+  return webgpuX.shaderCacheStats(cacheHandle);
 }
 
 /**
  * Destroy shader cache and release resources
  */
 export function destroyShaderCache(cacheHandle: bigint): void {
-    const webgpuX = getWebGPUX();
-    webgpuX.destroyShaderCache(cacheHandle);
+  const webgpuX = getWebGPUX();
+  webgpuX.destroyShaderCache(cacheHandle);
 }
 
 // ============================================================================
@@ -96,38 +96,38 @@ export function destroyShaderCache(cacheHandle: bigint): void {
  * @returns WGSL binding code
  */
 export function wgslBindingBuffer(
-    group: number,
-    binding: number,
-    bufferType: string,
-    structDef: string
+  group: number,
+  binding: number,
+  bufferType: string,
+  structDef: string,
 ): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.wgslBindingBuffer(group, binding, bufferType, structDef);
+  const webgpuX = getWebGPUX();
+  return webgpuX.wgslBindingBuffer(group, binding, bufferType, structDef);
 }
 
 /**
  * Generate WGSL texture binding
  */
 export function wgslBindingTexture(
-    group: number,
-    binding: number,
-    textureType: string,
-    sampleType: string
+  group: number,
+  binding: number,
+  textureType: string,
+  sampleType: string,
 ): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.wgslBindingTexture(group, binding, textureType, sampleType);
+  const webgpuX = getWebGPUX();
+  return webgpuX.wgslBindingTexture(group, binding, textureType, sampleType);
 }
 
 /**
  * Generate WGSL sampler binding
  */
 export function wgslBindingSampler(
-    group: number,
-    binding: number,
-    samplerType: string
+  group: number,
+  binding: number,
+  samplerType: string,
 ): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.wgslBindingSampler(group, binding, samplerType);
+  const webgpuX = getWebGPUX();
+  return webgpuX.wgslBindingSampler(group, binding, samplerType);
 }
 
 /**
@@ -138,8 +138,10 @@ export function wgslBindingSampler(
  * @returns Complete WGSL compute shader
  */
 export function wgslComputeEntry(workgroupSize: [number, number, number], body: string): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.wgslComputeEntry("main", workgroupSize[0], workgroupSize[1], workgroupSize[2], ["@builtin(global_invocation_id) id: vec3<u32>"], body);
+  const webgpuX = getWebGPUX();
+  return webgpuX.wgslComputeEntry("main", workgroupSize[0], workgroupSize[1], workgroupSize[2], [
+    "@builtin(global_invocation_id) id: vec3<u32>",
+  ], body);
 }
 
 // Re-export types

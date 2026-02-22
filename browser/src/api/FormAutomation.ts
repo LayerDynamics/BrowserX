@@ -115,7 +115,10 @@ export interface DetectedForm {
 /**
  * Form fill data - maps field name/id to value
  */
-export type FormFillData = Record<string, string | string[] | boolean | File | FileUploadInfo | FileUploadInfo[]>;
+export type FormFillData = Record<
+  string,
+  string | string[] | boolean | File | FileUploadInfo | FileUploadInfo[]
+>;
 
 /**
  * Form fill options
@@ -252,7 +255,7 @@ export class FormAutomation {
     }
 
     // Prioritize forms with more fields, submit button, and visible fields
-    const scored = forms.map(form => ({
+    const scored = forms.map((form) => ({
       form,
       score: this.scoreForm(form),
     }));
@@ -269,7 +272,8 @@ export class FormAutomation {
     const name = await formElement.getAttribute("name");
     const action = await formElement.getAttribute("action") || "";
     const method = (await formElement.getAttribute("method") || "GET").toUpperCase();
-    const enctype = await formElement.getAttribute("enctype") || "application/x-www-form-urlencoded";
+    const enctype = await formElement.getAttribute("enctype") ||
+      "application/x-www-form-urlencoded";
 
     const selector = id ? `form#${id}` : `form:nth-of-type(${index + 1})`;
 
@@ -277,7 +281,7 @@ export class FormAutomation {
     const fields = await this.detectFields(selector);
 
     // Check for file uploads
-    const hasFileUpload = fields.some(f => f.type === "file");
+    const hasFileUpload = fields.some((f) => f.type === "file");
 
     // Detect CAPTCHA
     const { hasCaptcha, captchaType } = await this.detectCaptcha(selector);
@@ -327,7 +331,10 @@ export class FormAutomation {
   /**
    * Analyze a single field element
    */
-  private async analyzeField(element: DOMElement, fallbackSelector: string): Promise<FormField | null> {
+  private async analyzeField(
+    element: DOMElement,
+    fallbackSelector: string,
+  ): Promise<FormField | null> {
     const tagName = (await element.getProperty("tagName") as string || "").toLowerCase();
     const inputType = (await element.getAttribute("type") || "text").toLowerCase();
     const name = await element.getAttribute("name") || "";
@@ -432,7 +439,7 @@ export class FormAutomation {
   private async getFieldOptions(
     _element: DOMElement,
     type: FormFieldType,
-    name: string
+    name: string,
   ): Promise<FormFieldOption[]> {
     const options: FormFieldOption[] = [];
 
@@ -482,7 +489,9 @@ export class FormAutomation {
   }> {
     // Check for reCAPTCHA
     try {
-      const recaptchaElements = await this.page.query(`${formSelector} .g-recaptcha, ${formSelector} [data-sitekey]`);
+      const recaptchaElements = await this.page.query(
+        `${formSelector} .g-recaptcha, ${formSelector} [data-sitekey]`,
+      );
       if (recaptchaElements.length > 0) {
         return { hasCaptcha: true, captchaType: "recaptcha" };
       }
@@ -513,7 +522,7 @@ export class FormAutomation {
     // Check for generic CAPTCHA patterns
     try {
       const genericCaptchaElements = await this.page.query(
-        `${formSelector} [class*="captcha"], ${formSelector} [id*="captcha"]`
+        `${formSelector} [class*="captcha"], ${formSelector} [id*="captcha"]`,
       );
       if (genericCaptchaElements.length > 0) {
         return { hasCaptcha: true, captchaType: "custom" };
@@ -535,15 +544,15 @@ export class FormAutomation {
     score += form.fields.length * 10;
 
     // Required fields indicate importance
-    score += form.fields.filter(f => f.required).length * 5;
+    score += form.fields.filter((f) => f.required).length * 5;
 
     // Password field suggests login/registration
-    if (form.fields.some(f => f.type === "password")) {
+    if (form.fields.some((f) => f.type === "password")) {
       score += 20;
     }
 
     // Email field is common in important forms
-    if (form.fields.some(f => f.type === "email")) {
+    if (form.fields.some((f) => f.type === "email")) {
       score += 15;
     }
 
@@ -558,7 +567,7 @@ export class FormAutomation {
     }
 
     // Penalize forms with only hidden fields
-    const visibleFields = form.fields.filter(f => f.type !== "hidden");
+    const visibleFields = form.fields.filter((f) => f.type !== "hidden");
     if (visibleFields.length === 0) {
       score -= 50;
     }
@@ -572,7 +581,7 @@ export class FormAutomation {
   async fillForm(
     formSelector: string,
     data: FormFillData,
-    options: FormFillOptions = {}
+    options: FormFillOptions = {},
   ): Promise<void> {
     const {
       clearFirst = true,
@@ -652,7 +661,9 @@ export class FormAutomation {
             }
             await this.uploadFile(fieldSelector, fileInfo);
           } else {
-            console.warn(`Invalid file upload value for ${fieldName}: expected string, array, or FileUploadInfo`);
+            console.warn(
+              `Invalid file upload value for ${fieldName}: expected string, array, or FileUploadInfo`,
+            );
           }
         } else {
           // Text-like inputs and textarea
@@ -692,7 +703,10 @@ export class FormAutomation {
   /**
    * Fill a checkbox field
    */
-  private async fillCheckboxField(selector: string, value: boolean | string | string[]): Promise<void> {
+  private async fillCheckboxField(
+    selector: string,
+    value: boolean | string | string[],
+  ): Promise<void> {
     const elements = await this.page.query(selector);
     if (elements.length === 0) return;
 
@@ -708,8 +722,13 @@ export class FormAutomation {
   /**
    * Fill a radio field group
    */
-  private async fillRadioField(formSelector: string, fieldName: string, value: string): Promise<void> {
-    const radioSelector = `${formSelector} input[type="radio"][name="${fieldName}"][value="${value}"]`;
+  private async fillRadioField(
+    formSelector: string,
+    fieldName: string,
+    value: string,
+  ): Promise<void> {
+    const radioSelector =
+      `${formSelector} input[type="radio"][name="${fieldName}"][value="${value}"]`;
     await this.page.click(radioSelector);
   }
 
@@ -736,7 +755,7 @@ export class FormAutomation {
    */
   async submitForm(
     formSelector: string,
-    options: FormSubmitOptions = {}
+    options: FormSubmitOptions = {},
   ): Promise<FormSubmitResult> {
     const {
       waitForNavigation = true,
@@ -748,7 +767,8 @@ export class FormAutomation {
 
     try {
       // Find submit button
-      const submitButtonSelector = `${formSelector} button[type="submit"], ${formSelector} input[type="submit"], ${formSelector} button:not([type])`;
+      const submitButtonSelector =
+        `${formSelector} button[type="submit"], ${formSelector} input[type="submit"], ${formSelector} button:not([type])`;
 
       const submitButtons = await this.page.query(submitButtonSelector);
 
@@ -804,7 +824,6 @@ export class FormAutomation {
 
       // Default to success if no explicit conditions
       return { success: true, finalUrl };
-
     } catch (error) {
       return {
         success: false,
@@ -819,7 +838,7 @@ export class FormAutomation {
    */
   private async waitForNavigationOrTimeout(timeout: number): Promise<void> {
     // Simplified - in real implementation, would use page navigation events
-    await new Promise(resolve => setTimeout(resolve, Math.min(timeout, 1000)));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(timeout, 1000)));
   }
 
   /**
@@ -832,7 +851,7 @@ export class FormAutomation {
    */
   async uploadFile(
     fieldSelector: string,
-    fileInfo: FileUploadInfo
+    fileInfo: FileUploadInfo,
   ): Promise<void> {
     // Find the file input element
     const fileInputs = await this.page.query(fieldSelector);
@@ -862,7 +881,7 @@ export class FormAutomation {
         throw new Error(
           `Failed to read file: ${fileInfo.filePath}: ${
             error instanceof Error ? error.message : String(error)
-          }`
+          }`,
         );
       }
     } else {
@@ -884,7 +903,7 @@ export class FormAutomation {
       const isAccepted = this.validateFileType(fileData.type, fileData.name, acceptAttr);
       if (!isAccepted) {
         throw new Error(
-          `File type '${fileData.type}' (${fileData.name}) is not accepted. Allowed types: ${acceptAttr}`
+          `File type '${fileData.type}' (${fileData.name}) is not accepted. Allowed types: ${acceptAttr}`,
         );
       }
     }
@@ -904,7 +923,7 @@ export class FormAutomation {
         const dataTransfer = new DataTransfer();
 
         // Create a File object from the provided data
-        const fileContent = new Uint8Array([${Array.from(fileContent).join(',')}]);
+        const fileContent = new Uint8Array([${Array.from(fileContent).join(",")}]);
         const file = new File([fileContent], '${this.escapeString(fileData.name)}', {
           type: '${this.escapeString(fileData.type)}',
           lastModified: ${fileData.lastModified}
@@ -941,11 +960,13 @@ export class FormAutomation {
 
       // Log success (useful for debugging multi-file support)
       if (supportsMultiple) {
-        console.log(`Uploaded file: ${result.fileName} (${result.fileSize} bytes) to multi-file input`);
+        console.log(
+          `Uploaded file: ${result.fileName} (${result.fileSize} bytes) to multi-file input`,
+        );
       }
     } catch (error) {
       throw new Error(
-        `File upload failed: ${error instanceof Error ? error.message : String(error)}`
+        `File upload failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -955,7 +976,7 @@ export class FormAutomation {
    */
   async uploadMultipleFiles(
     fieldSelector: string,
-    files: FileUploadInfo[]
+    files: FileUploadInfo[],
   ): Promise<void> {
     if (files.length === 0) {
       throw new Error("No files provided for upload");
@@ -973,7 +994,7 @@ export class FormAutomation {
     const multipleAttr = await fileInput.getAttribute("multiple");
     if (multipleAttr === null && files.length > 1) {
       throw new Error(
-        `File input does not support multiple files. Use uploadFile() for single file upload.`
+        `File input does not support multiple files. Use uploadFile() for single file upload.`,
       );
     }
 
@@ -997,11 +1018,13 @@ export class FormAutomation {
           throw new Error(
             `Failed to read file: ${fileInfo.filePath}: ${
               error instanceof Error ? error.message : String(error)
-            }`
+            }`,
           );
         }
       } else {
-        throw new Error(`Either filePath or content must be provided for file: ${fileInfo.fileName}`);
+        throw new Error(
+          `Either filePath or content must be provided for file: ${fileInfo.fileName}`,
+        );
       }
 
       fileDataArray.push({
@@ -1013,7 +1036,7 @@ export class FormAutomation {
     }
 
     // Build the upload script for multiple files
-    const filesJson = fileDataArray.map(fd => ({
+    const filesJson = fileDataArray.map((fd) => ({
       name: fd.name,
       type: fd.type,
       content: Array.from(fd.content),
@@ -1066,7 +1089,7 @@ export class FormAutomation {
       }
     } catch (error) {
       throw new Error(
-        `Multiple file upload failed: ${error instanceof Error ? error.message : String(error)}`
+        `Multiple file upload failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -1075,7 +1098,7 @@ export class FormAutomation {
    * Validate file type against accept attribute
    */
   private validateFileType(mimeType: string, fileName: string, acceptAttr: string): boolean {
-    const acceptedTypes = acceptAttr.split(",").map(t => t.trim().toLowerCase());
+    const acceptedTypes = acceptAttr.split(",").map((t) => t.trim().toLowerCase());
 
     for (const accepted of acceptedTypes) {
       // Check for wildcard MIME type (e.g., "image/*")
@@ -1084,16 +1107,14 @@ export class FormAutomation {
         if (mimeType.toLowerCase().startsWith(prefix)) {
           return true;
         }
-      }
-      // Check for exact MIME type match
+      } // Check for exact MIME type match
       else if (accepted.startsWith(".")) {
         // Extension match (e.g., ".pdf")
         const extension = accepted;
         if (fileName.toLowerCase().endsWith(extension)) {
           return true;
         }
-      }
-      // Check for exact MIME type
+      } // Check for exact MIME type
       else if (mimeType.toLowerCase() === accepted) {
         return true;
       }
@@ -1191,11 +1212,12 @@ export class FormAutomation {
    */
   async executeMultiStepForm(
     initialFormSelector: string,
-    config: MultiStepFormConfig
+    config: MultiStepFormConfig,
   ): Promise<FormSubmitResult> {
     const {
       steps,
-      nextButtonSelector = 'button:contains("Next"), button:contains("Continue"), [type="submit"]:contains("Next")',
+      nextButtonSelector =
+        'button:contains("Next"), button:contains("Continue"), [type="submit"]:contains("Next")',
       maxSteps = 10,
       stepTimeout = 30000,
     } = config;
@@ -1254,7 +1276,7 @@ export class FormAutomation {
             });
           } else {
             // Default wait
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, 500));
           }
         }
 
@@ -1263,7 +1285,9 @@ export class FormAutomation {
         return {
           success: false,
           finalUrl: this.page.getCurrentURL() || "",
-          error: `Step ${currentStep + 1} failed: ${error instanceof Error ? error.message : String(error)}`,
+          error: `Step ${currentStep + 1} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         };
       }
     }
@@ -1280,7 +1304,7 @@ export class FormAutomation {
   async autoFill(
     formSelector: string,
     data: Record<string, string>,
-    options: FormFillOptions = {}
+    options: FormFillOptions = {},
   ): Promise<{ filled: string[]; skipped: string[] }> {
     const filled: string[] = [];
     const skipped: string[] = [];
@@ -1345,7 +1369,7 @@ export class FormAutomation {
     };
 
     for (const [key, fieldPatterns] of Object.entries(patterns)) {
-      if (fieldPatterns.some(p => fieldName.includes(p)) && data[key]) {
+      if (fieldPatterns.some((p) => fieldName.includes(p)) && data[key]) {
         return data[key];
       }
     }

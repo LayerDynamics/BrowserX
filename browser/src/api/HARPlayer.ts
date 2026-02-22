@@ -6,11 +6,7 @@
  */
 
 import { BrowserPage } from "./BrowserPage.ts";
-import {
-  HAR,
-  HAREntry,
-  HARCookie,
-} from "./HARRecorder.ts";
+import { HAR, HARCookie, HAREntry } from "./HARRecorder.ts";
 
 // ============================================================================
 // Types
@@ -43,24 +39,24 @@ export interface ThrottleConfig {
  */
 export const THROTTLE_PRESETS: Record<Exclude<ThrottlePreset, "custom">, ThrottleConfig> = {
   "slow-3g": {
-    downloadThroughput: 500 * 1024,      // 500 KB/s
-    uploadThroughput: 500 * 1024,        // 500 KB/s
-    latency: 400,                         // 400ms
+    downloadThroughput: 500 * 1024, // 500 KB/s
+    uploadThroughput: 500 * 1024, // 500 KB/s
+    latency: 400, // 400ms
   },
   "fast-3g": {
     downloadThroughput: 1.6 * 1024 * 1024, // 1.6 MB/s
-    uploadThroughput: 750 * 1024,          // 750 KB/s
-    latency: 150,                          // 150ms
+    uploadThroughput: 750 * 1024, // 750 KB/s
+    latency: 150, // 150ms
   },
   "4g": {
-    downloadThroughput: 4 * 1024 * 1024,   // 4 MB/s
-    uploadThroughput: 3 * 1024 * 1024,     // 3 MB/s
-    latency: 20,                           // 20ms
+    downloadThroughput: 4 * 1024 * 1024, // 4 MB/s
+    uploadThroughput: 3 * 1024 * 1024, // 3 MB/s
+    latency: 20, // 20ms
   },
   "wifi": {
-    downloadThroughput: 30 * 1024 * 1024,  // 30 MB/s
-    uploadThroughput: 15 * 1024 * 1024,    // 15 MB/s
-    latency: 2,                            // 2ms
+    downloadThroughput: 30 * 1024 * 1024, // 30 MB/s
+    uploadThroughput: 15 * 1024 * 1024, // 15 MB/s
+    latency: 2, // 2ms
   },
   "offline": {
     downloadThroughput: 0,
@@ -207,7 +203,9 @@ export class HARPlayer {
       try {
         this.har = JSON.parse(harOrJson) as HAR;
       } catch (error) {
-        throw new Error(`Failed to parse HAR JSON: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(
+          `Failed to parse HAR JSON: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     } else {
       this.har = harOrJson;
@@ -570,7 +568,7 @@ export class HARPlayer {
    * Get list of unmatched requests
    */
   getUnmatchedRequests(): RequestLogEntry[] {
-    return this.stats.requestLog.filter(entry => !entry.matched);
+    return this.stats.requestLog.filter((entry) => !entry.matched);
   }
 
   /**
@@ -593,7 +591,7 @@ export class HARPlayer {
   assertAllRequestsMatched(): void {
     if (this.stats.unmatchedRequests > 0) {
       const unmatched = this.getUnmatchedRequests();
-      const urls = unmatched.map(r => `${r.method} ${r.url}`).join("\n  ");
+      const urls = unmatched.map((r) => `${r.method} ${r.url}`).join("\n  ");
       throw new Error(`${this.stats.unmatchedRequests} unmatched request(s):\n  ${urls}`);
     }
   }
@@ -606,7 +604,7 @@ export class HARPlayer {
   assertMatchRate(minRate: number): void {
     if (this.stats.matchRate < minRate) {
       throw new Error(
-        `Match rate ${this.stats.matchRate.toFixed(1)}% is below minimum ${minRate}%`
+        `Match rate ${this.stats.matchRate.toFixed(1)}% is below minimum ${minRate}%`,
       );
     }
   }
@@ -625,7 +623,7 @@ export class HARPlayer {
     for (const entry of this.har.log.entries) {
       // Extract cookies from requests
       for (const cookie of entry.request.cookies) {
-        if (!cookies.some(c => c.name === cookie.name && c.domain === cookie.domain)) {
+        if (!cookies.some((c) => c.name === cookie.name && c.domain === cookie.domain)) {
           cookies.push(cookie);
           if (cookie.domain) {
             domains.add(cookie.domain);
@@ -635,7 +633,7 @@ export class HARPlayer {
 
       // Extract Set-Cookie from responses
       for (const cookie of entry.response.cookies) {
-        if (!cookies.some(c => c.name === cookie.name && c.domain === cookie.domain)) {
+        if (!cookies.some((c) => c.name === cookie.name && c.domain === cookie.domain)) {
           cookies.push(cookie);
           if (cookie.domain) {
             domains.add(cookie.domain);
@@ -689,12 +687,11 @@ export class HARPlayer {
 
       // Collect auth-related cookies
       for (const cookie of entry.request.cookies) {
-        const isAuthCookie =
-          cookie.name.toLowerCase().includes("session") ||
+        const isAuthCookie = cookie.name.toLowerCase().includes("session") ||
           cookie.name.toLowerCase().includes("token") ||
           cookie.name.toLowerCase().includes("auth");
 
-        if (isAuthCookie && !auth.cookies.some(c => c.name === cookie.name)) {
+        if (isAuthCookie && !auth.cookies.some((c) => c.name === cookie.name)) {
           auth.cookies.push(cookie);
         }
       }
@@ -773,7 +770,7 @@ export class HARPlayer {
       return [];
     }
 
-    return this.har.log.entries.filter(entry => pattern.test(entry.request.url));
+    return this.har.log.entries.filter((entry) => pattern.test(entry.request.url));
   }
 
   /**
@@ -786,7 +783,7 @@ export class HARPlayer {
     }
 
     return this.har.log.entries.filter(
-      entry => entry.request.method.toUpperCase() === method.toUpperCase()
+      (entry) => entry.request.method.toUpperCase() === method.toUpperCase(),
     );
   }
 
@@ -799,7 +796,7 @@ export class HARPlayer {
       return [];
     }
 
-    return this.har.log.entries.filter(entry => {
+    return this.har.log.entries.filter((entry) => {
       if (typeof status === "number") {
         return entry.response.status === status;
       }
@@ -823,6 +820,6 @@ export class HARPlayer {
    * Helper to delay execution
    */
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

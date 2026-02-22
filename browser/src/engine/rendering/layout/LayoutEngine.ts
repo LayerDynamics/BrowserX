@@ -21,24 +21,24 @@ import { GridLayout } from "./GridLayout.ts";
  * This provides proper type narrowing instead of unsafe type assertions
  */
 function isRenderBox(obj: RenderObject): obj is RenderBox {
-    return obj instanceof RenderBox;
+  return obj instanceof RenderBox;
 }
 
 /**
  * Viewport dimensions
  */
 export interface ViewportSize {
-    width: Pixels;
-    height: Pixels;
+  width: Pixels;
+  height: Pixels;
 }
 
 /**
  * Layout statistics
  */
 export interface LayoutStats {
-    totalNodes: number;
-    layoutTime: number;
-    reflowCount: number;
+  totalNodes: number;
+  layoutTime: number;
+  reflowCount: number;
 }
 
 /**
@@ -46,379 +46,379 @@ export interface LayoutStats {
  * Coordinates layout of render tree
  */
 export class LayoutEngine {
-    private normalFlowLayout: NormalFlowLayout;
-    private flexboxLayout: FlexboxLayout;
-    private gridLayout: GridLayout;
-    private layoutStats: LayoutStats;
+  private normalFlowLayout: NormalFlowLayout;
+  private flexboxLayout: FlexboxLayout;
+  private gridLayout: GridLayout;
+  private layoutStats: LayoutStats;
 
-    constructor() {
-        this.normalFlowLayout = new NormalFlowLayout();
-        this.flexboxLayout = new FlexboxLayout();
-        this.gridLayout = new GridLayout();
-        this.layoutStats = {
-            totalNodes: 0,
-            layoutTime: 0,
-            reflowCount: 0,
-        };
+  constructor() {
+    this.normalFlowLayout = new NormalFlowLayout();
+    this.flexboxLayout = new FlexboxLayout();
+    this.gridLayout = new GridLayout();
+    this.layoutStats = {
+      totalNodes: 0,
+      layoutTime: 0,
+      reflowCount: 0,
+    };
+  }
+
+  /**
+   * Perform layout on render tree
+   * This is the main entry point for layout
+   *
+   * @param root - Root render object
+   * @param viewport - Viewport dimensions
+   * @returns Layout statistics
+   */
+  layout(root: RenderObject, viewport: ViewportSize): LayoutStats {
+    const startTime = performance.now();
+
+    // Reset stats
+    this.layoutStats.totalNodes = 0;
+    this.layoutStats.reflowCount++;
+
+    // Create initial constraints based on viewport
+    const constraints: LayoutConstraints = {
+      minWidth: 0 as Pixels,
+      maxWidth: viewport.width,
+      minHeight: 0 as Pixels,
+      maxHeight: viewport.height,
+    };
+
+    // Layout root and its subtree
+    this.layoutNode(root, constraints);
+
+    // Calculate stats
+    this.layoutStats.layoutTime = performance.now() - startTime;
+    this.layoutStats.totalNodes = this.countNodes(root);
+
+    return { ...this.layoutStats };
+  }
+
+  /**
+   * Layout a single node
+   * Dispatches to appropriate layout algorithm based on display type
+   */
+  private layoutNode(node: RenderObject, constraints: LayoutConstraints): void {
+    // Skip if node doesn't need layout
+    if (!node.needsLayout) {
+      return;
     }
 
-    /**
-     * Perform layout on render tree
-     * This is the main entry point for layout
-     *
-     * @param root - Root render object
-     * @param viewport - Viewport dimensions
-     * @returns Layout statistics
-     */
-    layout(root: RenderObject, viewport: ViewportSize): LayoutStats {
-        const startTime = performance.now();
+    // Perform layout
+    node.doLayout(constraints);
 
-        // Reset stats
-        this.layoutStats.totalNodes = 0;
-        this.layoutStats.reflowCount++;
+    // Layout children based on display type
+    if (node.children.length > 0) {
+      this.layoutChildren(node, constraints);
+    }
+  }
 
-        // Create initial constraints based on viewport
-        const constraints: LayoutConstraints = {
-            minWidth: 0 as Pixels,
-            maxWidth: viewport.width,
-            minHeight: 0 as Pixels,
-            maxHeight: viewport.height,
-        };
+  /**
+   * Layout children of a node
+   * Chooses appropriate layout algorithm
+   */
+  private layoutChildren(parent: RenderObject, constraints: LayoutConstraints): void {
+    const display = parent.style.getPropertyValue("display");
 
-        // Layout root and its subtree
-        this.layoutNode(root, constraints);
+    // Determine which layout algorithm to use
+    switch (display) {
+      case "flex":
+      case "inline-flex":
+        this.layoutFlexChildren(parent, constraints);
+        break;
 
-        // Calculate stats
-        this.layoutStats.layoutTime = performance.now() - startTime;
-        this.layoutStats.totalNodes = this.countNodes(root);
+      case "grid":
+      case "inline-grid":
+        this.layoutGridChildren(parent, constraints);
+        break;
 
-        return { ...this.layoutStats };
+      case "block":
+      case "flow-root":
+        this.layoutBlockChildren(parent, constraints);
+        break;
+
+      case "inline":
+      case "inline-block":
+        this.layoutInlineChildren(parent, constraints);
+        break;
+
+      default:
+        // Default to block layout
+        this.layoutBlockChildren(parent, constraints);
+        break;
+    }
+  }
+
+  /**
+   * Layout children using normal flow (block)
+   */
+  private layoutBlockChildren(parent: RenderObject, constraints: LayoutConstraints): void {
+    if (!isRenderBox(parent)) {
+      return;
     }
 
-    /**
-     * Layout a single node
-     * Dispatches to appropriate layout algorithm based on display type
-     */
-    private layoutNode(node: RenderObject, constraints: LayoutConstraints): void {
-        // Skip if node doesn't need layout
-        if (!node.needsLayout) {
-            return;
-        }
+    const contentHeight = this.normalFlowLayout.layoutBlockChildren(
+      parent,
+      parent.children,
+      constraints,
+    );
 
-        // Perform layout
-        node.doLayout(constraints);
+    // Update parent height if auto
+    if (parent.layout && parent.style.getPropertyValue("height") === "auto") {
+      parent.layout.height = contentHeight;
+    }
+  }
 
-        // Layout children based on display type
-        if (node.children.length > 0) {
-            this.layoutChildren(node, constraints);
-        }
+  /**
+   * Layout children using normal flow (inline)
+   */
+  private layoutInlineChildren(parent: RenderObject, constraints: LayoutConstraints): void {
+    if (!isRenderBox(parent)) {
+      return;
     }
 
-    /**
-     * Layout children of a node
-     * Chooses appropriate layout algorithm
-     */
-    private layoutChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        const display = parent.style.getPropertyValue("display");
+    const contentHeight = this.normalFlowLayout.layoutInlineChildren(
+      parent,
+      parent.children,
+      constraints,
+    );
 
-        // Determine which layout algorithm to use
-        switch (display) {
-            case "flex":
-            case "inline-flex":
-                this.layoutFlexChildren(parent, constraints);
-                break;
+    // Update parent height if auto
+    if (parent.layout && parent.style.getPropertyValue("height") === "auto") {
+      parent.layout.height = contentHeight;
+    }
+  }
 
-            case "grid":
-            case "inline-grid":
-                this.layoutGridChildren(parent, constraints);
-                break;
-
-            case "block":
-            case "flow-root":
-                this.layoutBlockChildren(parent, constraints);
-                break;
-
-            case "inline":
-            case "inline-block":
-                this.layoutInlineChildren(parent, constraints);
-                break;
-
-            default:
-                // Default to block layout
-                this.layoutBlockChildren(parent, constraints);
-                break;
-        }
+  /**
+   * Layout children using flexbox
+   */
+  private layoutFlexChildren(parent: RenderObject, constraints: LayoutConstraints): void {
+    if (!isRenderBox(parent)) {
+      return;
     }
 
-    /**
-     * Layout children using normal flow (block)
-     */
-    private layoutBlockChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        if (!isRenderBox(parent)) {
-            return;
-        }
+    this.flexboxLayout.layoutContainer(parent, parent.children, constraints);
+  }
 
-        const contentHeight = this.normalFlowLayout.layoutBlockChildren(
-            parent,
-            parent.children,
-            constraints,
-        );
-
-        // Update parent height if auto
-        if (parent.layout && parent.style.getPropertyValue("height") === "auto") {
-            parent.layout.height = contentHeight;
-        }
+  /**
+   * Layout children using grid
+   */
+  private layoutGridChildren(parent: RenderObject, constraints: LayoutConstraints): void {
+    if (!isRenderBox(parent)) {
+      return;
     }
 
-    /**
-     * Layout children using normal flow (inline)
-     */
-    private layoutInlineChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        if (!isRenderBox(parent)) {
-            return;
-        }
+    this.gridLayout.layoutContainer(parent, parent.children, constraints);
+  }
 
-        const contentHeight = this.normalFlowLayout.layoutInlineChildren(
-            parent,
-            parent.children,
-            constraints,
-        );
+  /**
+   * Perform incremental layout (reflow)
+   * Only layouts nodes marked as needing layout
+   *
+   * @param root - Root render object
+   * @param viewport - Viewport dimensions
+   * @returns Layout statistics
+   */
+  reflow(root: RenderObject, viewport: ViewportSize): LayoutStats {
+    const startTime = performance.now();
 
-        // Update parent height if auto
-        if (parent.layout && parent.style.getPropertyValue("height") === "auto") {
-            parent.layout.height = contentHeight;
-        }
+    // Count nodes needing layout
+    let nodesToLayout = 0;
+    this.visitTree(root, (node) => {
+      if (node.needsLayout) {
+        nodesToLayout++;
+      }
+    });
+
+    // If root needs layout, do full layout
+    if (root.needsLayout) {
+      return this.layout(root, viewport);
     }
 
-    /**
-     * Layout children using flexbox
-     */
-    private layoutFlexChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        if (!isRenderBox(parent)) {
-            return;
-        }
+    // Otherwise, incrementally layout subtrees
+    this.reflowSubtree(root, viewport);
 
-        this.flexboxLayout.layoutContainer(parent, parent.children, constraints);
+    // Calculate stats
+    this.layoutStats.layoutTime = performance.now() - startTime;
+    this.layoutStats.totalNodes = nodesToLayout;
+    this.layoutStats.reflowCount++;
+
+    return { ...this.layoutStats };
+  }
+
+  /**
+   * Reflow a subtree
+   */
+  private reflowSubtree(node: RenderObject, viewport: ViewportSize): void {
+    if (node.needsLayout) {
+      // Get constraints from parent or viewport
+      const constraints = this.getConstraintsForNode(node, viewport);
+      this.layoutNode(node, constraints);
     }
 
-    /**
-     * Layout children using grid
-     */
-    private layoutGridChildren(parent: RenderObject, constraints: LayoutConstraints): void {
-        if (!isRenderBox(parent)) {
-            return;
-        }
+    // Recursively reflow children
+    for (const child of node.children) {
+      this.reflowSubtree(child, viewport);
+    }
+  }
 
-        this.gridLayout.layoutContainer(parent, parent.children, constraints);
+  /**
+   * Get layout constraints for a node
+   */
+  private getConstraintsForNode(node: RenderObject, viewport: ViewportSize): LayoutConstraints {
+    // If node has parent, get constraints from parent's content box
+    if (node.parent && node.parent.layout) {
+      const parentLayout = node.parent.layout;
+      return {
+        minWidth: 0 as Pixels,
+        maxWidth: (parentLayout.width - parentLayout.paddingLeft -
+          parentLayout.paddingRight) as Pixels,
+        minHeight: 0 as Pixels,
+        maxHeight: (parentLayout.height - parentLayout.paddingTop -
+          parentLayout.paddingBottom) as Pixels,
+      };
     }
 
-    /**
-     * Perform incremental layout (reflow)
-     * Only layouts nodes marked as needing layout
-     *
-     * @param root - Root render object
-     * @param viewport - Viewport dimensions
-     * @returns Layout statistics
-     */
-    reflow(root: RenderObject, viewport: ViewportSize): LayoutStats {
-        const startTime = performance.now();
+    // Root node - use viewport
+    return {
+      minWidth: 0 as Pixels,
+      maxWidth: viewport.width,
+      minHeight: 0 as Pixels,
+      maxHeight: viewport.height,
+    };
+  }
 
-        // Count nodes needing layout
-        let nodesToLayout = 0;
-        this.visitTree(root, (node) => {
-            if (node.needsLayout) {
-                nodesToLayout++;
-            }
-        });
+  /**
+   * Count total nodes in tree
+   */
+  private countNodes(root: RenderObject): number {
+    let count = 1;
+    for (const child of root.children) {
+      count += this.countNodes(child);
+    }
+    return count;
+  }
 
-        // If root needs layout, do full layout
-        if (root.needsLayout) {
-            return this.layout(root, viewport);
-        }
+  /**
+   * Visit every node in tree
+   */
+  private visitTree(root: RenderObject, visitor: (node: RenderObject) => void): void {
+    visitor(root);
+    for (const child of root.children) {
+      this.visitTree(child, visitor);
+    }
+  }
 
-        // Otherwise, incrementally layout subtrees
-        this.reflowSubtree(root, viewport);
+  /**
+   * Find all nodes that need layout
+   */
+  findDirtyNodes(root: RenderObject): RenderObject[] {
+    const dirtyNodes: RenderObject[] = [];
+    this.visitTree(root, (node) => {
+      if (node.needsLayout) {
+        dirtyNodes.push(node);
+      }
+    });
+    return dirtyNodes;
+  }
 
-        // Calculate stats
-        this.layoutStats.layoutTime = performance.now() - startTime;
-        this.layoutStats.totalNodes = nodesToLayout;
-        this.layoutStats.reflowCount++;
+  /**
+   * Clear layout flags after layout complete
+   */
+  clearLayoutFlags(root: RenderObject): void {
+    this.visitTree(root, (node) => {
+      node.needsLayout = false;
+    });
+  }
 
-        return { ...this.layoutStats };
+  /**
+   * Mark subtree for layout
+   */
+  markSubtreeForLayout(root: RenderObject): void {
+    this.visitTree(root, (node) => {
+      node.markNeedsLayout();
+    });
+  }
+
+  /**
+   * Get layout statistics
+   */
+  getStats(): LayoutStats {
+    return { ...this.layoutStats };
+  }
+
+  /**
+   * Reset statistics
+   */
+  resetStats(): void {
+    this.layoutStats = {
+      totalNodes: 0,
+      layoutTime: 0,
+      reflowCount: 0,
+    };
+  }
+
+  /**
+   * Calculate minimum content width for an element
+   * Used for shrink-to-fit and table layout
+   */
+  calculateMinContentWidth(node: RenderObject): Pixels {
+    // Simplified implementation
+    // Real implementation would calculate minimum width without line breaking
+    if (node.layout) {
+      return node.layout.width;
+    }
+    return 0 as Pixels;
+  }
+
+  /**
+   * Calculate maximum content width for an element
+   * Used for shrink-to-fit and table layout
+   */
+  calculateMaxContentWidth(node: RenderObject): Pixels {
+    // Simplified implementation
+    // Real implementation would calculate preferred width (no wrapping)
+    if (node.layout) {
+      return node.layout.width;
+    }
+    return 0 as Pixels;
+  }
+
+  /**
+   * Check if layout is stable (no more reflows needed)
+   */
+  isLayoutStable(root: RenderObject): boolean {
+    let stable = true;
+    this.visitTree(root, (node) => {
+      if (node.needsLayout) {
+        stable = false;
+      }
+    });
+    return stable;
+  }
+
+  /**
+   * Perform layout until stable (for cases with constraints changing)
+   * Maximum iterations to prevent infinite loops
+   */
+  layoutUntilStable(
+    root: RenderObject,
+    viewport: ViewportSize,
+    maxIterations: number = 10,
+  ): LayoutStats {
+    let iterations = 0;
+    let lastStats = this.layoutStats;
+
+    while (!this.isLayoutStable(root) && iterations < maxIterations) {
+      lastStats = this.reflow(root, viewport);
+      iterations++;
     }
 
-    /**
-     * Reflow a subtree
-     */
-    private reflowSubtree(node: RenderObject, viewport: ViewportSize): void {
-        if (node.needsLayout) {
-            // Get constraints from parent or viewport
-            const constraints = this.getConstraintsForNode(node, viewport);
-            this.layoutNode(node, constraints);
-        }
-
-        // Recursively reflow children
-        for (const child of node.children) {
-            this.reflowSubtree(child, viewport);
-        }
+    if (iterations >= maxIterations) {
+      console.warn(`Layout did not stabilize after ${maxIterations} iterations`);
     }
 
-    /**
-     * Get layout constraints for a node
-     */
-    private getConstraintsForNode(node: RenderObject, viewport: ViewportSize): LayoutConstraints {
-        // If node has parent, get constraints from parent's content box
-        if (node.parent && node.parent.layout) {
-            const parentLayout = node.parent.layout;
-            return {
-                minWidth: 0 as Pixels,
-                maxWidth: (parentLayout.width - parentLayout.paddingLeft -
-                    parentLayout.paddingRight) as Pixels,
-                minHeight: 0 as Pixels,
-                maxHeight: (parentLayout.height - parentLayout.paddingTop -
-                    parentLayout.paddingBottom) as Pixels,
-            };
-        }
-
-        // Root node - use viewport
-        return {
-            minWidth: 0 as Pixels,
-            maxWidth: viewport.width,
-            minHeight: 0 as Pixels,
-            maxHeight: viewport.height,
-        };
-    }
-
-    /**
-     * Count total nodes in tree
-     */
-    private countNodes(root: RenderObject): number {
-        let count = 1;
-        for (const child of root.children) {
-            count += this.countNodes(child);
-        }
-        return count;
-    }
-
-    /**
-     * Visit every node in tree
-     */
-    private visitTree(root: RenderObject, visitor: (node: RenderObject) => void): void {
-        visitor(root);
-        for (const child of root.children) {
-            this.visitTree(child, visitor);
-        }
-    }
-
-    /**
-     * Find all nodes that need layout
-     */
-    findDirtyNodes(root: RenderObject): RenderObject[] {
-        const dirtyNodes: RenderObject[] = [];
-        this.visitTree(root, (node) => {
-            if (node.needsLayout) {
-                dirtyNodes.push(node);
-            }
-        });
-        return dirtyNodes;
-    }
-
-    /**
-     * Clear layout flags after layout complete
-     */
-    clearLayoutFlags(root: RenderObject): void {
-        this.visitTree(root, (node) => {
-            node.needsLayout = false;
-        });
-    }
-
-    /**
-     * Mark subtree for layout
-     */
-    markSubtreeForLayout(root: RenderObject): void {
-        this.visitTree(root, (node) => {
-            node.markNeedsLayout();
-        });
-    }
-
-    /**
-     * Get layout statistics
-     */
-    getStats(): LayoutStats {
-        return { ...this.layoutStats };
-    }
-
-    /**
-     * Reset statistics
-     */
-    resetStats(): void {
-        this.layoutStats = {
-            totalNodes: 0,
-            layoutTime: 0,
-            reflowCount: 0,
-        };
-    }
-
-    /**
-     * Calculate minimum content width for an element
-     * Used for shrink-to-fit and table layout
-     */
-    calculateMinContentWidth(node: RenderObject): Pixels {
-        // Simplified implementation
-        // Real implementation would calculate minimum width without line breaking
-        if (node.layout) {
-            return node.layout.width;
-        }
-        return 0 as Pixels;
-    }
-
-    /**
-     * Calculate maximum content width for an element
-     * Used for shrink-to-fit and table layout
-     */
-    calculateMaxContentWidth(node: RenderObject): Pixels {
-        // Simplified implementation
-        // Real implementation would calculate preferred width (no wrapping)
-        if (node.layout) {
-            return node.layout.width;
-        }
-        return 0 as Pixels;
-    }
-
-    /**
-     * Check if layout is stable (no more reflows needed)
-     */
-    isLayoutStable(root: RenderObject): boolean {
-        let stable = true;
-        this.visitTree(root, (node) => {
-            if (node.needsLayout) {
-                stable = false;
-            }
-        });
-        return stable;
-    }
-
-    /**
-     * Perform layout until stable (for cases with constraints changing)
-     * Maximum iterations to prevent infinite loops
-     */
-    layoutUntilStable(
-        root: RenderObject,
-        viewport: ViewportSize,
-        maxIterations: number = 10,
-    ): LayoutStats {
-        let iterations = 0;
-        let lastStats = this.layoutStats;
-
-        while (!this.isLayoutStable(root) && iterations < maxIterations) {
-            lastStats = this.reflow(root, viewport);
-            iterations++;
-        }
-
-        if (iterations >= maxIterations) {
-            console.warn(`Layout did not stabilize after ${maxIterations} iterations`);
-        }
-
-        return lastStats;
-    }
+    return lastStats;
+  }
 }

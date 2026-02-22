@@ -8,15 +8,15 @@
  * @module webgpu/utils/TextureHelpers
  */
 
-import { WebGPUX, type MipSize, type MipSize3D } from "@browserx/webgpu_x";
+import { type MipSize, type MipSize3D, WebGPUX } from "@browserx/webgpu_x";
 
 let webgpuXInstance: WebGPUX | null = null;
 
 function getWebGPUX(): WebGPUX {
-    if (!webgpuXInstance) {
-        webgpuXInstance = new WebGPUX();
-    }
-    return webgpuXInstance;
+  if (!webgpuXInstance) {
+    webgpuXInstance = new WebGPUX();
+  }
+  return webgpuXInstance;
 }
 
 /**
@@ -27,8 +27,8 @@ function getWebGPUX(): WebGPUX {
  * @returns Number of mip levels
  */
 export function calculateMipLevels(width: number, height: number): number {
-    const webgpuX = getWebGPUX();
-    return webgpuX.textureCalculateMipLevels(width, height);
+  const webgpuX = getWebGPUX();
+  return webgpuX.textureCalculateMipLevels(width, height);
 }
 
 /**
@@ -40,8 +40,8 @@ export function calculateMipLevels(width: number, height: number): number {
  * @returns Mip dimensions {width, height}
  */
 export function getMipSize(width: number, height: number, mipLevel: number): MipSize | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.textureGetMipSize(width, height, mipLevel);
+  const webgpuX = getWebGPUX();
+  return webgpuX.textureGetMipSize(width, height, mipLevel);
 }
 
 /**
@@ -54,13 +54,13 @@ export function getMipSize(width: number, height: number, mipLevel: number): Mip
  * @returns Mip dimensions {width, height, depth}
  */
 export function getMipSize3D(
-    width: number,
-    height: number,
-    depth: number,
-    mipLevel: number
+  width: number,
+  height: number,
+  depth: number,
+  mipLevel: number,
 ): MipSize3D | null {
-    const webgpuX = getWebGPUX();
-    return webgpuX.textureGetMipSize3D(width, height, depth, mipLevel);
+  const webgpuX = getWebGPUX();
+  return webgpuX.textureGetMipSize3D(width, height, depth, mipLevel);
 }
 
 // Re-export types

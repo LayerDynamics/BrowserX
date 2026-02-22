@@ -7,6 +7,7 @@
 // High-level pipelines
 export * from "./RequestPipeline.ts";
 export * from "./RenderingPipeline.ts";
+export * from "./PipelineObserver.ts";
 
 // Core engine layers
 export * from "./network/mod.ts";

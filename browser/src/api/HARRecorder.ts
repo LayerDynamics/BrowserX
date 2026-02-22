@@ -305,7 +305,8 @@ export class HARRecorder {
   private recording: boolean = false;
   private entries: HAREntry[] = [];
   private pages: HARPage[] = [];
-  private pendingRequests: Map<string, { request: NetworkRequestEvent; startTime: number }> = new Map();
+  private pendingRequests: Map<string, { request: NetworkRequestEvent; startTime: number }> =
+    new Map();
   private options: RecordingOptions = {};
   private currentPageId: string | null = null;
   private pageIdCounter: number = 0;
@@ -380,7 +381,7 @@ export class HARRecorder {
    * Update page timing information
    */
   updatePageTiming(pageId: string, timing: Partial<HARPageTiming>): void {
-    const page = this.pages.find(p => p.id === pageId);
+    const page = this.pages.find((p) => p.id === pageId);
     if (page) {
       if (timing.onContentLoad !== undefined) {
         page.pageTimings.onContentLoad = timing.onContentLoad;
@@ -468,7 +469,10 @@ export class HARRecorder {
 
     // Truncate response body if needed
     let responseBody = event.body;
-    if (responseBody && this.options.maxResponseBodySize && responseBody.length > this.options.maxResponseBodySize) {
+    if (
+      responseBody && this.options.maxResponseBodySize &&
+      responseBody.length > this.options.maxResponseBodySize
+    ) {
       responseBody = responseBody.substring(0, this.options.maxResponseBodySize);
     }
 
@@ -477,7 +481,9 @@ export class HARRecorder {
       status: event.status,
       statusText: event.statusText,
       httpVersion: "HTTP/1.1",
-      cookies: this.options.captureCookies ? this.extractSetCookies(event.headers["set-cookie"]) : [],
+      cookies: this.options.captureCookies
+        ? this.extractSetCookies(event.headers["set-cookie"])
+        : [],
       headers: responseHeaders,
       content: {
         size: event.bodySize,
@@ -497,25 +503,29 @@ export class HARRecorder {
       request: harRequest,
       response: harResponse,
       cache: {
-        beforeRequest: event.fromCache ? { lastAccess: new Date(startTime).toISOString(), eTag: "", hitCount: 1 } : undefined,
+        beforeRequest: event.fromCache
+          ? { lastAccess: new Date(startTime).toISOString(), eTag: "", hitCount: 1 }
+          : undefined,
       },
-      timings: this.options.captureTiming ? {
-        blocked: 0,
-        dns: -1,
-        connect: -1,
-        send: 0,
-        wait: duration,
-        receive: 0,
-        ssl: -1,
-      } : {
-        blocked: -1,
-        dns: -1,
-        connect: -1,
-        send: -1,
-        wait: -1,
-        receive: -1,
-        ssl: -1,
-      },
+      timings: this.options.captureTiming
+        ? {
+          blocked: 0,
+          dns: -1,
+          connect: -1,
+          send: 0,
+          wait: duration,
+          receive: 0,
+          ssl: -1,
+        }
+        : {
+          blocked: -1,
+          dns: -1,
+          connect: -1,
+          send: -1,
+          wait: -1,
+          receive: -1,
+          ssl: -1,
+        },
     };
 
     this.entries.push(entry);
@@ -562,16 +572,14 @@ export class HARRecorder {
    */
   getEntriesByUrl(pattern: string | RegExp): HAREntry[] {
     const regex = typeof pattern === "string" ? new RegExp(pattern) : pattern;
-    return this.entries.filter(entry => regex.test(entry.request.url));
+    return this.entries.filter((entry) => regex.test(entry.request.url));
   }
 
   /**
    * Get entries filtered by content type
    */
   getEntriesByContentType(contentType: string): HAREntry[] {
-    return this.entries.filter(entry =>
-      entry.response.content.mimeType.includes(contentType)
-    );
+    return this.entries.filter((entry) => entry.response.content.mimeType.includes(contentType));
   }
 
   /**
@@ -579,23 +587,21 @@ export class HARRecorder {
    */
   getEntriesByStatus(status: number | number[]): HAREntry[] {
     const statuses = Array.isArray(status) ? status : [status];
-    return this.entries.filter(entry =>
-      statuses.includes(entry.response.status)
-    );
+    return this.entries.filter((entry) => statuses.includes(entry.response.status));
   }
 
   /**
    * Get failed requests (status >= 400)
    */
   getFailedRequests(): HAREntry[] {
-    return this.entries.filter(entry => entry.response.status >= 400);
+    return this.entries.filter((entry) => entry.response.status >= 400);
   }
 
   /**
    * Get slow requests
    */
   getSlowRequests(thresholdMs: number): HAREntry[] {
-    return this.entries.filter(entry => entry.time >= thresholdMs);
+    return this.entries.filter((entry) => entry.time >= thresholdMs);
   }
 
   /**
@@ -676,7 +682,7 @@ export class HARRecorder {
   private extractCookies(cookieHeader?: string): HARCookie[] {
     if (!cookieHeader) return [];
 
-    return cookieHeader.split(";").map(cookie => {
+    return cookieHeader.split(";").map((cookie) => {
       const [name, ...valueParts] = cookie.trim().split("=");
       return {
         name: name.trim(),
@@ -694,7 +700,7 @@ export class HARRecorder {
     // Set-Cookie headers should be separate, but may be combined
     const cookies = setCookieHeader.split(/,(?=[^;,]*=)/);
 
-    return cookies.map(cookie => {
+    return cookies.map((cookie) => {
       const parts = cookie.split(";");
       const [name, ...valueParts] = parts[0].trim().split("=");
 

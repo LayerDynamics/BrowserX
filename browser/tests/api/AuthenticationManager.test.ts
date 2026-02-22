@@ -5,16 +5,16 @@
  * API keys, cookies, OAuth2 flows, and session management.
  */
 
-import { assertEquals, assertExists, assert } from "@std/assert";
+import { assert, assertEquals, assertExists } from "@std/assert";
 import {
-  AuthenticationManager,
-  BasicAuthCredentials,
-  BearerAuthCredentials,
   ApiKeyCredentials,
-  CookieAuthCredentials,
-  OAuth2Credentials,
+  AuthenticationManager,
   AuthSession,
   AuthStateChangeEvent,
+  BasicAuthCredentials,
+  BearerAuthCredentials,
+  CookieAuthCredentials,
+  OAuth2Credentials,
 } from "../../src/api/AuthenticationManager.ts";
 import { BrowserPage, DOMElement } from "../../src/api/BrowserPage.ts";
 
@@ -32,7 +32,9 @@ function createMockPage(overrides: Partial<BrowserPage> = {}): BrowserPage {
     type: async (_selector: string, _text: string, _options?: { delay?: number }) => {},
     evaluate: async (_script: string) => ({}),
     getCurrentURL: () => "https://example.com",
-    wait: async (_options: { type: string; selector?: string; timeout?: number; duration?: number }) => {},
+    wait: async (
+      _options: { type: string; selector?: string; timeout?: number; duration?: number },
+    ) => {},
     navigate: async (_url: string, _options?: { waitFor?: string; timeout?: number }) => {},
     ...overrides,
   } as BrowserPage;
@@ -182,7 +184,8 @@ Deno.test({
     const page = createMockPage();
     const authManager = new AuthenticationManager(page);
 
-    const longToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    const longToken =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
 
     const credentials: BearerAuthCredentials = {
       type: "bearer",

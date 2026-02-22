@@ -43,10 +43,10 @@ Main entry point for full browser functionality.
 import { Browser } from "./mod.ts";
 
 const browser = new Browser({
-    width: 1024,
-    height: 768,
-    enableJavaScript: false,
-    enableStorage: true,
+  width: 1024,
+  height: 768,
+  enableJavaScript: false,
+  enableStorage: true,
 });
 
 // Access all subsystems
@@ -83,8 +83,8 @@ HTML/CSS parsing, layout, and rendering.
 import { RenderingPipeline } from "./mod.ts";
 
 const pipeline = new RenderingPipeline({
-    width: 1024,
-    height: 768,
+  width: 1024,
+  height: 768,
 });
 
 const result = await pipeline.render("https://example.com");
@@ -161,7 +161,7 @@ deno run --allow-all src/main.ts https://example.com
 import { Browser } from "jsr:@browserx/browser";
 
 // Import specific components
-import { RequestPipeline, RenderingPipeline } from "jsr:@browserx/browser";
+import { RenderingPipeline, RequestPipeline } from "jsr:@browserx/browser";
 
 // Import WebGPU separately (namespace export)
 import * as WebGPU from "jsr:@browserx/browser";
@@ -197,6 +197,7 @@ deno run --allow-net examples/06-composition.ts
 All major classes expose their subsystems through public getter methods with comprehensive JSDoc documentation:
 
 **Browser**
+
 - `getRequestPipeline(): RequestPipeline`
 - `getRenderingPipeline(): RenderingPipeline`
 - `getStorageManager(): StorageManager`
@@ -204,6 +205,7 @@ All major classes expose their subsystems through public getter methods with com
 - `getQuotaManager(): QuotaManager`
 
 **RequestPipeline**
+
 - `getDNSResolver(): DNSResolver`
 - `getDNSCache(): DNSCache`
 - `getConnectionPool(): ConnectionPool`
@@ -211,10 +213,12 @@ All major classes expose their subsystems through public getter methods with com
 - `getCacheStorage(): CacheStorage`
 
 **RenderingPipeline**
+
 - `getRequestPipeline(): RequestPipeline`
 - `getCompositor(): CompositorThread`
 
 **ScriptExecutor**
+
 - `getIsolate(): V8Isolate`
 - `getContext(): V8Context`
 - `getWindow(): WindowObject`
@@ -222,6 +226,7 @@ All major classes expose their subsystems through public getter methods with com
 - `getDocument(): DOMNode`
 
 **WebGPUEngine**
+
 - `getDriver(): WebGPUDriver`
 - `getMemoryManager(): MemoryManager`
 - `getBufferPool(): BufferPool`
@@ -234,6 +239,7 @@ All major classes expose their subsystems through public getter methods with com
 - `getCompositor(): WebGPUCompositor`
 
 All getter methods include:
+
 - Description of the subsystem
 - What it provides
 - How to use it
@@ -375,7 +381,7 @@ Execute untrusted code safely:
 const executor = new ScriptExecutor(document, origin);
 const result = await executor.execute(untrustedCode);
 if (!result.success) {
-    console.error(result.error);
+  console.error(result.error);
 }
 ```
 

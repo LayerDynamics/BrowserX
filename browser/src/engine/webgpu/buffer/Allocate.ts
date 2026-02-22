@@ -10,34 +10,34 @@ import type { WebGPUDevice } from "../adapter/Device.ts";
 import type { GPUSize } from "../../../types/webgpu.ts";
 import { GPUBufferUsageFlags } from "../../../types/webgpu.ts";
 import {
-    bufferPoolAcquire,
-    bufferPoolRelease,
-    bufferPoolAdd,
-    clearBufferPool,
-    evictOldBuffers,
-    calculateAlignedSize,
-    getBufferAlignment,
+  bufferPoolAcquire,
+  bufferPoolAdd,
+  bufferPoolRelease,
+  calculateAlignedSize,
+  clearBufferPool,
+  evictOldBuffers,
+  getBufferAlignment,
 } from "../utils/BufferHelpers.ts";
 
 /**
  * Buffer allocation result
  */
 export interface BufferAllocation {
-    buffer: WebGPUBuffer;
-    size: GPUSize;
-    usage: number;
-    /** Handle for buffer pool (if pooled) */
-    poolHandle?: bigint;
+  buffer: WebGPUBuffer;
+  size: GPUSize;
+  usage: number;
+  /** Handle for buffer pool (if pooled) */
+  poolHandle?: bigint;
 }
 
 /**
  * Buffer allocation options
  */
 export interface BufferAllocationOptions {
-    /** Use buffer pool for allocation (default: false) */
-    usePool?: boolean;
-    /** Align size to buffer usage requirements (default: true) */
-    alignSize?: boolean;
+  /** Use buffer pool for allocation (default: false) */
+  usePool?: boolean;
+  /** Align size to buffer usage requirements (default: true) */
+  alignSize?: boolean;
 }
 
 // Track pooled buffers for release
@@ -55,37 +55,37 @@ const pooledBuffers: Map<WebGPUBuffer, bigint> = new Map();
  * @param options - Allocation options
  */
 export function allocateBuffer(
-    device: WebGPUDevice,
-    size: GPUSize,
-    usage: number,
-    label?: string,
-    options?: BufferAllocationOptions
+  device: WebGPUDevice,
+  size: GPUSize,
+  usage: number,
+  label?: string,
+  options?: BufferAllocationOptions,
 ): BufferAllocation {
-    const usePool = options?.usePool ?? false;
-    const shouldAlignSize = options?.alignSize ?? true;
+  const usePool = options?.usePool ?? false;
+  const shouldAlignSize = options?.alignSize ?? true;
 
-    // Calculate aligned size if requested
-    let alignedSize = size;
-    if (shouldAlignSize) {
-        const alignment = Number(getBufferAlignment(usage));
-        alignedSize = Number(calculateAlignedSize(BigInt(size), BigInt(alignment))) as GPUSize;
+  // Calculate aligned size if requested
+  let alignedSize = size;
+  if (shouldAlignSize) {
+    const alignment = Number(getBufferAlignment(usage));
+    alignedSize = Number(calculateAlignedSize(BigInt(size), BigInt(alignment))) as GPUSize;
+  }
+
+  if (usePool) {
+    // Try to acquire from pool
+    const handle = bufferPoolAcquire(BigInt(alignedSize), usage);
+    if (handle !== 0n) {
+      // Got a pooled buffer handle, create wrapper
+      const buffer = new WebGPUBuffer(device, { size: alignedSize, usage, label });
+      pooledBuffers.set(buffer, handle);
+      return { buffer, size: alignedSize, usage, poolHandle: handle };
     }
+    // Fall through to direct allocation if pool exhausted
+  }
 
-    if (usePool) {
-        // Try to acquire from pool
-        const handle = bufferPoolAcquire(BigInt(alignedSize), usage);
-        if (handle !== 0n) {
-            // Got a pooled buffer handle, create wrapper
-            const buffer = new WebGPUBuffer(device, { size: alignedSize, usage, label });
-            pooledBuffers.set(buffer, handle);
-            return { buffer, size: alignedSize, usage, poolHandle: handle };
-        }
-        // Fall through to direct allocation if pool exhausted
-    }
-
-    // Direct allocation
-    const buffer = new WebGPUBuffer(device, { size: alignedSize, usage, label });
-    return { buffer, size: alignedSize, usage };
+  // Direct allocation
+  const buffer = new WebGPUBuffer(device, { size: alignedSize, usage, label });
+  return { buffer, size: alignedSize, usage };
 }
 
 /**
@@ -98,24 +98,24 @@ export function allocateBuffer(
  * @param options - Allocation options
  */
 export function allocateBufferWithData(
-    device: WebGPUDevice,
-    data: ArrayBuffer | ArrayBufferView,
-    usage: number,
-    label?: string,
-    options?: BufferAllocationOptions
+  device: WebGPUDevice,
+  data: ArrayBuffer | ArrayBufferView,
+  usage: number,
+  label?: string,
+  options?: BufferAllocationOptions,
 ): BufferAllocation {
-    const size = data.byteLength as GPUSize;
-    const allocation = allocateBuffer(device, size, usage, label, options);
+  const size = data.byteLength as GPUSize;
+  const allocation = allocateBuffer(device, size, usage, label, options);
 
-    // Write initial data
-    if (data instanceof ArrayBuffer) {
-        allocation.buffer.write(new Uint8Array(data) as BufferSource);
-    } else {
-        // ArrayBufferView - cast to BufferSource for type compatibility
-        allocation.buffer.write(data as BufferSource);
-    }
+  // Write initial data
+  if (data instanceof ArrayBuffer) {
+    allocation.buffer.write(new Uint8Array(data) as BufferSource);
+  } else {
+    // ArrayBufferView - cast to BufferSource for type compatibility
+    allocation.buffer.write(data as BufferSource);
+  }
 
-    return allocation;
+  return allocation;
 }
 
 /**
@@ -126,13 +126,13 @@ export function allocateBufferWithData(
  * @param allocation - Buffer allocation to release
  */
 export function releaseBuffer(allocation: BufferAllocation): void {
-    if (allocation.poolHandle) {
-        // Release back to pool
-        bufferPoolRelease(allocation.poolHandle);
-        pooledBuffers.delete(allocation.buffer);
-    }
-    // Destroy the WebGPU buffer
-    allocation.buffer.destroy();
+  if (allocation.poolHandle) {
+    // Release back to pool
+    bufferPoolRelease(allocation.poolHandle);
+    pooledBuffers.delete(allocation.buffer);
+  }
+  // Destroy the WebGPU buffer
+  allocation.buffer.destroy();
 }
 
 /**
@@ -144,15 +144,15 @@ export function releaseBuffer(allocation: BufferAllocation): void {
  * @returns Pool handle
  */
 export function addToBufferPool(
-    buffer: WebGPUBuffer,
-    size: GPUSize,
-    usage: number
+  buffer: WebGPUBuffer,
+  size: GPUSize,
+  usage: number,
 ): bigint {
-    // Generate a unique handle for the buffer
-    const handle = BigInt(Date.now() + Math.floor(Math.random() * 1000000));
-    bufferPoolAdd(handle, BigInt(size), usage);
-    pooledBuffers.set(buffer, handle);
-    return handle;
+  // Generate a unique handle for the buffer
+  const handle = BigInt(Date.now() + Math.floor(Math.random() * 1000000));
+  bufferPoolAdd(handle, BigInt(size), usage);
+  pooledBuffers.set(buffer, handle);
+  return handle;
 }
 
 /**
@@ -161,8 +161,8 @@ export function addToBufferPool(
  * Uses webgpu_x to clear the pool state.
  */
 export function clearAllBufferPools(): void {
-    clearBufferPool();
-    pooledBuffers.clear();
+  clearBufferPool();
+  pooledBuffers.clear();
 }
 
 /**
@@ -171,7 +171,7 @@ export function clearAllBufferPools(): void {
  * Uses webgpu_x to evict stale buffers.
  */
 export function evictStaleBuffers(): void {
-    evictOldBuffers();
+  evictOldBuffers();
 }
 
 /**
@@ -181,7 +181,7 @@ export function evictStaleBuffers(): void {
  * @returns True if buffer is in pool
  */
 export function isBufferPooled(buffer: WebGPUBuffer): boolean {
-    return pooledBuffers.has(buffer);
+  return pooledBuffers.has(buffer);
 }
 
 /**
@@ -191,5 +191,5 @@ export function isBufferPooled(buffer: WebGPUBuffer): boolean {
  * @returns Pool handle or undefined
  */
 export function getBufferPoolHandle(buffer: WebGPUBuffer): bigint | undefined {
-    return pooledBuffers.get(buffer);
+  return pooledBuffers.get(buffer);
 }

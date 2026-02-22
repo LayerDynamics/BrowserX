@@ -4,12 +4,12 @@
  */
 
 export interface HTMLParseError {
-    code: string;
-    message: string;
-    line: number;
-    column: number;
+  code: string;
+  message: string;
+  line: number;
+  column: number;
 }
 
 export function createParseError(code: string, message: string): HTMLParseError {
-    return { code, message, line: 0, column: 0 };
+  return { code, message, line: 0, column: 0 };
 }

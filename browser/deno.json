@@ -27,11 +27,11 @@
   "fmt": {
     "useTabs": false,
     "lineWidth": 100,
-    "indentWidth": 4,
+    "indentWidth": 2,
     "semiColons": true,
     "singleQuote": false,
     "proseWrap": "preserve",
-    "include": ["src/"],
+    "include": ["src/", "tests/"],
     "exclude": ["docs/"]
   },
   "tasks": {

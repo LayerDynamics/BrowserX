@@ -23,7 +23,9 @@
 ## Executive Summary
 
 ### Objective
+
 Implement a complete, production-ready WebGPU module for BrowserX that provides:
+
 - Modern GPU-accelerated rendering (replacing WebGL in compositor)
 - Compute shader support for parallel processing
 - Memory-efficient buffer and texture management
@@ -32,12 +34,14 @@ Implement a complete, production-ready WebGPU module for BrowserX that provides:
 - Graceful fallback to WebGL when WebGPU unavailable
 
 ### Current State
+
 - **Directory structure**: Established with 31 TypeScript files
 - **Implementation**: 0% (all files are empty placeholders)
 - **Integration points**: Identified in CompositorThread, GPU.ts
 - **Dependencies**: Native WebGPU API (navigator.gpu)
 
 ### Success Criteria
+
 1. **Functionality**: All 31 files fully implemented with production code
 2. **Quality**: Match existing browser module standards (error handling, state machines, statistics)
 3. **Performance**: 2-3x CPU reduction vs WebGL, 20-30% GPU memory reduction
@@ -49,7 +53,9 @@ Implement a complete, production-ready WebGPU module for BrowserX that provides:
 
 ## Current State Assessment
 
-### File Structure Analysis
+> **VERIFIED 2026-02-20:** The claim below that all files were "0% implemented" is COMPLETELY OUTDATED. The WebGPU subsystem now has 10,000+ lines of production code across all modules. Only `Acceleration.ts` remains a 1-line placeholder. All other files (WebGPU.ts 1022 lines, Device.ts 987 lines, buffer/Create.ts 738 lines, pipelines/mod.ts 1182 lines, memory/mod.ts 1074 lines, etc.) are fully implemented with state machines, statistics tracking, error handling, and webgpu_x FFI integration.
+
+### File Structure Analysis (OUTDATED — see note above)
 
 **Total Files**: 31 TypeScript files across 9 subdirectories
 **Current Implementation**: 0 lines of code (all files empty)
@@ -112,38 +118,45 @@ Implement a complete, production-ready WebGPU module for BrowserX that provides:
 ### Existing Integration Points
 
 **1. GPU.ts** (`/browser/src/os/graphics/GPU.ts`)
+
 - 170 lines using native WebGPU API
 - Has TODO for WebGPU compositing pipeline (line 141)
 - Currently uses WebGL fallback approach
 
 **2. CompositorThread.ts** (`/browser/src/engine/rendering/compositor/CompositorThread.ts`)
+
 - 575 lines using WebGL
 - Needs WebGPU alternative: `WebGPUCompositorThread`
 - Integration point for rendering pipeline
 
 **3. CompositorLayer.ts** (`/browser/src/engine/rendering/compositor/CompositorLayer.ts`)
+
 - 622 lines managing WebGL textures
 - Needs WebGPU version for texture management
 
 **4. Type System**
+
 - No WebGPU types defined yet
 - Need new file: `/browser/src/types/webgpu.ts`
 
 ### Quality Standards (from existing modules)
 
 **Network Layer Pattern** (connection/ConnectionPool.ts):
+
 - Resource pooling with size limits
 - State machines (IDLE → IN_USE → CLOSING → CLOSED)
 - Statistics tracking (pool size, reuse count, wait time)
 - Cleanup timers and dispose methods
 
 **Rendering Layer Pattern** (compositor/CompositorThread.ts):
+
 - Factory patterns for configuration
 - VSync integration for frame timing
 - Comprehensive error handling
 - Export APIs for debugging
 
 **JavaScript Layer Pattern** (javascript/V8Isolate.ts):
+
 - Strong typing with branded IDs
 - Lifecycle management (initialize → ready → destroyed)
 - Memory tracking and GC integration
@@ -226,6 +239,7 @@ Canvas Present (swap buffers)
 ### Data Flow
 
 **Rendering Flow:**
+
 1. Parse HTML/CSS → DOM/CSSOM
 2. Build Render Tree
 3. Layout calculation → LayoutBox tree
@@ -238,6 +252,7 @@ Canvas Present (swap buffers)
    - Present to canvas
 
 **Compute Flow:**
+
 1. Compile WGSL compute shader
 2. Create compute pipeline
 3. Allocate input/output buffers
@@ -252,9 +267,11 @@ Canvas Present (swap buffers)
 ## Implementation Phases
 
 ### Phase 1: Foundation (Week 1)
+
 **Goal**: Core infrastructure and type system
 
 **Tasks**:
+
 1. Create type system (`/browser/src/types/webgpu.ts`)
    - Identifiers (GPUDeviceID, GPUBufferID, etc.)
    - Enums (state machines, usage flags)
@@ -282,6 +299,7 @@ Canvas Present (swap buffers)
    - 400+ lines
 
 **Deliverables**:
+
 - Complete type system
 - Device management
 - Error handling framework
@@ -289,9 +307,11 @@ Canvas Present (swap buffers)
 - Unit tests for device lifecycle
 
 ### Phase 2: Buffer Management (Week 2)
+
 **Goal**: Memory-efficient buffer operations
 
 **Tasks**:
+
 1. Implement buffer/Create.ts
    - WebGPUBuffer class with state machine
    - Buffer creation with usage validation
@@ -332,15 +352,18 @@ Canvas Present (swap buffers)
    - 800+ lines
 
 **Deliverables**:
+
 - Complete buffer management system
 - Memory pooling with reuse
 - Staging buffer infrastructure
 - Unit tests for all buffer operations
 
 ### Phase 3: Pipeline System (Week 3)
+
 **Goal**: Shader compilation and pipeline management
 
 **Tasks**:
+
 1. Implement pipelines/mod.ts
    - WebGPURenderPipeline class
    - WebGPUComputePipeline class
@@ -368,6 +391,7 @@ Canvas Present (swap buffers)
    - 300+ lines
 
 **Deliverables**:
+
 - Render pipeline creation
 - Compute pipeline creation
 - Shader library (WGSL)
@@ -375,9 +399,11 @@ Canvas Present (swap buffers)
 - Unit tests for pipeline lifecycle
 
 ### Phase 4: Rendering Integration (Week 4)
+
 **Goal**: Replace WebGL with WebGPU in compositor
 
 **Tasks**:
+
 1. Implement CanvasContext.ts
    - WebGPUCanvasContext class
    - configure() for swap chain
@@ -423,6 +449,7 @@ Canvas Present (swap buffers)
    - 250+ lines
 
 **Deliverables**:
+
 - Complete WebGPU compositor
 - Canvas context management
 - Texture management system
@@ -430,9 +457,11 @@ Canvas Present (swap buffers)
 - Visual regression tests (WebGPU vs WebGL)
 
 ### Phase 5: Compute & Advanced Features (Week 5)
+
 **Goal**: Compute pipelines and worker support
 
 **Tasks**:
+
 1. Implement operations/compute/ComputePipeline.ts
    - ComputePipelineManager class
    - compileShader() for WGSL
@@ -488,6 +517,7 @@ Canvas Present (swap buffers)
    - 200+ lines
 
 **Deliverables**:
+
 - Compute shader support
 - Worker-based GPU compute
 - Hardware detection and optimization
@@ -495,9 +525,11 @@ Canvas Present (swap buffers)
 - Compute shader examples
 
 ### Phase 6: Main Engine & Integration (Week 6)
+
 **Goal**: Unified WebGPU engine and browser integration
 
 **Tasks**:
+
 1. Implement WebGPU.ts (main engine)
    - WebGPUEngine class
    - initialize() all subsystems
@@ -530,6 +562,7 @@ Canvas Present (swap buffers)
    - 20+ lines (modifications)
 
 **Deliverables**:
+
 - Complete WebGPU engine
 - Browser integration
 - Public API surface
@@ -537,9 +570,11 @@ Canvas Present (swap buffers)
 - Configuration options
 
 ### Phase 7: Testing & Documentation (Week 7)
+
 **Goal**: Comprehensive testing and documentation
 
 **Tasks**:
+
 1. Unit tests for all modules
    - Device lifecycle tests
    - Buffer pool tests
@@ -572,6 +607,7 @@ Canvas Present (swap buffers)
    - README.md
 
 **Deliverables**:
+
 - 95%+ test coverage
 - Performance validation
 - Complete documentation
@@ -586,6 +622,7 @@ Canvas Present (swap buffers)
 This file defines all WebGPU types used throughout the module.
 
 **Identifiers** (20+ types):
+
 ```typescript
 type GPUDeviceID = string;
 type GPUBufferID = string;
@@ -599,116 +636,138 @@ type ShaderModuleID = string;
 ```
 
 **State Machines** (5+ enums):
+
 ```typescript
 enum GPUDeviceState {
-    UNINITIALIZED, REQUESTING, READY, LOST, DESTROYED
+  UNINITIALIZED,
+  REQUESTING,
+  READY,
+  LOST,
+  DESTROYED,
 }
 
 enum GPUBufferState {
-    UNMAPPED, MAPPED_FOR_READING, MAPPED_FOR_WRITING,
-    PENDING_MAP, DESTROYED
+  UNMAPPED,
+  MAPPED_FOR_READING,
+  MAPPED_FOR_WRITING,
+  PENDING_MAP,
+  DESTROYED,
 }
 
 enum GPUPipelineState {
-    COMPILING, READY, ERROR, DESTROYED
+  COMPILING,
+  READY,
+  ERROR,
+  DESTROYED,
 }
 
 enum GPUVendor {
-    NVIDIA, AMD, INTEL, APPLE, QUALCOMM, ARM, UNKNOWN
+  NVIDIA,
+  AMD,
+  INTEL,
+  APPLE,
+  QUALCOMM,
+  ARM,
+  UNKNOWN,
 }
 
 enum GPUPerformanceTier {
-    HIGH, MEDIUM, LOW
+  HIGH,
+  MEDIUM,
+  LOW,
 }
 ```
 
 **Usage Flags**:
+
 ```typescript
 enum GPUBufferUsageFlags {
-    MAP_READ = 0x0001,
-    MAP_WRITE = 0x0002,
-    COPY_SRC = 0x0004,
-    COPY_DST = 0x0008,
-    INDEX = 0x0010,
-    VERTEX = 0x0020,
-    UNIFORM = 0x0040,
-    STORAGE = 0x0080,
-    INDIRECT = 0x0100,
-    QUERY_RESOLVE = 0x0200
+  MAP_READ = 0x0001,
+  MAP_WRITE = 0x0002,
+  COPY_SRC = 0x0004,
+  COPY_DST = 0x0008,
+  INDEX = 0x0010,
+  VERTEX = 0x0020,
+  UNIFORM = 0x0040,
+  STORAGE = 0x0080,
+  INDIRECT = 0x0100,
+  QUERY_RESOLVE = 0x0200,
 }
 ```
 
 **Descriptors** (20+ interfaces):
+
 ```typescript
 interface GPUDeviceDescriptor {
-    readonly deviceId: GPUDeviceID;
-    state: GPUDeviceState;
-    adapter: GPUAdapterInfo;
-    limits: GPUDeviceLimits;
-    features: Set<string>;
-    readonly createdAt: Timestamp;
-    lostReason?: string;
+  readonly deviceId: GPUDeviceID;
+  state: GPUDeviceState;
+  adapter: GPUAdapterInfo;
+  limits: GPUDeviceLimits;
+  features: Set<string>;
+  readonly createdAt: Timestamp;
+  lostReason?: string;
 }
 
 interface GPUBufferDescriptor {
-    readonly id: GPUBufferID;
-    size: GPUSize;
-    usage: number;
-    mappedAtCreation: boolean;
-    state: GPUBufferState;
-    readonly createdAt: Timestamp;
-    lastAccessedAt: Timestamp;
-    accessCount: number;
+  readonly id: GPUBufferID;
+  size: GPUSize;
+  usage: number;
+  mappedAtCreation: boolean;
+  state: GPUBufferState;
+  readonly createdAt: Timestamp;
+  lastAccessedAt: Timestamp;
+  accessCount: number;
 }
 
 interface GPURenderPipelineDescriptor {
-    readonly id: GPUPipelineID;
-    label?: string;
-    vertexShader: GPUShaderModuleDescriptor;
-    fragmentShader?: GPUShaderModuleDescriptor;
-    primitiveTopology: GPUPrimitiveTopology;
-    vertexBuffers: GPUVertexBufferLayout[];
-    colorFormats: GPUTextureFormat[];
-    depthStencilFormat?: GPUTextureFormat;
-    sampleCount: number;
-    state: GPUPipelineState;
-    readonly createdAt: Timestamp;
-    compilationTime?: Duration;
+  readonly id: GPUPipelineID;
+  label?: string;
+  vertexShader: GPUShaderModuleDescriptor;
+  fragmentShader?: GPUShaderModuleDescriptor;
+  primitiveTopology: GPUPrimitiveTopology;
+  vertexBuffers: GPUVertexBufferLayout[];
+  colorFormats: GPUTextureFormat[];
+  depthStencilFormat?: GPUTextureFormat;
+  sampleCount: number;
+  state: GPUPipelineState;
+  readonly createdAt: Timestamp;
+  compilationTime?: Duration;
 }
 
 // ... 15+ more descriptor interfaces
 ```
 
 **Statistics** (5+ interfaces):
+
 ```typescript
 interface GPUBufferStats {
-    totalAllocated: number;
-    totalDeallocated: number;
-    currentInUse: number;
-    totalBytes: ByteCount;
-    peakBytes: ByteCount;
-    mapOperations: number;
-    unmapOperations: number;
-    writeOperations: number;
-    readOperations: number;
+  totalAllocated: number;
+  totalDeallocated: number;
+  currentInUse: number;
+  totalBytes: ByteCount;
+  peakBytes: ByteCount;
+  mapOperations: number;
+  unmapOperations: number;
+  writeOperations: number;
+  readOperations: number;
 }
 
 interface GPUPipelineStats {
-    renderPipelinesCreated: number;
-    computePipelinesCreated: number;
-    renderPipelinesCached: number;
-    computePipelinesCached: number;
-    averageCompilationTime: Duration;
-    totalCompilationTime: Duration;
+  renderPipelinesCreated: number;
+  computePipelinesCreated: number;
+  renderPipelinesCached: number;
+  computePipelinesCached: number;
+  averageCompilationTime: Duration;
+  totalCompilationTime: Duration;
 }
 
 interface GPUDeviceStats {
-    uptime: Duration;
-    bufferStats: GPUBufferStats;
-    pipelineStats: GPUPipelineStats;
-    commandStats: GPUCommandStats;
-    memoryUsage: ByteCount;
-    peakMemoryUsage: ByteCount;
+  uptime: Duration;
+  bufferStats: GPUBufferStats;
+  pipelineStats: GPUPipelineStats;
+  commandStats: GPUCommandStats;
+  memoryUsage: ByteCount;
+  peakMemoryUsage: ByteCount;
 }
 ```
 
@@ -727,6 +786,7 @@ interface GPUDeviceStats {
 **Class**: `WebGPUDevice`
 
 **State Machine**:
+
 ```
 UNINITIALIZED → REQUESTING → READY → [LOST | DESTROYED]
                                 ↑_________|
@@ -734,6 +794,7 @@ UNINITIALIZED → REQUESTING → READY → [LOST | DESTROYED]
 ```
 
 **Key Methods**:
+
 - `async initialize(options?: GPURequestAdapterOptions): Promise<void>`
   - Request adapter from navigator.gpu
   - Request device from adapter
@@ -763,12 +824,14 @@ UNINITIALIZED → REQUESTING → READY → [LOST | DESTROYED]
   - Transition to DESTROYED
 
 **Error Handling**:
+
 - Device lost → handleDeviceLost()
 - Uncaptured errors → handleUncapturedError()
 - Validation errors → log and continue
 - Out of memory → log and trigger memory pressure
 
 **Statistics Tracked**:
+
 - Uptime
 - Buffer allocations/deallocations
 - Pipeline compilations
@@ -786,6 +849,7 @@ UNINITIALIZED → REQUESTING → READY → [LOST | DESTROYED]
 **Class**: `WebGPUBuffer`
 
 **State Machine**:
+
 ```
 UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
                                 ↑__________|
@@ -793,6 +857,7 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
 ```
 
 **Key Methods**:
+
 - `create(): void`
   - Validate usage flags (no MAP_READ + MAP_WRITE)
   - Validate size against device limits
@@ -824,6 +889,7 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
   - State: * → DESTROYED
 
 **Validation**:
+
 - Usage flag conflicts (MAP_READ + MAP_WRITE)
 - Size limits (uniform: 64KB, storage: 128MB)
 - State transitions
@@ -837,6 +903,7 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
 **Standard Sizes**: [256, 1024, 4096, 16384, 65536, 262144, 1048576] bytes
 
 **Key Methods**:
+
 - `acquire(minSize: ByteCount): WebGPUBuffer`
   - Find smallest size ≥ minSize
   - Return from pool if available
@@ -858,6 +925,7 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
 **Class**: `BufferCopyOperations`
 
 **Key Methods**:
+
 - `copyBufferToBuffer(source, destination, sourceOffset, destOffset, size?)`
   - Validate COPY_SRC/COPY_DST usage
   - Create command encoder
@@ -869,6 +937,7 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
 **Purpose**: Size calculation and alignment utilities.
 
 **Functions**:
+
 - `alignSize(size: number, alignment: number): number`
 - `calculateUniformBufferSize(dataSize: number): number` (256-byte aligned)
 - `calculateStorageBufferSize(dataSize: number): number` (4-byte aligned)
@@ -880,6 +949,7 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
 **Purpose**: Typed array utilities for GPU buffers.
 
 **Functions**:
+
 - `createAlignedFloat32Array(data: number[], alignment?: number): Float32Array`
 - `createIndexArray(indices: number[]): Uint16Array | Uint32Array`
 - `interleaveVertexData(attributes): Float32Array`
@@ -895,6 +965,7 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
 **Classes**:
 
 **`WebGPURenderPipeline`**:
+
 - `async create(): Promise<void>`
   - Compile vertex/fragment shaders
   - Check compilation errors with getCompilationInfo()
@@ -907,10 +978,12 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
 - `destroy(): void`
 
 **`WebGPUComputePipeline`**:
+
 - Similar to render pipeline
 - Single compute shader stage
 
 **`PipelineCache`**:
+
 - `async getRenderPipeline(descriptor): Promise<WebGPURenderPipeline>`
   - Hash descriptor → cache key
   - Return cached if exists
@@ -920,11 +993,13 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
   - Destroy all cached pipelines
 
 **Shader Compilation**:
+
 - Use device.createShaderModule() with WGSL code
 - Check compilation messages for errors
 - Throw GPUShaderError with line numbers
 
 **Blend Mode Mapping**:
+
 - SOURCE_OVER → `{ srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }`
 - MULTIPLY → `{ srcFactor: 'dst-color', dstFactor: 'zero' }`
 - SCREEN → `{ srcFactor: 'one', dstFactor: 'one-minus-src-color' }`
@@ -937,6 +1012,7 @@ UNMAPPED → [MAPPING_PENDING → MAPPED → UNMAPPED] → DESTROYED
 #### File: `operations/render/shaders/compositor.wgsl` (~100 lines)
 
 **Vertex Shader**:
+
 ```wgsl
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -966,6 +1042,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 ```
 
 **Fragment Shader**:
+
 ```wgsl
 @group(0) @binding(1) var textureSampler: sampler;
 @group(0) @binding(2) var textureData: texture_2d<f32>;
@@ -980,6 +1057,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 #### File: `operations/compute/shaders/ImageFilter.wgsl` (~150 lines)
 
 **Gaussian Blur**:
+
 ```wgsl
 @group(0) @binding(0) var inputTexture: texture_2d<f32>;
 @group(0) @binding(1) var outputTexture: texture_storage_2d<rgba8unorm, write>;
@@ -1039,6 +1117,7 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
 **Class**: `WebGPUCanvasContext`
 
 **Key Methods**:
+
 - `initialize(canvas: HTMLCanvasElement, device: GPUDevice): void`
   - Get WebGPU context: canvas.getContext('webgpu')
   - Store canvas and device references
@@ -1067,6 +1146,7 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
 **Class**: `TextureManager`
 
 **Key Methods**:
+
 - `createTextureFromBitmap(bitmap: ImageBitmap): { id: string; texture: GPUTexture }`
   - Create texture with same size as bitmap
   - Upload via copyExternalImageToTexture() (most efficient)
@@ -1090,6 +1170,7 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
   - Calculate total texture memory (width × height × 4)
 
 **Samplers**:
+
 - `linear`: magFilter/minFilter = linear, clamp-to-edge
 - `nearest`: magFilter/minFilter = nearest, clamp-to-edge
 - `anisotropic`: linear with maxAnisotropy = 16
@@ -1101,6 +1182,7 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
 **Class**: `WebGPUCompositorThread`
 
 **Key Methods**:
+
 - `async initialize(canvas: HTMLCanvasElement): Promise<void>`
   - Request adapter/device
   - Initialize canvas context
@@ -1136,6 +1218,7 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
   - Destroy all resources (buffers, pipelines, textures)
 
 **Frame Flow**:
+
 1. VSync callback triggers compositeFrame()
 2. Update layers (check dirty flags)
 3. Upload textures (async via TextureManager)
@@ -1157,6 +1240,7 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
 **Class**: `WebGPUCompositorLayer`
 
 **Key Methods**:
+
 - `async uploadTexture(): Promise<void>`
   - If tiled: uploadTiles()
   - Else: uploadSingleTexture()
@@ -1186,6 +1270,7 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
 **Class**: `CompositingPipeline`
 
 **Key Methods**:
+
 - `constructor(descriptor: CompositingPipelineDescriptor)`
   - Create bind group layout (uniforms, sampler, texture)
   - Create pipeline layout
@@ -1197,11 +1282,13 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
 - `getBindGroupLayout(): GPUBindGroupLayout`
 
 **Bind Group Layout**:
+
 - Binding 0: Uniform buffer (transform + opacity)
 - Binding 1: Sampler
 - Binding 2: Texture
 
 **Vertex Format**:
+
 - Attribute 0: position (float32x2, offset 0)
 - Attribute 1: texcoord (float32x2, offset 8)
 - Stride: 16 bytes
@@ -1213,6 +1300,7 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
 **Class**: `CompositorFactory`
 
 **Key Methods**:
+
 - `static async isWebGPUAvailable(): Promise<boolean>`
   - Check navigator.gpu
   - Try requestAdapter()
@@ -1225,16 +1313,17 @@ fn blur(@builtin(global_invocation_id) global_id: vec3<u32>) {
   - Handle fallback on error
 
 **Config**:
+
 ```typescript
 enum CompositorBackend {
-    WEBGPU = 'webgpu',
-    WEBGL = 'webgl',
-    AUTO = 'auto'
+  WEBGPU = "webgpu",
+  WEBGL = "webgl",
+  AUTO = "auto",
 }
 
 interface CompositorFactoryConfig extends CompositorConfig {
-    backend: CompositorBackend;
-    fallbackToWebGL: boolean;
+  backend: CompositorBackend;
+  fallbackToWebGL: boolean;
 }
 ```
 
@@ -1249,6 +1338,7 @@ interface CompositorFactoryConfig extends CompositorConfig {
 **Class**: `ComputePipelineManager`
 
 **Key Methods**:
+
 - `compileShader(source: string, entryPoint?: string): ComputePipelineID`
   - Create shader module with WGSL source
   - Check compilation errors
@@ -1273,6 +1363,7 @@ interface CompositorFactoryConfig extends CompositorConfig {
   - Return { x, y, z }
 
 **Workgroup Calculation**:
+
 ```typescript
 // 1D: For 10,000 elements with workgroup size 64
 // x = ceil(10000 / 64) = 157, y = 1, z = 1
@@ -1292,6 +1383,7 @@ interface CompositorFactoryConfig extends CompositorConfig {
 **Class**: `WorkerGPUNavigator`
 
 **Key Methods**:
+
 - `async initialize(): Promise<void>`
   - Request adapter/device in worker context
   - Set up error handlers
@@ -1310,26 +1402,28 @@ interface CompositorFactoryConfig extends CompositorConfig {
 **Purpose**: Type-safe worker communication.
 
 **Message Types**:
+
 ```typescript
 enum GPUWorkerMessageType {
-    INIT,
-    COMPILE_SHADER,
-    DISPATCH_COMPUTE,
-    UPLOAD_DATA,
-    DOWNLOAD_DATA,
-    DESTROY
+  INIT,
+  COMPILE_SHADER,
+  DISPATCH_COMPUTE,
+  UPLOAD_DATA,
+  DOWNLOAD_DATA,
+  DESTROY,
 }
 
 interface GPUWorkerMessage {
-    type: GPUWorkerMessageType;
-    id: string;
-    payload: unknown;
+  type: GPUWorkerMessageType;
+  id: string;
+  payload: unknown;
 }
 ```
 
 **Class**: `GPUWorkerManager`
 
 **Key Methods**:
+
 - `spawnWorker(workerURL: string): string`
   - Create new Worker
   - Return worker ID
@@ -1343,6 +1437,7 @@ interface GPUWorkerMessage {
   - Terminate and cleanup worker
 
 **Message Flow**:
+
 ```
 Main Thread              Worker Thread
     |                        |
@@ -1368,6 +1463,7 @@ Main Thread              Worker Thread
 **Class**: `GPUVendorDetector`
 
 **Key Methods**:
+
 - `static detectVendor(adapter: GPUAdapter): GPUVendor`
   - Check adapter.info.vendor and .device strings
   - Return NVIDIA, AMD, INTEL, APPLE, QUALCOMM, ARM, or UNKNOWN
@@ -1383,18 +1479,23 @@ Main Thread              Worker Thread
   - Check for: timestamp-query, texture-compression-bc, etc.
 
 **Vendor Detection Logic**:
+
 ```typescript
 const vendor = adapter.info.vendor.toLowerCase();
 const device = adapter.info.device?.toLowerCase() || "";
 
-if (vendor.includes("nvidia") || device.includes("geforce") || device.includes("rtx"))
-    return GPUVendor.NVIDIA;
-if (vendor.includes("amd") || device.includes("radeon"))
-    return GPUVendor.AMD;
-if (vendor.includes("intel"))
-    return GPUVendor.INTEL;
-if (vendor.includes("apple"))
-    return GPUVendor.APPLE;
+if (vendor.includes("nvidia") || device.includes("geforce") || device.includes("rtx")) {
+  return GPUVendor.NVIDIA;
+}
+if (vendor.includes("amd") || device.includes("radeon")) {
+  return GPUVendor.AMD;
+}
+if (vendor.includes("intel")) {
+  return GPUVendor.INTEL;
+}
+if (vendor.includes("apple")) {
+  return GPUVendor.APPLE;
+}
 // ... etc
 ```
 
@@ -1405,6 +1506,7 @@ if (vendor.includes("apple"))
 **Class**: `SystemDetector`
 
 **Key Methods**:
+
 - `static detectOS(): string`
   - Return Deno.build.os (windows, darwin, linux)
 
@@ -1422,6 +1524,7 @@ if (vendor.includes("apple"))
 **Class**: `HardwareAccelerationManager`
 
 **Key Methods**:
+
 - `async initialize(): Promise<GPUCapabilities>`
   - Request adapter
   - Detect vendor, performance tier
@@ -1436,19 +1539,20 @@ if (vendor.includes("apple"))
   - Async compute (yes/no based on tier)
 
 **Capabilities**:
+
 ```typescript
 interface GPUCapabilities {
-    vendor: GPUVendor;
-    performanceTier: GPUPerformanceTier;
-    maxTextureSize: number;
-    maxBufferSize: number;
-    maxComputeWorkgroupsPerDimension: number;
-    maxComputeInvocationsPerWorkgroup: number;
-    maxStorageBufferBindingSize: number;
-    supportsTimestampQuery: boolean;
-    supportsComputeShaders: boolean;
-    supportsRayTracing: boolean;
-    limits: GPULimitsInfo;
+  vendor: GPUVendor;
+  performanceTier: GPUPerformanceTier;
+  maxTextureSize: number;
+  maxBufferSize: number;
+  maxComputeWorkgroupsPerDimension: number;
+  maxComputeInvocationsPerWorkgroup: number;
+  maxStorageBufferBindingSize: number;
+  supportsTimestampQuery: boolean;
+  supportsComputeShaders: boolean;
+  supportsRayTracing: boolean;
+  limits: GPULimitsInfo;
 }
 ```
 
@@ -1463,6 +1567,7 @@ interface GPUCapabilities {
 **Class**: `CommandEncoderManager`
 
 **Key Methods**:
+
 - `createEncoder(label?: string): GPUCommandEncoder`
   - Return device.createCommandEncoder()
 
@@ -1485,6 +1590,7 @@ interface GPUCapabilities {
 **Class**: `DrawCommandManager`
 
 **Key Methods**:
+
 - `draw(vertexCount, instanceCount?, firstVertex?, firstInstance?)`
 - `drawIndexed(indexCount, instanceCount?, firstIndex?, baseVertex?, firstInstance?)`
 - `drawIndirect(indirectBuffer, indirectOffset?)`
@@ -1501,6 +1607,7 @@ interface GPUCapabilities {
 **Class**: `WebGPUEngine`
 
 **Properties**:
+
 ```typescript
 private driver: WebGPUDriver;
 private bufferPool: WebGPUBufferPool;
@@ -1510,6 +1617,7 @@ private hardwareAcceleration: HardwareAccelerationManager;
 ```
 
 **Key Methods**:
+
 - `async initialize(): Promise<void>`
   - Initialize driver
   - Detect GPU capabilities
@@ -1536,6 +1644,7 @@ private hardwareAcceleration: HardwareAccelerationManager;
 **Purpose**: navigator.gpu wrapper with helpers.
 
 **Functions**:
+
 - `async checkWebGPUSupport(): Promise<boolean>`
 - `async requestAdapter(options?): Promise<GPUAdapter | null>`
 - `async enumerateAdapters(): Promise<GPUAdapter[]>`
@@ -1547,6 +1656,7 @@ private hardwareAcceleration: HardwareAccelerationManager;
 **Class**: `WebGPUDriver`
 
 **Key Methods**:
+
 - `async initialize(options?): Promise<void>`
   - Request adapter
   - Store adapter reference
@@ -1583,6 +1693,7 @@ private hardwareAcceleration: HardwareAccelerationManager;
 **Contains**:
 
 **`WebGPUBufferPool`** (~400 lines):
+
 - Same as buffer/Staging.ts but more advanced
 - Standard sizes: [256, 1024, 4096, 16384, 65536, 262144, 1048576]
 - acquire(size, usage) → PooledGPUBuffer
@@ -1591,6 +1702,7 @@ private hardwareAcceleration: HardwareAccelerationManager;
 - getStats()
 
 **`StagingBufferRing`** (~200 lines):
+
 - Ring buffer for continuous uploads
 - Triple buffering (3 staging buffers)
 - getNextBuffer() → Promise<GPUBuffer>
@@ -1598,6 +1710,7 @@ private hardwareAcceleration: HardwareAccelerationManager;
 - waitForIdle()
 
 **`GPUMemoryAllocator`** (~200 lines):
+
 - Advanced: large memory blocks with sub-allocation
 - Optional defragmentation
 - allocate(size, alignment) → GPUBufferAllocation
@@ -1614,31 +1727,32 @@ private hardwareAcceleration: HardwareAccelerationManager;
 **File**: `/browser/src/main.ts` (modify existing)
 
 Add WebGPU engine:
+
 ```typescript
 export class Browser {
-    private webgpuEngine: WebGPUEngine | null = null;  // ADD
+  private webgpuEngine: WebGPUEngine | null = null; // ADD
 
-    constructor(config: BrowserConfig = {}) {
-        // ... existing code ...
+  constructor(config: BrowserConfig = {}) {
+    // ... existing code ...
 
-        // Initialize WebGPU if enabled
-        if (config.enableWebGPU !== false) {
-            this.webgpuEngine = new WebGPUEngine();
-            this.webgpuEngine.initialize().catch(err => {
-                console.warn("WebGPU initialization failed:", err);
-                this.webgpuEngine = null;
-            });
-        }
+    // Initialize WebGPU if enabled
+    if (config.enableWebGPU !== false) {
+      this.webgpuEngine = new WebGPUEngine();
+      this.webgpuEngine.initialize().catch((err) => {
+        console.warn("WebGPU initialization failed:", err);
+        this.webgpuEngine = null;
+      });
     }
+  }
 
-    getWebGPUEngine(): WebGPUEngine | null {  // ADD
-        return this.webgpuEngine;
-    }
+  getWebGPUEngine(): WebGPUEngine | null { // ADD
+    return this.webgpuEngine;
+  }
 }
 
-export interface BrowserConfig {  // MODIFY
-    // ... existing fields ...
-    enableWebGPU?: boolean;  // ADD (default: true)
+export interface BrowserConfig { // MODIFY
+  // ... existing fields ...
+  enableWebGPU?: boolean; // ADD (default: true)
 }
 ```
 
@@ -1647,15 +1761,16 @@ export interface BrowserConfig {  // MODIFY
 **File**: `/browser/src/engine/RenderingPipeline.ts` (modify existing)
 
 Use CompositorFactory:
+
 ```typescript
 // BEFORE:
 const compositor = new CompositorThread(config);
 
 // AFTER:
 const compositor = await CompositorFactory.create(canvas, {
-    backend: config.compositorBackend || CompositorBackend.AUTO,
-    fallbackToWebGL: true,
-    ...config
+  backend: config.compositorBackend || CompositorBackend.AUTO,
+  fallbackToWebGL: true,
+  ...config,
 });
 ```
 
@@ -1721,6 +1836,7 @@ export * from "./errors.ts";
 **Coverage Target**: 95%+
 
 **Test Files**:
+
 1. `adapter/Device.test.ts` - Device lifecycle, state machine, error handling
 2. `buffer/Create.test.ts` - Buffer creation, mapping, validation
 3. `buffer/Staging.test.ts` - Pool acquire/release, reuse
@@ -1731,23 +1847,24 @@ export * from "./errors.ts";
 8. `utils/Detection.test.ts` - GPU vendor/system detection
 
 **Example Test**:
+
 ```typescript
 import { assertEquals, assertExists } from "@std/assert";
 import { WebGPUDevice } from "../../../src/engine/webgpu/adapter/Device.ts";
 
 Deno.test("WebGPUDevice - initialize and get descriptor", async () => {
-    const device = new WebGPUDevice();
-    assertEquals(device.getState(), GPUDeviceState.UNINITIALIZED);
+  const device = new WebGPUDevice();
+  assertEquals(device.getState(), GPUDeviceState.UNINITIALIZED);
 
-    await device.initialize();
-    assertEquals(device.getState(), GPUDeviceState.READY);
+  await device.initialize();
+  assertEquals(device.getState(), GPUDeviceState.READY);
 
-    const descriptor = device.getDescriptor();
-    assertExists(descriptor.adapter);
-    assertExists(descriptor.limits);
+  const descriptor = device.getDescriptor();
+  assertExists(descriptor.adapter);
+  assertExists(descriptor.limits);
 
-    device.destroy();
-    assertEquals(device.getState(), GPUDeviceState.DESTROYED);
+  device.destroy();
+  assertEquals(device.getState(), GPUDeviceState.DESTROYED);
 });
 ```
 
@@ -1756,26 +1873,28 @@ Deno.test("WebGPUDevice - initialize and get descriptor", async () => {
 **Location**: `/browser/tests/integration/webgpu/`
 
 **Test Files**:
+
 1. `compositor/WebGPUCompositor.test.ts` - End-to-end rendering
 2. `pipeline/RenderPipeline.test.ts` - Full render pipeline execution
 3. `compute/ComputeExecution.test.ts` - Compute shader with readback
 4. `worker/WorkerCompute.test.ts` - Worker-based compute
 
 **Example Test**:
+
 ```typescript
 Deno.test("WebGPU Compositor - render single layer", async () => {
-    const canvas = createTestCanvas(800, 600);
-    const compositor = new WebGPUCompositorThread();
-    await compositor.initialize(canvas);
+  const canvas = createTestCanvas(800, 600);
+  const compositor = new WebGPUCompositorThread();
+  await compositor.initialize(canvas);
 
-    const layerTree = createTestLayerTree();
-    compositor.updateLayerTree(layerTree);
-    compositor.composite();
+  const layerTree = createTestLayerTree();
+  compositor.updateLayerTree(layerTree);
+  compositor.composite();
 
-    const pixels = await compositor.getPixels();
-    assertEquals(pixels.length, 800 * 600 * 4);
+  const pixels = await compositor.getPixels();
+  assertEquals(pixels.length, 800 * 600 * 4);
 
-    compositor.dispose();
+  compositor.dispose();
 });
 ```
 
@@ -1786,24 +1905,26 @@ Deno.test("WebGPU Compositor - render single layer", async () => {
 **Purpose**: Compare WebGPU vs WebGL output pixel-by-pixel.
 
 **Test Files**:
+
 1. `compositor/VisualRegression.test.ts`
 2. `blending/BlendModes.test.ts`
 3. `transforms/LayerTransforms.test.ts`
 
 **Example Test**:
+
 ```typescript
 Deno.test("Visual regression - WebGPU vs WebGL", async () => {
-    const layerTree = createComplexLayerTree();
+  const layerTree = createComplexLayerTree();
 
-    // Render with WebGL
-    const webglPixels = await renderWithWebGL(layerTree);
+  // Render with WebGL
+  const webglPixels = await renderWithWebGL(layerTree);
 
-    // Render with WebGPU
-    const webgpuPixels = await renderWithWebGPU(layerTree);
+  // Render with WebGPU
+  const webgpuPixels = await renderWithWebGPU(layerTree);
 
-    // Compare (allow <1% difference for GPU precision)
-    const diff = comparePixels(webglPixels, webgpuPixels);
-    assert(diff < 0.01, `Pixel difference: ${diff * 100}%`);
+  // Compare (allow <1% difference for GPU precision)
+  const diff = comparePixels(webglPixels, webgpuPixels);
+  assert(diff < 0.01, `Pixel difference: ${diff * 100}%`);
 });
 ```
 
@@ -1812,30 +1933,32 @@ Deno.test("Visual regression - WebGPU vs WebGL", async () => {
 **Location**: `/browser/benchmarks/webgpu/`
 
 **Benchmark Files**:
+
 1. `compositor/FrameTime.bench.ts` - WebGL vs WebGPU frame time
 2. `buffer/BufferPool.bench.ts` - Buffer allocation performance
 3. `compute/ComputeShader.bench.ts` - Compute shader throughput
 
 **Example Benchmark**:
+
 ```typescript
 Deno.bench("Compositor - WebGPU vs WebGL", async (b) => {
-    const layerTree = createRealisticLayerTree(50);  // 50 layers
+  const layerTree = createRealisticLayerTree(50); // 50 layers
 
-    // WebGPU
-    const webgpuCompositor = await setupWebGPUCompositor();
-    b.start();
-    for (let i = 0; i < 100; i++) {
-        webgpuCompositor.composite();
-    }
-    b.end();
+  // WebGPU
+  const webgpuCompositor = await setupWebGPUCompositor();
+  b.start();
+  for (let i = 0; i < 100; i++) {
+    webgpuCompositor.composite();
+  }
+  b.end();
 
-    // WebGL
-    const webglCompositor = setupWebGLCompositor();
-    b.start();
-    for (let i = 0; i < 100; i++) {
-        webglCompositor.composite();
-    }
-    b.end();
+  // WebGL
+  const webglCompositor = setupWebGLCompositor();
+  b.start();
+  for (let i = 0; i < 100; i++) {
+    webglCompositor.composite();
+  }
+  b.end();
 });
 ```
 
@@ -1848,6 +1971,7 @@ Deno.bench("Compositor - WebGPU vs WebGL", async (b) => {
 **Target**: 2-3x reduction in CPU time vs WebGL
 
 **Metrics**:
+
 - WebGL: ~2-3ms CPU per frame (validation, state tracking)
 - WebGPU: ~0.5-1ms CPU per frame (explicit validation at pipeline creation)
 
@@ -1858,6 +1982,7 @@ Deno.bench("Compositor - WebGPU vs WebGL", async (b) => {
 **Target**: 20-30% reduction in GPU memory usage
 
 **Metrics**:
+
 - Texture memory: width × height × 4 bytes
 - Buffer memory: total buffer sizes
 - Peak memory usage
@@ -1869,6 +1994,7 @@ Deno.bench("Compositor - WebGPU vs WebGL", async (b) => {
 **Target**: Consistent 16.67ms (60fps) with no frame drops
 
 **Metrics**:
+
 - Frame time distribution
 - 99th percentile frame time
 - Dropped frame count
@@ -1880,6 +2006,7 @@ Deno.bench("Compositor - WebGPU vs WebGL", async (b) => {
 **Target**: 10x faster than CPU for parallel tasks
 
 **Metrics**:
+
 - Compute shader execution time
 - Data transfer time (CPU→GPU→CPU)
 - Total operation time
@@ -1893,6 +2020,7 @@ Deno.bench("Compositor - WebGPU vs WebGL", async (b) => {
 ### Critical Files (Must Implement First)
 
 **Priority 1** (blocking everything):
+
 1. `/browser/src/types/webgpu.ts` - Complete type system
 2. `/browser/src/engine/webgpu/errors.ts` - Error classes
 3. `/browser/src/engine/webgpu/adapter/Device.ts` - Device management
@@ -1960,6 +2088,7 @@ main.ts (depends on: WebGPU)
 ## Success Metrics
 
 ### Functionality Checklist
+
 - [ ] All 31 files fully implemented
 - [ ] Zero TODO/placeholder comments
 - [ ] All functions have complete implementations
@@ -1968,6 +2097,7 @@ main.ts (depends on: WebGPU)
 - [ ] Statistics tracking functional
 
 ### Quality Checklist
+
 - [ ] Matches existing browser module patterns
 - [ ] Resource pooling implemented (BufferPool, StagingBufferRing)
 - [ ] State machines with validation
@@ -1977,6 +2107,7 @@ main.ts (depends on: WebGPU)
 - [ ] Dispose/destroy methods
 
 ### Integration Checklist
+
 - [ ] WebGPU compositor replaces WebGL
 - [ ] Automatic backend selection (CompositorFactory)
 - [ ] Graceful fallback to WebGL
@@ -1984,6 +2115,7 @@ main.ts (depends on: WebGPU)
 - [ ] Config flag: enableWebGPU
 
 ### Testing Checklist
+
 - [ ] 95%+ unit test coverage
 - [ ] Integration tests pass
 - [ ] Visual regression tests pass (<1% difference)
@@ -1991,12 +2123,14 @@ main.ts (depends on: WebGPU)
 - [ ] Cross-browser testing (Chrome, Edge, Firefox)
 
 ### Performance Checklist
+
 - [ ] 2-3x CPU reduction vs WebGL
 - [ ] 20-30% GPU memory reduction
 - [ ] 60fps with no drops
 - [ ] Compute 10x faster than CPU
 
 ### Documentation Checklist
+
 - [ ] JSDoc for all public APIs
 - [ ] README.md with usage examples
 - [ ] Architecture diagrams
@@ -2007,16 +2141,19 @@ main.ts (depends on: WebGPU)
 ## References
 
 ### WebGPU Specifications
+
 - [Official W3C WebGPU Spec](https://www.w3.org/TR/webgpu/)
 - [WebGPU Explainer](https://gpuweb.github.io/gpuweb/explainer/)
 - [WGSL Specification](https://www.w3.org/TR/WGSL/)
 
 ### Best Practices
+
 - [WebGPU Buffer Uploads (Toji.dev)](https://toji.dev/webgpu-best-practices/buffer-uploads.html)
 - [WebGPU Fundamentals](https://webgpufundamentals.org/)
 - [MDN WebGPU API](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API)
 
 ### Browser Documentation
+
 - `/browser/docs/13.CompositorAndGPULayer.md` - Compositor architecture
 - `/browser/docs/01.ArchitectureOverview.md` - Browser architecture
 - `/ProxyEngine.md` - Resource pooling patterns
@@ -2034,6 +2171,7 @@ This plan is ready for review and approval. Key decisions needed:
 5. **Browser Support**: Minimum browser versions (Chrome 113+, Safari 18+)?
 
 **Next Steps After Approval**:
+
 1. Create todo list with all tasks
 2. Begin Phase 1 implementation (types, adapter, driver)
 3. Set up testing infrastructure

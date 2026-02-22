@@ -5,12 +5,12 @@
  * form scoring, file validation, MIME type inference, and auto-fill.
  */
 
-import { assertEquals, assertExists, assert } from "@std/assert";
+import { assert, assertEquals, assertExists } from "@std/assert";
 import {
-  FormAutomation,
-  FormFieldType,
-  FormField,
   DetectedForm,
+  FormAutomation,
+  FormField,
+  FormFieldType,
 } from "../../src/api/FormAutomation.ts";
 import { BrowserPage, DOMElement } from "../../src/api/BrowserPage.ts";
 
@@ -36,7 +36,10 @@ function createMockPage(overrides: Partial<BrowserPage> = {}): BrowserPage {
 /**
  * Create a mock DOMElement
  */
-function createMockElement(attributes: Record<string, string | null> = {}, properties: Record<string, unknown> = {}): DOMElement {
+function createMockElement(
+  attributes: Record<string, string | null> = {},
+  properties: Record<string, unknown> = {},
+): DOMElement {
   return {
     getAttribute: async (name: string) => attributes[name] ?? null,
     getProperty: async (name: string) => properties[name] ?? null,
@@ -630,13 +633,28 @@ Deno.test({
 
     assertEquals(automation.inferMimeType("document.pdf"), "application/pdf");
     assertEquals(automation.inferMimeType("document.doc"), "application/msword");
-    assertEquals(automation.inferMimeType("document.docx"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    assertEquals(
+      automation.inferMimeType("document.docx"),
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
     assertEquals(automation.inferMimeType("spreadsheet.xls"), "application/vnd.ms-excel");
-    assertEquals(automation.inferMimeType("spreadsheet.xlsx"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    assertEquals(
+      automation.inferMimeType("spreadsheet.xlsx"),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
     assertEquals(automation.inferMimeType("presentation.ppt"), "application/vnd.ms-powerpoint");
-    assertEquals(automation.inferMimeType("presentation.pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation");
-    assertEquals(automation.inferMimeType("document.odt"), "application/vnd.oasis.opendocument.text");
-    assertEquals(automation.inferMimeType("spreadsheet.ods"), "application/vnd.oasis.opendocument.spreadsheet");
+    assertEquals(
+      automation.inferMimeType("presentation.pptx"),
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    );
+    assertEquals(
+      automation.inferMimeType("document.odt"),
+      "application/vnd.oasis.opendocument.text",
+    );
+    assertEquals(
+      automation.inferMimeType("spreadsheet.ods"),
+      "application/vnd.oasis.opendocument.spreadsheet",
+    );
   },
 });
 
@@ -763,10 +781,22 @@ Deno.test({
     const data = { email: "test@example.com" };
 
     // Match by field name patterns
-    assertEquals(automation.inferFieldValue(createTestField({ name: "email" }), data), "test@example.com");
-    assertEquals(automation.inferFieldValue(createTestField({ name: "e-mail" }), data), "test@example.com");
-    assertEquals(automation.inferFieldValue(createTestField({ name: "user_email" }), data), "test@example.com");
-    assertEquals(automation.inferFieldValue(createTestField({ name: "mail" }), data), "test@example.com");
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "email" }), data),
+      "test@example.com",
+    );
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "e-mail" }), data),
+      "test@example.com",
+    );
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "user_email" }), data),
+      "test@example.com",
+    );
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "mail" }), data),
+      "test@example.com",
+    );
   },
 });
 
@@ -812,7 +842,10 @@ Deno.test({
 
     assertEquals(automation.inferFieldValue(createTestField({ name: "phone" }), data), "555-1234");
     assertEquals(automation.inferFieldValue(createTestField({ name: "tel" }), data), "555-1234");
-    assertEquals(automation.inferFieldValue(createTestField({ name: "telephone" }), data), "555-1234");
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "telephone" }), data),
+      "555-1234",
+    );
     assertEquals(automation.inferFieldValue(createTestField({ name: "mobile" }), data), "555-1234");
     assertEquals(automation.inferFieldValue(createTestField({ name: "cell" }), data), "555-1234");
   },
@@ -826,9 +859,18 @@ Deno.test({
 
     const data = { address: "123 Main St" };
 
-    assertEquals(automation.inferFieldValue(createTestField({ name: "address" }), data), "123 Main St");
-    assertEquals(automation.inferFieldValue(createTestField({ name: "street" }), data), "123 Main St");
-    assertEquals(automation.inferFieldValue(createTestField({ name: "street_address" }), data), "123 Main St");
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "address" }), data),
+      "123 Main St",
+    );
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "street" }), data),
+      "123 Main St",
+    );
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "street_address" }), data),
+      "123 Main St",
+    );
   },
 });
 
@@ -895,8 +937,14 @@ Deno.test({
 
     const data = { company: "Acme Inc" };
 
-    assertEquals(automation.inferFieldValue(createTestField({ name: "company" }), data), "Acme Inc");
-    assertEquals(automation.inferFieldValue(createTestField({ name: "organization" }), data), "Acme Inc");
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "company" }), data),
+      "Acme Inc",
+    );
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "organization" }), data),
+      "Acme Inc",
+    );
     assertEquals(automation.inferFieldValue(createTestField({ name: "org" }), data), "Acme Inc");
   },
 });
@@ -909,7 +957,10 @@ Deno.test({
 
     const data = { username: "johndoe" };
 
-    assertEquals(automation.inferFieldValue(createTestField({ name: "username" }), data), "johndoe");
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "username" }), data),
+      "johndoe",
+    );
     assertEquals(automation.inferFieldValue(createTestField({ name: "user" }), data), "johndoe");
     assertEquals(automation.inferFieldValue(createTestField({ name: "login" }), data), "johndoe");
   },
@@ -923,7 +974,10 @@ Deno.test({
 
     const data = { password: "secret123" };
 
-    assertEquals(automation.inferFieldValue(createTestField({ name: "password" }), data), "secret123");
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "password" }), data),
+      "secret123",
+    );
     assertEquals(automation.inferFieldValue(createTestField({ name: "pass" }), data), "secret123");
     assertEquals(automation.inferFieldValue(createTestField({ name: "pwd" }), data), "secret123");
   },
@@ -938,7 +992,10 @@ Deno.test({
     const data = { email: "test@example.com" };
 
     // Even if field name doesn't match, type email should work
-    assertEquals(automation.inferFieldValue(createTestField({ name: "contact", type: "email" }), data), "test@example.com");
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "contact", type: "email" }), data),
+      "test@example.com",
+    );
   },
 });
 
@@ -981,7 +1038,10 @@ Deno.test({
 
     const data = { email: "test@example.com" };
 
-    assertEquals(automation.inferFieldValue(createTestField({ name: "custom_field" }), data), undefined);
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "custom_field" }), data),
+      undefined,
+    );
     assertEquals(automation.inferFieldValue(createTestField({ name: "unknown" }), data), undefined);
   },
 });
@@ -996,7 +1056,10 @@ Deno.test({
 
     // When name is empty, label is used for matching
     // Label "Your Email Address" contains "email" pattern
-    assertEquals(automation.inferFieldValue(createTestField({ name: "", label: "Your Email Address" }), data), "test@example.com");
+    assertEquals(
+      automation.inferFieldValue(createTestField({ name: "", label: "Your Email Address" }), data),
+      "test@example.com",
+    );
   },
 });
 
@@ -1010,7 +1073,13 @@ Deno.test({
 
     // When name exists, it takes priority over label
     // Name "field1" doesn't match email pattern, so no match
-    assertEquals(automation.inferFieldValue(createTestField({ name: "field1", label: "Your Email Address" }), data), undefined);
+    assertEquals(
+      automation.inferFieldValue(
+        createTestField({ name: "field1", label: "Your Email Address" }),
+        data,
+      ),
+      undefined,
+    );
   },
 });
 
@@ -1282,8 +1351,18 @@ Deno.test({
 
     try {
       await automation.uploadMultipleFiles("#file-input", [
-        { fieldName: "files", fileName: "test1.txt", content: new Uint8Array([1]), mimeType: "text/plain" },
-        { fieldName: "files", fileName: "test2.txt", content: new Uint8Array([2]), mimeType: "text/plain" },
+        {
+          fieldName: "files",
+          fileName: "test1.txt",
+          content: new Uint8Array([1]),
+          mimeType: "text/plain",
+        },
+        {
+          fieldName: "files",
+          fileName: "test2.txt",
+          content: new Uint8Array([2]),
+          mimeType: "text/plain",
+        },
       ]);
       assert(false, "Should have thrown");
     } catch (error) {

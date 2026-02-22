@@ -9,7 +9,10 @@
 import { assertEquals, assertExists, assertThrows } from "@std/assert";
 import { StorageManager } from "../../../src/engine/storage/StorageManager.ts";
 import { QuotaManager } from "../../../src/engine/storage/QuotaManager.ts";
-import { StorageEventEmitter, type StorageEvent } from "../../../src/engine/storage/StorageEvents.ts";
+import {
+  type StorageEvent,
+  StorageEventEmitter,
+} from "../../../src/engine/storage/StorageEvents.ts";
 
 // ============================================================================
 // Basic Operations
@@ -500,7 +503,11 @@ Deno.test("StorageManager - export and import data", () => {
   const manager1 = new StorageManager();
 
   manager1.getLocalStorage("https://example.com").setItem("key1", "value1", "https://example.com");
-  manager1.getSessionStorage("https://example.com").setItem("key2", "value2", "https://example.com");
+  manager1.getSessionStorage("https://example.com").setItem(
+    "key2",
+    "value2",
+    "https://example.com",
+  );
 
   const exported = manager1.export();
 

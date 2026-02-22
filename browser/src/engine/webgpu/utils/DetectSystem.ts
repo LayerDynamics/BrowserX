@@ -7,7 +7,7 @@
  * @module utils
  */
 
-import { WebGPUX, MetalFamily, ROCmArchitecture } from "@browserx/webgpu_x";
+import { MetalFamily, ROCmArchitecture, WebGPUX } from "@browserx/webgpu_x";
 
 // ============================================================================
 // Lazy Initialization
@@ -19,10 +19,10 @@ let webgpuXInstance: WebGPUX | null = null;
  * Get or create webgpu_x instance
  */
 function getWebGPUX(): WebGPUX {
-    if (!webgpuXInstance) {
-        webgpuXInstance = new WebGPUX();
-    }
-    return webgpuXInstance;
+  if (!webgpuXInstance) {
+    webgpuXInstance = new WebGPUX();
+  }
+  return webgpuXInstance;
 }
 
 // ============================================================================
@@ -33,10 +33,10 @@ function getWebGPUX(): WebGPUX {
  * Platform types
  */
 export enum Platform {
-    Darwin = "darwin",
-    Linux = "linux",
-    Windows = "windows",
-    Unknown = "unknown",
+  Darwin = "darwin",
+  Linux = "linux",
+  Windows = "windows",
+  Unknown = "unknown",
 }
 
 /**
@@ -53,38 +53,38 @@ export enum Platform {
  * ```
  */
 export function detectPlatform(): Platform {
-    const os = Deno.build.os;
-    switch (os) {
-        case "darwin":
-            return Platform.Darwin;
-        case "linux":
-            return Platform.Linux;
-        case "windows":
-            return Platform.Windows;
-        default:
-            return Platform.Unknown;
-    }
+  const os = Deno.build.os;
+  switch (os) {
+    case "darwin":
+      return Platform.Darwin;
+    case "linux":
+      return Platform.Linux;
+    case "windows":
+      return Platform.Windows;
+    default:
+      return Platform.Unknown;
+  }
 }
 
 /**
  * Check if running on macOS
  */
 export function isDarwin(): boolean {
-    return detectPlatform() === Platform.Darwin;
+  return detectPlatform() === Platform.Darwin;
 }
 
 /**
  * Check if running on Linux
  */
 export function isLinux(): boolean {
-    return detectPlatform() === Platform.Linux;
+  return detectPlatform() === Platform.Linux;
 }
 
 /**
  * Check if running on Windows
  */
 export function isWindows(): boolean {
-    return detectPlatform() === Platform.Windows;
+  return detectPlatform() === Platform.Windows;
 }
 
 // ============================================================================
@@ -95,24 +95,24 @@ export function isWindows(): boolean {
  * Check if running on Apple Silicon
  */
 export function isAppleSilicon(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.isAppleSilicon();
+  const webgpuX = getWebGPUX();
+  return webgpuX.isAppleSilicon();
 }
 
 /**
  * Get preferred backend for macOS
  */
 export function darwinPreferredBackend(): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.darwinPreferredBackend();
+  const webgpuX = getWebGPUX();
+  return webgpuX.darwinPreferredBackend();
 }
 
 /**
  * Get recommended memory strategy for macOS
  */
 export function darwinRecommendedMemoryStrategy(): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.darwinRecommendedMemoryStrategy();
+  const webgpuX = getWebGPUX();
+  return webgpuX.darwinRecommendedMemoryStrategy();
 }
 
 // ============================================================================
@@ -123,72 +123,72 @@ export function darwinRecommendedMemoryStrategy(): string {
  * Check if Linux system is running on ARM
  */
 export function linuxIsArm(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxIsArm();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxIsArm();
 }
 
 /**
  * Get CPU count on Linux
  */
 export function linuxGetCpuCount(): number {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxGetCpuCount();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxGetCpuCount();
 }
 
 /**
  * Get page size on Linux
  */
 export function linuxGetPageSize(): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxGetPageSize();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxGetPageSize();
 }
 
 /**
  * Get total memory on Linux
  */
 export function linuxGetTotalMemory(): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxGetTotalMemory();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxGetTotalMemory();
 }
 
 /**
  * Check if NVIDIA driver is available on Linux
  */
 export function linuxHasNvidiaDriver(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxHasNvidiaDriver();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxHasNvidiaDriver();
 }
 
 /**
  * Check if ROCm driver is available on Linux
  */
 export function linuxHasRocmDriver(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxHasRocmDriver();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxHasRocmDriver();
 }
 
 /**
  * Check if Intel GPU is available on Linux
  */
 export function linuxHasIntelGpu(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxHasIntelGpu();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxHasIntelGpu();
 }
 
 /**
  * Get preferred backend for Linux
  */
 export function linuxPreferredBackend(): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxPreferredBackend();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxPreferredBackend();
 }
 
 /**
  * Get recommended memory strategy for Linux
  */
 export function linuxRecommendedMemoryStrategy(): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.linuxRecommendedMemoryStrategy();
+  const webgpuX = getWebGPUX();
+  return webgpuX.linuxRecommendedMemoryStrategy();
 }
 
 // ============================================================================
@@ -199,72 +199,72 @@ export function linuxRecommendedMemoryStrategy(): string {
  * Check if Windows system is running on ARM
  */
 export function windowsIsArm(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsIsArm();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsIsArm();
 }
 
 /**
  * Get logical processor count on Windows
  */
 export function windowsGetLogicalProcessorCount(): number {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsGetLogicalProcessorCount();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsGetLogicalProcessorCount();
 }
 
 /**
  * Get page size on Windows
  */
 export function windowsGetPageSize(): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsGetPageSize();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsGetPageSize();
 }
 
 /**
  * Check if NVIDIA driver is available on Windows
  */
 export function windowsHasNvidiaDriver(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsHasNvidiaDriver();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsHasNvidiaDriver();
 }
 
 /**
  * Check if AMD driver is available on Windows
  */
 export function windowsHasAmdDriver(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsHasAmdDriver();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsHasAmdDriver();
 }
 
 /**
  * Check if Intel driver is available on Windows
  */
 export function windowsHasIntelDriver(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsHasIntelDriver();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsHasIntelDriver();
 }
 
 /**
  * Check if DirectX 12 is available on Windows
  */
 export function windowsHasDx12(): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsHasDx12();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsHasDx12();
 }
 
 /**
  * Get preferred backend for Windows
  */
 export function windowsPreferredBackend(): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsPreferredBackend();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsPreferredBackend();
 }
 
 /**
  * Get recommended memory strategy for Windows
  */
 export function windowsRecommendedMemoryStrategy(): string {
-    const webgpuX = getWebGPUX();
-    return webgpuX.windowsRecommendedMemoryStrategy();
+  const webgpuX = getWebGPUX();
+  return webgpuX.windowsRecommendedMemoryStrategy();
 }
 
 // ============================================================================
@@ -280,21 +280,21 @@ export { MetalFamily };
  * @returns Object with Metal-specific capabilities
  */
 export function getMetalCapabilities(family: MetalFamily): {
-    optimalWorkgroupSize: number;
-    simdGroupSize: number;
-    maxThreadgroupMemory: bigint;
-    supportsRaytracing: boolean;
-    supportsTier2ArgumentBuffers: boolean;
+  optimalWorkgroupSize: number;
+  simdGroupSize: number;
+  maxThreadgroupMemory: bigint;
+  supportsRaytracing: boolean;
+  supportsTier2ArgumentBuffers: boolean;
 } {
-    const webgpuX = getWebGPUX();
+  const webgpuX = getWebGPUX();
 
-    return {
-        optimalWorkgroupSize: webgpuX.metalOptimalWorkgroupSize(family),
-        simdGroupSize: webgpuX.metalSimdGroupSize(family),
-        maxThreadgroupMemory: webgpuX.metalMaxThreadgroupMemory(family),
-        supportsRaytracing: webgpuX.metalSupportsRaytracing(family),
-        supportsTier2ArgumentBuffers: webgpuX.metalSupportsTier2ArgumentBuffers(family),
-    };
+  return {
+    optimalWorkgroupSize: webgpuX.metalOptimalWorkgroupSize(family),
+    simdGroupSize: webgpuX.metalSimdGroupSize(family),
+    maxThreadgroupMemory: webgpuX.metalMaxThreadgroupMemory(family),
+    supportsRaytracing: webgpuX.metalSupportsRaytracing(family),
+    supportsTier2ArgumentBuffers: webgpuX.metalSupportsTier2ArgumentBuffers(family),
+  };
 }
 
 // ============================================================================
@@ -310,21 +310,21 @@ export { ROCmArchitecture };
  * @returns Object with ROCm-specific capabilities
  */
 export function getROCmCapabilities(architecture: ROCmArchitecture): {
-    optimalWorkgroupSize: number;
-    wavefrontSize: number;
-    ldsSize: bigint;
-    hasMatrixCores: boolean;
-    supportsFp64: boolean;
+  optimalWorkgroupSize: number;
+  wavefrontSize: number;
+  ldsSize: bigint;
+  hasMatrixCores: boolean;
+  supportsFp64: boolean;
 } {
-    const webgpuX = getWebGPUX();
+  const webgpuX = getWebGPUX();
 
-    return {
-        optimalWorkgroupSize: webgpuX.rocmOptimalWorkgroupSize(architecture),
-        wavefrontSize: webgpuX.rocmWavefrontSize(architecture),
-        ldsSize: webgpuX.rocmLdsSizePerCu(architecture),
-        hasMatrixCores: webgpuX.rocmHasMatrixCores(architecture),
-        supportsFp64: webgpuX.rocmSupportsFp64(architecture),
-    };
+  return {
+    optimalWorkgroupSize: webgpuX.rocmOptimalWorkgroupSize(architecture),
+    wavefrontSize: webgpuX.rocmWavefrontSize(architecture),
+    ldsSize: webgpuX.rocmLdsSizePerCu(architecture),
+    hasMatrixCores: webgpuX.rocmHasMatrixCores(architecture),
+    supportsFp64: webgpuX.rocmSupportsFp64(architecture),
+  };
 }
 
 /**
@@ -336,16 +336,16 @@ export function getROCmCapabilities(architecture: ROCmArchitecture): {
  * @returns Occupancy as a value between 0.0 and 1.0
  */
 export function calculateROCmOccupancy(
-    threadsPerBlock: number,
-    sharedMemoryPerBlock: bigint,
-    architecture: ROCmArchitecture,
+  threadsPerBlock: number,
+  sharedMemoryPerBlock: bigint,
+  architecture: ROCmArchitecture,
 ): number {
-    const webgpuX = getWebGPUX();
-    return webgpuX.rocmCalculateOccupancy(
-        threadsPerBlock,
-        sharedMemoryPerBlock,
-        architecture,
-    );
+  const webgpuX = getWebGPUX();
+  return webgpuX.rocmCalculateOccupancy(
+    threadsPerBlock,
+    sharedMemoryPerBlock,
+    architecture,
+  );
 }
 
 // ============================================================================
@@ -360,26 +360,26 @@ export function calculateROCmOccupancy(
  * @returns Object with CUDA-specific capabilities
  */
 export function getCUDACapabilities(
-    computeCapabilityMajor: number,
-    computeCapabilityMinor: number,
+  computeCapabilityMajor: number,
+  computeCapabilityMinor: number,
 ): {
-    optimalWorkgroupSize: number;
-    sharedMemoryBankSize: number;
-    hasTensorCores: boolean;
+  optimalWorkgroupSize: number;
+  sharedMemoryBankSize: number;
+  hasTensorCores: boolean;
 } {
-    const webgpuX = getWebGPUX();
+  const webgpuX = getWebGPUX();
 
-    return {
-        optimalWorkgroupSize: webgpuX.cudaOptimalWorkgroupSize(
-            computeCapabilityMajor,
-            computeCapabilityMinor,
-        ),
-        sharedMemoryBankSize: webgpuX.cudaSharedMemoryBankSize(computeCapabilityMajor),
-        hasTensorCores: webgpuX.cudaHasTensorCores(
-            computeCapabilityMajor,
-            computeCapabilityMinor,
-        ),
-    };
+  return {
+    optimalWorkgroupSize: webgpuX.cudaOptimalWorkgroupSize(
+      computeCapabilityMajor,
+      computeCapabilityMinor,
+    ),
+    sharedMemoryBankSize: webgpuX.cudaSharedMemoryBankSize(computeCapabilityMajor),
+    hasTensorCores: webgpuX.cudaHasTensorCores(
+      computeCapabilityMajor,
+      computeCapabilityMinor,
+    ),
+  };
 }
 
 /**
@@ -391,16 +391,16 @@ export function getCUDACapabilities(
  * @returns Occupancy as a value between 0.0 and 1.0
  */
 export function calculateCUDAOccupancy(
-    threadsPerBlock: number,
-    sharedMemoryPerBlock: bigint,
-    computeCapabilityMajor: number,
+  threadsPerBlock: number,
+  sharedMemoryPerBlock: bigint,
+  computeCapabilityMajor: number,
 ): number {
-    const webgpuX = getWebGPUX();
-    return webgpuX.cudaCalculateOccupancy(
-        threadsPerBlock,
-        sharedMemoryPerBlock,
-        computeCapabilityMajor,
-    );
+  const webgpuX = getWebGPUX();
+  return webgpuX.cudaCalculateOccupancy(
+    threadsPerBlock,
+    sharedMemoryPerBlock,
+    computeCapabilityMajor,
+  );
 }
 
 // ============================================================================
@@ -415,8 +415,8 @@ export function calculateCUDAOccupancy(
  * @returns Optimal workgroup size
  */
 export function vulkanOptimalWorkgroupSize(vendorId: number, deviceId: number): number {
-    const webgpuX = getWebGPUX();
-    return webgpuX.vulkanOptimalWorkgroupSize(vendorId, deviceId);
+  const webgpuX = getWebGPUX();
+  return webgpuX.vulkanOptimalWorkgroupSize(vendorId, deviceId);
 }
 
 /**
@@ -429,13 +429,13 @@ export function vulkanOptimalWorkgroupSize(vendorId: number, deviceId: number): 
  * @returns true if supported
  */
 export function vulkanSupportsVersion(
-    vendorId: number,
-    deviceId: number,
-    major: number,
-    minor: number,
+  vendorId: number,
+  deviceId: number,
+  major: number,
+  minor: number,
 ): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.vulkanSupportsVersion(vendorId, deviceId, major, minor);
+  const webgpuX = getWebGPUX();
+  return webgpuX.vulkanSupportsVersion(vendorId, deviceId, major, minor);
 }
 
 /**
@@ -446,8 +446,8 @@ export function vulkanSupportsVersion(
  * @returns true if ray tracing is supported
  */
 export function vulkanSupportsRaytracing(vendorId: number, deviceId: number): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.vulkanSupportsRaytracing(vendorId, deviceId);
+  const webgpuX = getWebGPUX();
+  return webgpuX.vulkanSupportsRaytracing(vendorId, deviceId);
 }
 
 /**
@@ -456,8 +456,8 @@ export function vulkanSupportsRaytracing(vendorId: number, deviceId: number): bo
  * @returns Recommended descriptor set count
  */
 export function vulkanRecommendedDescriptorSets(): number {
-    const webgpuX = getWebGPUX();
-    return webgpuX.vulkanRecommendedDescriptorSets();
+  const webgpuX = getWebGPUX();
+  return webgpuX.vulkanRecommendedDescriptorSets();
 }
 
 // ============================================================================
@@ -472,8 +472,8 @@ export function vulkanRecommendedDescriptorSets(): number {
  * @returns Optimal workgroup size
  */
 export function openclOptimalWorkgroupSize(vendorId: number, deviceType: bigint): bigint {
-    const webgpuX = getWebGPUX();
-    return webgpuX.openclOptimalWorkgroupSize(vendorId, deviceType);
+  const webgpuX = getWebGPUX();
+  return webgpuX.openclOptimalWorkgroupSize(vendorId, deviceType);
 }
 
 /**
@@ -486,13 +486,13 @@ export function openclOptimalWorkgroupSize(vendorId: number, deviceType: bigint)
  * @returns true if supported
  */
 export function openclSupportsVersion(
-    vendorId: number,
-    deviceId: number,
-    major: number,
-    minor: number,
+  vendorId: number,
+  deviceId: number,
+  major: number,
+  minor: number,
 ): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.openclSupportsVersion(vendorId, deviceId, major, minor);
+  const webgpuX = getWebGPUX();
+  return webgpuX.openclSupportsVersion(vendorId, deviceId, major, minor);
 }
 
 /**
@@ -503,8 +503,8 @@ export function openclSupportsVersion(
  * @returns true if FP64 is supported
  */
 export function openclSupportsFp64(vendorId: number, deviceId: number): boolean {
-    const webgpuX = getWebGPUX();
-    return webgpuX.openclSupportsFp64(vendorId, deviceId);
+  const webgpuX = getWebGPUX();
+  return webgpuX.openclSupportsFp64(vendorId, deviceId);
 }
 
 // ============================================================================
@@ -517,30 +517,30 @@ export function openclSupportsFp64(vendorId: number, deviceId: number): boolean 
  * @returns Object with platform, architecture, and capabilities
  */
 export function getSystemInfo(): {
-    platform: Platform;
-    version: string;
-    isAppleSilicon?: boolean;
-    preferredBackend?: string;
-    memoryStrategy?: string;
+  platform: Platform;
+  version: string;
+  isAppleSilicon?: boolean;
+  preferredBackend?: string;
+  memoryStrategy?: string;
 } {
-    const webgpuX = getWebGPUX();
-    const platform = detectPlatform();
-    const info: ReturnType<typeof getSystemInfo> = {
-        platform,
-        version: webgpuX.version,
-    };
+  const webgpuX = getWebGPUX();
+  const platform = detectPlatform();
+  const info: ReturnType<typeof getSystemInfo> = {
+    platform,
+    version: webgpuX.version,
+  };
 
-    if (platform === Platform.Darwin) {
-        info.isAppleSilicon = webgpuX.isAppleSilicon();
-        info.preferredBackend = webgpuX.darwinPreferredBackend();
-        info.memoryStrategy = webgpuX.darwinRecommendedMemoryStrategy();
-    } else if (platform === Platform.Linux) {
-        info.preferredBackend = webgpuX.linuxPreferredBackend();
-        info.memoryStrategy = webgpuX.linuxRecommendedMemoryStrategy();
-    } else if (platform === Platform.Windows) {
-        info.preferredBackend = webgpuX.windowsPreferredBackend();
-        info.memoryStrategy = webgpuX.windowsRecommendedMemoryStrategy();
-    }
+  if (platform === Platform.Darwin) {
+    info.isAppleSilicon = webgpuX.isAppleSilicon();
+    info.preferredBackend = webgpuX.darwinPreferredBackend();
+    info.memoryStrategy = webgpuX.darwinRecommendedMemoryStrategy();
+  } else if (platform === Platform.Linux) {
+    info.preferredBackend = webgpuX.linuxPreferredBackend();
+    info.memoryStrategy = webgpuX.linuxRecommendedMemoryStrategy();
+  } else if (platform === Platform.Windows) {
+    info.preferredBackend = webgpuX.windowsPreferredBackend();
+    info.memoryStrategy = webgpuX.windowsRecommendedMemoryStrategy();
+  }
 
-    return info;
+  return info;
 }

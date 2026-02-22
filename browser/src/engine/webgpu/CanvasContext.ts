@@ -10,15 +10,11 @@
  */
 
 export {
-  WebGPUCanvasContext,
-  CanvasState,
-  ResizeMode,
   CanvasContextError,
   CanvasLostError,
+  CanvasState,
+  ResizeMode,
+  WebGPUCanvasContext,
 } from "./canvas/CanvasContext.ts";
 
-export type {
-  CanvasContextConfig,
-  FrameTiming,
-  CanvasStatistics,
-} from "./canvas/CanvasContext.ts";
+export type { CanvasContextConfig, CanvasStatistics, FrameTiming } from "./canvas/CanvasContext.ts";
