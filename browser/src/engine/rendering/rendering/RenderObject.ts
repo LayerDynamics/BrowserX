@@ -40,6 +40,7 @@ export abstract class RenderObject {
 
     // Internal state
     private static nextId: number = 1;
+    private pixelValueCache = new Map<string, number>();
 
     constructor(element: DOMElement, style: ComputedStyle) {
         this.id = String(RenderObject.nextId++) as RenderObjectID;
@@ -56,6 +57,7 @@ export abstract class RenderObject {
         }
 
         this.needsLayout = true;
+        this.pixelValueCache.clear();
 
         // Propagate up the tree
         if (this.parent) {
@@ -230,30 +232,69 @@ export abstract class RenderObject {
      * Get computed pixel value for a CSS length property
      */
     public getPixelValue(property: string, defaultValue: Pixels = 0 as Pixels): Pixels {
+        const cacheKey = property;
+        const cached = this.pixelValueCache.get(cacheKey);
+        if (cached !== undefined) {
+            return cached as Pixels;
+        }
+
         const value = this.style.getPropertyValue(property);
 
         if (!value || value === "auto" || value === "none") {
             return defaultValue;
         }
 
+        let result: Pixels;
+
         // Parse pixel value
         if (value.endsWith("px")) {
-            return parseFloat(value) as Pixels;
+            result = parseFloat(value) as Pixels;
+        }
+        // Parse percentage relative to parent dimensions
+        else if (value.endsWith("%")) {
+            const percent = parseFloat(value) / 100;
+            if (isNaN(percent) || !this.parent || !this.parent.layout) {
+                return defaultValue;
+            }
+
+            const widthProperties = new Set([
+                "width", "min-width", "max-width",
+                "margin-left", "margin-right",
+                "padding-left", "padding-right",
+                "left", "right",
+            ]);
+            const heightProperties = new Set([
+                "height", "min-height", "max-height",
+                "top", "bottom",
+            ]);
+
+            if (widthProperties.has(property)) {
+                result = (percent * this.parent.layout.width) as Pixels;
+            } else if (heightProperties.has(property)) {
+                result = (percent * this.parent.layout.height) as Pixels;
+            } else {
+                // Default: resolve against parent width (CSS spec default for most properties)
+                result = (percent * this.parent.layout.width) as Pixels;
+            }
+        } else {
+            // Try to parse as number
+            const num = parseFloat(value);
+            if (!isNaN(num)) {
+                result = num as Pixels;
+            } else {
+                return defaultValue;
+            }
         }
 
-        // Parse percentage (would need parent context)
-        if (value.endsWith("%")) {
-            // TODO: Calculate percentage relative to parent
-            return defaultValue;
-        }
+        this.pixelValueCache.set(cacheKey, result);
+        return result;
+    }
 
-        // Try to parse as number
-        const num = parseFloat(value);
-        if (!isNaN(num)) {
-            return num as Pixels;
-        }
-
-        return defaultValue;
+    /**
+     * Clear the pixel value cache (called on style changes)
+     */
+    clearPixelValueCache(): void {
+        this.pixelValueCache.clear();
     }
 
     /**
