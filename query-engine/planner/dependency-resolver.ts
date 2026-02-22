@@ -4,6 +4,12 @@
  */
 
 import type { Statement, Expression } from "../types/ast.ts";
+import {
+  DiGraph,
+  GraphNode,
+  GraphEdge,
+  topologicalSort as graphxTopoSort,
+} from "@browserx/graphx";
 
 /**
  * Dependency information for a statement or expression
@@ -184,56 +190,72 @@ export class DependencyResolver {
    * Resolve dependencies and return topologically sorted order
    */
   resolve(): ResolutionResult {
-    const ordered: string[] = [];
     const cycles: string[][] = [];
     const unresolved: string[] = [];
-    const visited = new Set<string>();
-    const visiting = new Set<string>();
 
-    const visit = (id: string, path: string[]): void => {
-      if (visited.has(id)) {
-        return;
-      }
-
-      if (visiting.has(id)) {
-        // Cycle detected
-        const cycleStart = path.indexOf(id);
-        if (cycleStart >= 0) {
-          cycles.push([...path.slice(cycleStart), id]);
-        }
-        return;
-      }
-
-      visiting.add(id);
-      path.push(id);
-
-      const dep = this.dependencies.get(id);
-      if (dep) {
-        for (const reqId of dep.requires) {
-          if (!this.dependencies.has(reqId)) {
-            // Dependency not found
-            if (!unresolved.includes(reqId)) {
-              unresolved.push(reqId);
-            }
-          } else {
-            visit(reqId, [...path]);
+    // Check for unresolved dependencies first
+    for (const dep of this.dependencies.values()) {
+      for (const reqId of dep.requires) {
+        if (!this.dependencies.has(reqId)) {
+          if (!unresolved.includes(reqId)) {
+            unresolved.push(reqId);
           }
         }
       }
+    }
 
-      visiting.delete(id);
-      visited.add(id);
-      ordered.push(id);
-    };
-
-    // Visit all nodes
-    for (const id of this.dependencies.keys()) {
-      if (!visited.has(id)) {
-        visit(id, []);
+    // Build a DiGraph from the dependencies
+    const digraph = new DiGraph<Dependency, void>();
+    for (const [id, dep] of this.dependencies) {
+      digraph.addNode(new GraphNode(id, dep, id));
+    }
+    for (const [id, dep] of this.dependencies) {
+      for (const reqId of dep.requires) {
+        if (this.dependencies.has(reqId)) {
+          digraph.addEdge(new GraphEdge(`${reqId}->${id}`, reqId, id));
+        }
       }
     }
 
-    return { ordered, cycles, unresolved };
+    // Use GraphX topological sort
+    const result = graphxTopoSort(digraph);
+
+    if (result.hasCycle) {
+      // Detect cycle paths using DFS for detailed reporting
+      const visited = new Set<string>();
+      const visiting = new Set<string>();
+
+      const detectCycles = (id: string, path: string[]): void => {
+        if (visited.has(id)) return;
+        if (visiting.has(id)) {
+          const cycleStart = path.indexOf(id);
+          if (cycleStart >= 0) {
+            cycles.push([...path.slice(cycleStart), id]);
+          }
+          return;
+        }
+        visiting.add(id);
+        path.push(id);
+        const dep = this.dependencies.get(id);
+        if (dep) {
+          for (const reqId of dep.requires) {
+            if (this.dependencies.has(reqId)) {
+              detectCycles(reqId, [...path]);
+            }
+          }
+        }
+        visiting.delete(id);
+        visited.add(id);
+      };
+
+      for (const id of this.dependencies.keys()) {
+        if (!visited.has(id)) {
+          detectCycles(id, []);
+        }
+      }
+    }
+
+    return { ordered: result.order, cycles, unresolved };
   }
 
   /**

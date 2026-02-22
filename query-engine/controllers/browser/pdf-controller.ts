@@ -10,7 +10,7 @@ declare const Deno: {
     writeFile(path: string, data: Uint8Array): Promise<void>;
 };
 
-import type { BrowserPage } from "../../../browser/src/api/BrowserPage.ts";
+import type { BrowserPage } from "@browserx/browser";
 import {
     PDFGeneratorAPI,
     createPDFGenerator,
@@ -23,7 +23,7 @@ import {
     type PDFFormat,
     type PDFOrientation,
     type PDFMargins,
-} from "../../../browser/src/api/PDFGenerator.ts";
+} from "@browserx/browser";
 import { getCurrentBrowserController } from "./browser-context.ts";
 
 /**

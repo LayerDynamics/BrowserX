@@ -3,6 +3,19 @@
  */
 
 import { DependencyGraph, DependencyNode, ExecutionStep } from "./plan.ts";
+import {
+  DiGraph,
+  GraphNode,
+  GraphEdge,
+  topologicalSort as graphxTopoSort,
+  hasCycle,
+} from "@browserx/graphx";
+
+/** Internal map from DependencyGraph to its backing DiGraph */
+const digraphStore = new WeakMap<
+  DependencyGraph,
+  DiGraph<ExecutionStep, void>
+>();
 
 /**
  * Dependency graph builder
@@ -47,17 +60,47 @@ export class DependencyGraphBuilder {
       }
     }
 
-    return {
+    // Build GraphX DiGraph
+    const digraph = new DiGraph<ExecutionStep, void>();
+    for (const step of steps) {
+      digraph.addNode(new GraphNode(step.id, step, step.id));
+    }
+    for (const [_id, node] of nodes) {
+      for (const depId of node.dependencies) {
+        if (nodes.has(depId)) {
+          digraph.addEdge(
+            new GraphEdge(`${depId}->${node.stepId}`, depId, node.stepId),
+          );
+        }
+      }
+    }
+
+    const graph: DependencyGraph = {
       nodes,
       roots,
       leaves,
     };
+
+    // Store digraph associated with this DependencyGraph
+    digraphStore.set(graph, digraph);
+
+    return graph;
   }
 
   /**
    * Get topological ordering of steps
    */
   topologicalSort(graph: DependencyGraph): string[] {
+    const digraph = digraphStore.get(graph);
+    if (digraph) {
+      const result = graphxTopoSort(digraph);
+      if (result.hasCycle) {
+        throw new Error("Circular dependency detected");
+      }
+      return result.order;
+    }
+
+    // Fallback for graphs not built by this builder
     const sorted: string[] = [];
     const visited = new Set<string>();
     const visiting = new Set<string>();
@@ -75,7 +118,6 @@ export class DependencyGraphBuilder {
 
       const node = graph.nodes.get(nodeId);
       if (node) {
-        // Visit dependencies first
         for (const depId of node.dependencies) {
           visit(depId);
         }
@@ -86,7 +128,6 @@ export class DependencyGraphBuilder {
       sorted.push(nodeId);
     };
 
-    // Visit all nodes
     for (const nodeId of graph.nodes.keys()) {
       visit(nodeId);
     }
@@ -147,12 +188,24 @@ export class DependencyGraphBuilder {
    * Check if graph has cycles
    */
   hasCycles(graph: DependencyGraph): boolean {
+    const digraph = digraphStore.get(graph);
+    if (digraph) {
+      return hasCycle(digraph);
+    }
+    // Fallback for graphs not built by this builder
     try {
       this.topologicalSort(graph);
       return false;
     } catch (_error) {
       return true;
     }
+  }
+
+  /**
+   * Get the backing DiGraph for a DependencyGraph
+   */
+  getDigraph(graph: DependencyGraph): DiGraph<ExecutionStep, void> | undefined {
+    return digraphStore.get(graph);
   }
 
   /**

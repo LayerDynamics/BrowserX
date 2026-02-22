@@ -5,8 +5,8 @@
  * Provides performance metrics collection and analysis for query execution.
  */
 
-import type { BrowserPage } from "../../../browser/src/api/BrowserPage.ts";
-import type { RenderingTiming, ResourceInfo } from "../../../browser/src/engine/RenderingPipeline.ts";
+import type { BrowserPage } from "@browserx/browser";
+import type { RenderingTiming, ResourceInfo } from "@browserx/browser";
 import {
     PerformanceProfiler,
     createPerformanceProfiler,
@@ -21,7 +21,7 @@ import {
     type PerformanceMark,
     type PerformanceMeasure,
     type ProfilingOptions,
-} from "../../../browser/src/api/PerformanceProfiler.ts";
+} from "@browserx/browser";
 import { getCurrentBrowserController } from "./browser-context.ts";
 
 /**

@@ -5,7 +5,7 @@
  * Provides network traffic mocking and replay for testing and offline simulation.
  */
 
-import type { BrowserPage } from "../../../browser/src/api/BrowserPage.ts";
+import type { BrowserPage } from "@browserx/browser";
 import {
   HARPlayer,
   THROTTLE_PRESETS,
@@ -20,8 +20,8 @@ import {
   type ExtractedCookies,
   type ExtractedAuth,
   type PlaybackResult,
-} from "../../../browser/src/api/HARPlayer.ts";
-import type { HAR, HAREntry } from "../../../browser/src/api/HARRecorder.ts";
+} from "@browserx/browser";
+import type { HAR, HAREntry } from "@browserx/browser";
 import { getCurrentBrowserController } from "./browser-context.ts";
 import { getHARRecorderController } from "./har-recorder-controller.ts";
 

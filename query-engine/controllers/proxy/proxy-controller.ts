@@ -5,7 +5,7 @@
 
 import { CacheLookupStep, CacheRetrieveStep, CacheStoreStep } from "../../planner/mod.ts";
 import { DurationMs, RequestID, URLString } from "../../types/primitives.ts";
-import type { Runtime } from "../../../proxy-engine/core/runtime/mod.ts";
+import type { Runtime } from "@browserx/proxy-engine";
 
 /**
  * HTTP request

@@ -18,6 +18,9 @@
     "./formatter": "./formatter/mod.ts"
   },
   "imports": {
+    "@browserx/browser": "../browser/src/mod.ts",
+    "@browserx/proxy-engine": "../proxy-engine/mod.ts",
+    "@browserx/graphx": "../graphx/mod.ts",
     "@std/assert": "jsr:@std/assert@^1.0.0"
   },
   "tasks": {

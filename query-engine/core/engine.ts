@@ -20,10 +20,10 @@ import {
   QueryStatus,
 } from "../types/mod.ts";
 import { ProxyController, ProxyConfig } from "../controllers/proxy/proxy-controller.ts";
-import { Runtime } from "../../proxy-engine/core/runtime/mod.ts";
+import { Runtime } from "@browserx/proxy-engine";
 import { BrowserController } from "../controllers/browser/browser-controller.ts";
-import { BrowserEngine } from "../../browser/src/api/mod.ts";
-import type { PipelineObserver, PipelineStageEvent } from "../../browser/src/engine/PipelineObserver.ts";
+import { BrowserEngine } from "@browserx/browser";
+import type { PipelineObserver, PipelineStageEvent } from "@browserx/browser";
 
 /**
  * Query Engine configuration

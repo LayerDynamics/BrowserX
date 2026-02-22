@@ -5,7 +5,7 @@
  * Provides data extraction and pagination for query execution.
  */
 
-import type { BrowserPage } from "../../../browser/src/api/BrowserPage.ts";
+import type { BrowserPage } from "@browserx/browser";
 import {
   WebScraper,
   createWebScraper,
@@ -18,7 +18,7 @@ import {
   type ExtractedImage,
   type PaginationConfig,
   type PaginatedScrapeResult,
-} from "../../../browser/src/api/WebScraper.ts";
+} from "@browserx/browser";
 import { getCurrentBrowserController } from "./browser-context.ts";
 
 /**

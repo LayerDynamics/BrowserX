@@ -45,7 +45,7 @@ import { setCurrentBrowserController, clearBrowserContext } from "../controllers
 import { ProxyController } from "../controllers/proxy/proxy-controller.ts";
 import { ExecutionContextManager, StateManager } from "../state/mod.ts";
 import { type DependencyGraph, topologicalSort } from "../utils/mod.ts";
-import { BrowserEngine } from "../../browser/src/api/mod.ts";
+import { BrowserEngine } from "@browserx/browser";
 
 /**
  * Execution options

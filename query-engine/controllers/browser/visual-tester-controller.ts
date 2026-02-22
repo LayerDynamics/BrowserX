@@ -5,7 +5,7 @@
  * Provides screenshot capture, comparison, and layout verification for query execution.
  */
 
-import type { BrowserPage } from "../../../browser/src/api/BrowserPage.ts";
+import type { BrowserPage } from "@browserx/browser";
 import {
   VisualTester,
   createVisualTester,
@@ -16,7 +16,7 @@ import {
   type VisibilityResult,
   type LayoutCheckResult,
   type SnapshotMetadata,
-} from "../../../browser/src/api/VisualTester.ts";
+} from "@browserx/browser";
 import { getCurrentBrowserController } from "./browser-context.ts";
 
 /**

@@ -5,7 +5,7 @@
  * Provides session management and authentication for query execution.
  */
 
-import type { BrowserPage } from "../../../browser/src/api/BrowserPage.ts";
+import type { BrowserPage } from "@browserx/browser";
 import {
   AuthenticationManager,
   createAuthenticationManager,
@@ -22,7 +22,7 @@ import {
   type FormLoginCredentials,
   type OAuth2Credentials,
   type CustomAuthCredentials,
-} from "../../../browser/src/api/AuthenticationManager.ts";
+} from "@browserx/browser";
 import { getCurrentBrowserController } from "./browser-context.ts";
 
 /**

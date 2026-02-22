@@ -5,7 +5,7 @@
  * Provides network traffic recording and analysis for query execution.
  */
 
-import type { BrowserPage } from "../../../browser/src/api/BrowserPage.ts";
+import type { BrowserPage } from "@browserx/browser";
 import {
   HARRecorder,
   createHARRecorder,
@@ -15,7 +15,7 @@ import {
   type RecordingOptions,
   type NetworkRequestEvent,
   type NetworkResponseEvent,
-} from "../../../browser/src/api/HARRecorder.ts";
+} from "@browserx/browser";
 import { getCurrentBrowserController } from "./browser-context.ts";
 
 /**
@@ -425,4 +425,4 @@ import type {
   HARTimings,
   HARCookie,
   HARHeader,
-} from "../../../browser/src/api/HARRecorder.ts";
+} from "@browserx/browser";

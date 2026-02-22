@@ -5,7 +5,7 @@
  * Provides form detection, filling, and submission for query execution.
  */
 
-import type { BrowserPage } from "../../../browser/src/api/BrowserPage.ts";
+import type { BrowserPage } from "@browserx/browser";
 import {
   FormAutomation,
   createFormAutomation,
@@ -17,7 +17,7 @@ import {
   type FormSubmitResult,
   type MultiStepFormConfig,
   type FileUploadInfo,
-} from "../../../browser/src/api/FormAutomation.ts";
+} from "@browserx/browser";
 import { getCurrentBrowserController } from "./browser-context.ts";
 
 /**
