@@ -21,6 +21,9 @@ import {
   PROGRESS_STAGES,
   WARNING_CODES,
 } from "../feedback/mod.ts";
+import { ToolRateLimiter } from "./ToolRateLimiter.ts";
+
+const evaluateRateLimiter = new ToolRateLimiter({ maxRequests: 100, windowMs: 60000 });
 
 /**
  * Register browser automation tools with the MCP server
@@ -435,6 +438,7 @@ export function registerBrowserTools(
         );
 
         try {
+          evaluateRateLimiter.check(sessionId as string);
           validateScript(script as string);
           const sessionManager = await context.getSessionManager();
           const page = await sessionManager.getSessionPage(sessionId as string);
