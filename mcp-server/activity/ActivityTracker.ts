@@ -59,7 +59,19 @@ export class ActivityTracker {
   }
 
   private generateId(): string {
-    return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    return `${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+  }
+
+  private sanitizeSessionId(sessionId: string): string {
+    if (
+      sessionId.includes("\0") ||
+      sessionId.includes("..") ||
+      sessionId.startsWith("/") ||
+      !/^[a-zA-Z0-9_-]+$/.test(sessionId)
+    ) {
+      throw new Error(`Invalid sessionId: contains unsafe characters: ${sessionId}`);
+    }
+    return sessionId;
   }
 
   private getDatePath(): string {
@@ -75,6 +87,7 @@ export class ActivityTracker {
     url: string,
     timing: { total: number; breakdown?: Record<string, number> }
   ): Promise<void> {
+    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return;
     await this.initialize();
 
@@ -102,6 +115,7 @@ export class ActivityTracker {
     width: number = 1920,
     height: number = 1080
   ): Promise<string> {
+    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return "";
     await this.initialize();
 
@@ -224,6 +238,7 @@ export class ActivityTracker {
     sessionId: string,
     metadata: Record<string, unknown>
   ): Promise<void> {
+    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return;
     await this.initialize();
 
