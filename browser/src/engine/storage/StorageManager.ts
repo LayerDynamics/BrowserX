@@ -45,7 +45,26 @@ class OriginStorage {
     /**
      * Set item with quota check
      */
+    /**
+     * Validate that the given URL matches this storage's origin
+     */
+    private validateOrigin(url: string): void {
+        try {
+            const urlOrigin = new URL(url).origin;
+            if (urlOrigin !== this.origin) {
+                throw new DOMException(
+                    `SecurityError: Origin mismatch - storage origin '${this.origin}' does not match URL origin '${urlOrigin}'`,
+                    "SecurityError",
+                );
+            }
+        } catch (e) {
+            if (e instanceof DOMException) throw e;
+            throw new DOMException(`SecurityError: Origin mismatch - invalid URL '${url}'`, "SecurityError");
+        }
+    }
+
     setItem(key: string, value: string, url: string): void {
+        this.validateOrigin(url);
         const oldValue = this.data.get(key);
 
         // Calculate size change
@@ -80,6 +99,7 @@ class OriginStorage {
      * Remove item
      */
     removeItem(key: string, url: string): void {
+        this.validateOrigin(url);
         const oldValue = this.data.get(key);
 
         if (oldValue !== undefined) {
