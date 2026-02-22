@@ -103,7 +103,7 @@ function getClientIp(request: Request): string {
  * @returns Unique execution ID
  */
 function generateExecutionId(): string {
-  return `exec_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  return `exec_${Date.now()}_${crypto.randomUUID().slice(0, 9)}`;
 }
 
 /**
@@ -260,7 +260,7 @@ async function executeMockQuery(query: string, timeout: number): Promise<Execute
     : [];
 
   return {
-    queryId: `query_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+    queryId: `query_${Date.now()}_${crypto.randomUUID().slice(0, 9)}`,
     data: isSelect
       ? [
           {

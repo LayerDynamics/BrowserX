@@ -53,7 +53,7 @@ export class ThreadWorker implements IWorker {
     scriptPath: string,
     config: WorkerConfig = {},
   ) {
-    this.id = `worker-${Date.now()}-${Math.random().toString(36).slice(2, 11)}` as WorkerID;
+    this.id = `worker-${Date.now()}-${crypto.randomUUID().slice(0, 9)}` as WorkerID;
 
     // Create Deno Worker
     this.worker = new Worker(scriptPath, {

@@ -470,7 +470,7 @@ export class BrowserPool {
    * Generate a unique instance ID
    */
   private generateInstanceId(): string {
-    return `browser_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    return `browser_${Date.now()}_${crypto.randomUUID().slice(0, 9)}`;
   }
 
   /**

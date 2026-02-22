@@ -23,6 +23,7 @@ import { ProxyController, ProxyConfig } from "../controllers/proxy/proxy-control
 import { Runtime } from "../../proxy-engine/core/runtime/mod.ts";
 import { BrowserController } from "../controllers/browser/browser-controller.ts";
 import { BrowserEngine } from "../../browser/src/api/mod.ts";
+import type { PipelineObserver, PipelineStageEvent } from "../../browser/src/engine/PipelineObserver.ts";
 
 /**
  * Query Engine configuration
@@ -221,6 +222,7 @@ export class QueryEngine implements IQueryEngine {
   private runtime?: Runtime;
   private proxyController?: ProxyController;
   private browserController?: BrowserController;
+  private observer?: PipelineObserver;
 
   constructor(config: QueryEngineConfig = {}) {
     this.config = config;
@@ -252,6 +254,39 @@ export class QueryEngine implements IQueryEngine {
         total: 0,
       },
     };
+  }
+
+  /**
+   * Set a pipeline observer to receive stage events during query execution
+   */
+  setObserver(observer: PipelineObserver): void {
+    this.observer = observer;
+  }
+
+  /**
+   * Emit a pipeline stage event to the observer
+   */
+  private emitStage(
+    stageId: string,
+    stageName: string,
+    status: PipelineStageEvent["status"],
+    startTime: number,
+    endTime?: number,
+    duration?: number,
+    artifact?: unknown,
+    error?: Error,
+  ): void {
+    this.observer?.onStage({
+      stageId,
+      stageName,
+      pipeline: "query",
+      status,
+      startTime,
+      endTime,
+      duration,
+      artifact,
+      error,
+    });
   }
 
   /**
@@ -378,16 +413,20 @@ export class QueryEngine implements IQueryEngine {
       }
 
       // 1. Lexer - Tokenize query string
+      this.emitStage("lexer", "Lexer", "running", performance.now());
       const lexerStart = performance.now();
       const lexer = new Lexer(query);
       const tokens = lexer.tokenize();
       const lexerTime = performance.now() - lexerStart;
+      this.emitStage("lexer", "Lexer", "completed", lexerStart, performance.now(), lexerTime, tokens);
 
       // 2. Parser - Build AST
+      this.emitStage("parser", "Parser", "running", performance.now());
       const parserStart = performance.now();
       const parser = new Parser(tokens);
       const ast = parser.parse();
       const parserTime = performance.now() - parserStart;
+      this.emitStage("parser", "Parser", "completed", parserStart, performance.now(), parserTime, ast);
 
       // Check if cancelled
       if (abortController.signal.aborted) {
@@ -395,6 +434,7 @@ export class QueryEngine implements IQueryEngine {
       }
 
       // 3. Semantic Analysis - Type checking and validation
+      this.emitStage("semantic-analysis", "Semantic Analysis", "running", performance.now());
       const analysisStart = performance.now();
       const analyzer = new SemanticAnalyzer({
         allowUndefinedVariables: false,
@@ -404,6 +444,7 @@ export class QueryEngine implements IQueryEngine {
       });
       const annotatedAST = analyzer.analyze(ast);
       const analysisTime = performance.now() - analysisStart;
+      this.emitStage("semantic-analysis", "Semantic Analysis", "completed", analysisStart, performance.now(), analysisTime, annotatedAST);
 
       // Check if cancelled
       if (abortController.signal.aborted) {
@@ -411,6 +452,7 @@ export class QueryEngine implements IQueryEngine {
       }
 
       // 4. Optimization - Query optimization
+      this.emitStage("optimization", "Optimization", "running", performance.now());
       const optimizationStart = performance.now();
       const optimizer = new QueryOptimizer({
         enableConstantFolding: true,
@@ -423,6 +465,7 @@ export class QueryEngine implements IQueryEngine {
       });
       const optimizationResult = optimizer.optimize(annotatedAST.ast);
       const optimizationTime = performance.now() - optimizationStart;
+      this.emitStage("optimization", "Optimization", "completed", optimizationStart, performance.now(), optimizationTime, optimizationResult);
 
       // Check if cancelled
       if (abortController.signal.aborted) {
@@ -430,6 +473,7 @@ export class QueryEngine implements IQueryEngine {
       }
 
       // 5. Planning - Generate execution plan
+      this.emitStage("planning", "Planning", "running", performance.now());
       const planningStart = performance.now();
       const planner = new ExecutionPlanner();
       const plan = planner.plan(optimizationResult.optimizedAST, {
@@ -438,6 +482,7 @@ export class QueryEngine implements IQueryEngine {
         estimatedImprovement: optimizationResult.improvement,
       });
       const planningTime = performance.now() - planningStart;
+      this.emitStage("planning", "Planning", "completed", planningStart, performance.now(), planningTime, plan);
 
       // Check if cancelled
       if (abortController.signal.aborted) {
@@ -445,6 +490,7 @@ export class QueryEngine implements IQueryEngine {
       }
 
       // 6. Execution - Execute the plan
+      this.emitStage("execution", "Execution", "running", performance.now());
       const executionStart = performance.now();
       if (!this.browserController) {
         const browserEngine = new BrowserEngine();
@@ -453,6 +499,7 @@ export class QueryEngine implements IQueryEngine {
       const executor = new QueryExecutor(this.browserController, this.proxyController);
       const executionResult = await executor.execute(plan, { signal: abortController.signal });
       const executionTime = performance.now() - executionStart;
+      this.emitStage("execution", "Execution", "completed", executionStart, performance.now(), executionTime, executionResult);
 
       // Check for execution errors
       if (!executionResult.success && executionResult.error) {
@@ -462,6 +509,7 @@ export class QueryEngine implements IQueryEngine {
       const data = executionResult.data;
 
       // 7. Formatting - Format results
+      this.emitStage("formatting", "Formatting", "running", performance.now());
       const formattingStart = performance.now();
       const formatter = new ResultFormatter();
       const formatted = formatter.format(data, options.format || "JSON", {
@@ -470,6 +518,7 @@ export class QueryEngine implements IQueryEngine {
         includeHeaders: true,
       });
       const formattingTime = performance.now() - formattingStart;
+      this.emitStage("formatting", "Formatting", "completed", formattingStart, performance.now(), formattingTime, formatted);
 
       const totalTime = performance.now() - startTime;
 
@@ -506,6 +555,8 @@ export class QueryEngine implements IQueryEngine {
 
       const errorType = error instanceof Error ? error.constructor.name : "UnknownError";
       this.metrics.errors.byType[errorType] = (this.metrics.errors.byType[errorType] || 0) + 1;
+
+      this.emitStage("unknown", "Unknown", "error", startTime, performance.now(), performance.now() - startTime, undefined, error instanceof Error ? error : new Error(String(error)));
 
       throw error;
     } finally {
@@ -727,6 +778,6 @@ export class QueryEngine implements IQueryEngine {
    * Generate a unique query ID
    */
   private generateQueryId(): QueryID {
-    return `query_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    return `query_${Date.now()}_${crypto.randomUUID().slice(0, 9)}`;
   }
 }

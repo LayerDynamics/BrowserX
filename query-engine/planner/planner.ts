@@ -1088,7 +1088,7 @@ export class ExecutionPlanner {
    * Generate unique plan ID
    */
   private generatePlanId(): QueryID {
-    return `plan_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    return `plan_${Date.now()}_${crypto.randomUUID().slice(0, 9)}`;
   }
 
   /**

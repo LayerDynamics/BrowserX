@@ -27,6 +27,8 @@ export enum JSValueType {
  */
 export interface JSObject {
     properties: Map<string | symbol, JSValue>;
+    getters?: Map<string | symbol, () => JSValue>;
+    setters?: Map<string | symbol, (v: JSValue) => void>;
     prototype: JSObject | null;
     extensible: boolean;
     constructor?: JSFunction;
@@ -125,7 +127,7 @@ export function createSymbol(description?: string): JSValue {
         type: JSValueType.SYMBOL,
         value: {
             description,
-            id: Math.random(), // Simplified - should use proper unique ID
+            id: parseInt(crypto.randomUUID().slice(0, 8), 16), // Proper unique ID via crypto
         },
     };
 }
@@ -138,6 +140,8 @@ export function createObject(prototype: JSObject | null = null): JSValue {
         type: JSValueType.OBJECT,
         value: {
             properties: new Map(),
+            getters: new Map(),
+            setters: new Map(),
             prototype,
             extensible: true,
             constructor: undefined,
@@ -161,6 +165,8 @@ export function createFunction(
         scope,
         isNative: false,
         properties: new Map(),
+        getters: new Map(),
+        setters: new Map(),
         prototype: null,
         extensible: true,
         constructor: undefined,
@@ -188,6 +194,8 @@ export function createNativeFunction(
         isNative: true,
         nativeImpl: impl,
         properties: new Map(),
+        getters: new Map(),
+        setters: new Map(),
         prototype: null,
         extensible: true,
         constructor: undefined,
@@ -347,12 +355,17 @@ export function getProperty(obj: JSValue, key: string | symbol): JSValue {
 
     const object = obj.value;
 
+    // Check own getters first (dynamic/live properties)
+    if (object.getters?.has(key)) {
+        return object.getters.get(key)!();
+    }
+
     // Check own properties
     if (object.properties.has(key)) {
         return object.properties.get(key)!;
     }
 
-    // Check prototype chain
+    // Check prototype chain (getters + properties)
     if (object.prototype) {
         return getProperty({ type: JSValueType.OBJECT, value: object.prototype }, key);
     }
@@ -369,6 +382,12 @@ export function setProperty(obj: JSValue, key: string | symbol, value: JSValue):
     }
 
     const object = obj.value;
+
+    // Check own setters first (dynamic/live properties)
+    if (object.setters?.has(key)) {
+        object.setters.get(key)!(value);
+        return true;
+    }
 
     if (!object.extensible && !object.properties.has(key)) {
         return false;
@@ -397,6 +416,10 @@ export function hasProperty(obj: JSValue, key: string | symbol): boolean {
         return false;
     }
 
+    if (obj.value.getters?.has(key)) {
+        return true;
+    }
+
     if (obj.value.properties.has(key)) {
         return true;
     }
@@ -406,6 +429,40 @@ export function hasProperty(obj: JSValue, key: string | symbol): boolean {
     }
 
     return false;
+}
+
+/**
+ * Define a getter on an object property (live/dynamic property access)
+ */
+export function defineGetter(obj: JSValue, key: string | symbol, getter: () => JSValue): boolean {
+    if (!isObject(obj) && !isFunction(obj)) {
+        return false;
+    }
+
+    const object = obj.value;
+    if (!object.getters) {
+        object.getters = new Map();
+    }
+    object.getters.set(key, getter);
+    // Remove any static property with the same key so the getter takes precedence
+    object.properties.delete(key);
+    return true;
+}
+
+/**
+ * Define a setter on an object property (live/dynamic property write)
+ */
+export function defineSetter(obj: JSValue, key: string | symbol, setter: (v: JSValue) => void): boolean {
+    if (!isObject(obj) && !isFunction(obj)) {
+        return false;
+    }
+
+    const object = obj.value;
+    if (!object.setters) {
+        object.setters = new Map();
+    }
+    object.setters.set(key, setter);
+    return true;
 }
 
 /**

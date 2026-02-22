@@ -317,7 +317,7 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
 
   executeQuery: async (query: string) => {
     // Create execution ID
-    const executionId = `exec-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    const executionId = `exec-${Date.now()}-${crypto.randomUUID().slice(0, 9)}`;
     const startTime = Date.now();
 
     // Set active execution
@@ -489,7 +489,7 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
   saveQuery: (name: string) => {
     const { currentQuery } = get();
     const savedQuery: SavedQuery = {
-      id: `query-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      id: `query-${Date.now()}-${crypto.randomUUID().slice(0, 9)}`,
       name,
       query: currentQuery,
       createdAt: Date.now(),

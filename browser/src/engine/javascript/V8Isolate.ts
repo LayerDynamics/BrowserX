@@ -300,7 +300,7 @@ export class V8Isolate {
      * Generate isolate ID
      */
     private generateIsolateId(): IsolateID {
-        return `isolate-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` as IsolateID;
+        return `isolate-${Date.now()}-${crypto.randomUUID().slice(0, 9)}` as IsolateID;
     }
 
     /**
