@@ -46,6 +46,9 @@ export class DOMDomain extends BaseDomain {
     private searchResults: Map<string, NodeID[]> = new Map();
     private searchIdCounter: number = 0;
 
+    /** EventBus handler for cross-domain node lookup */
+    private domGetNodeHandler: ((data: unknown) => void) | null = null;
+
     protected setup(): void {
         // Register methods
         this.registerMethod("getDocument", "Returns the root DOM node", async (params) => {
@@ -100,6 +103,16 @@ export class DOMDomain extends BaseDomain {
         this.registerEvent("childNodeRemoved", "Child node removed");
         this.registerEvent("childNodeInserted", "Child node inserted");
         this.registerEvent("characterDataModified", "Text content changed");
+
+        // Register EventBus handler so other domains (CSS) can look up nodes by ID
+        this.domGetNodeHandler = (data: unknown) => {
+            const req = data as { nodeId: number; callback: (node: unknown) => void };
+            if (req && typeof req.callback === "function") {
+                const node = this.nodeMap.get(req.nodeId) ?? null;
+                req.callback(node);
+            }
+        };
+        this.eventBus.on("dom:getNode", this.domGetNodeHandler);
     }
 
     /**
@@ -107,12 +120,10 @@ export class DOMDomain extends BaseDomain {
      */
     private getCurrentDOM(): DOMNode | null {
         const pipeline = this.context.renderingPipeline;
-        const stats = pipeline.getStats();
-        if (stats && typeof stats === "object" && "lastRenderResult" in stats) {
-            const result = (stats as Record<string, unknown>).lastRenderResult;
-            if (result && typeof result === "object" && "dom" in result) {
-                return (result as Record<string, unknown>).dom as DOMNode;
-            }
+        // Access lastRenderResult directly on the pipeline (not via getStats)
+        const lastResult = (pipeline as unknown as Record<string, unknown>).lastRenderResult;
+        if (lastResult && typeof lastResult === "object" && "dom" in lastResult) {
+            return (lastResult as Record<string, unknown>).dom as DOMNode;
         }
         return null;
     }
@@ -178,9 +189,23 @@ export class DOMDomain extends BaseDomain {
     /**
      * Serialize a node subtree to HTML string
      */
+    /**
+     * Escape a string for safe use in an HTML attribute value
+     */
+    private escapeHtmlAttribute(value: string): string {
+        return value
+            .replace(/&/g, "&amp;")
+            .replace(/"/g, "&quot;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+    }
+
     private serializeToHTML(node: DOMNode): string {
         if (node.nodeType === DOMNodeType.TEXT) {
-            return node.nodeValue || "";
+            return (node.nodeValue || "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
         }
         if (node.nodeType === DOMNodeType.COMMENT) {
             return `<!--${node.nodeValue || ""}-->`;
@@ -191,7 +216,7 @@ export class DOMDomain extends BaseDomain {
             let attrs = "";
             if (element.attributes instanceof Map) {
                 for (const [key, value] of element.attributes) {
-                    attrs += ` ${key}="${value}"`;
+                    attrs += ` ${key}="${this.escapeHtmlAttribute(String(value))}"`;
                 }
             }
             const children = (node.childNodes || [])
@@ -460,6 +485,10 @@ export class DOMDomain extends BaseDomain {
     }
 
     override dispose(): void {
+        if (this.domGetNodeHandler) {
+            this.eventBus.off("dom:getNode", this.domGetNodeHandler);
+            this.domGetNodeHandler = null;
+        }
         this.nodeMap.clear();
         this.searchResults.clear();
         super.dispose();

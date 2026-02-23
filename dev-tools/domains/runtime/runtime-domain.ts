@@ -304,15 +304,13 @@ export class RuntimeDomain extends BaseDomain {
         try {
             // Try to use ScriptExecutor if available from the rendering pipeline
             const pipeline = this.context.renderingPipeline;
-            const stats = pipeline.getStats();
             type ScriptExecutorLike = { execute: (code: string) => unknown };
             let scriptExecutor: ScriptExecutorLike | null = null;
 
-            if (stats && typeof stats === "object" && "lastRenderResult" in stats) {
-                const result = (stats as Record<string, unknown>).lastRenderResult;
-                if (result && typeof result === "object" && "scriptExecutor" in result) {
-                    scriptExecutor = (result as Record<string, unknown>).scriptExecutor as ScriptExecutorLike;
-                }
+            // Access lastRenderResult directly (same pattern as DebuggerDomain.getScriptSource)
+            const lastResult = (pipeline as unknown as Record<string, unknown>).lastRenderResult;
+            if (lastResult && typeof lastResult === "object" && "scriptExecutor" in lastResult) {
+                scriptExecutor = (lastResult as Record<string, unknown>).scriptExecutor as ScriptExecutorLike;
             }
 
             let value: unknown;

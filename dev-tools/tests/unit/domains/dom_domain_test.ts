@@ -41,7 +41,7 @@ function createPipelineWithDOM(renderResult?: ReturnType<typeof createMockRender
  */
 function createPipelineWithoutDOM() {
     const basePipeline = createMockRenderingPipeline();
-    return {
+    const pipeline = {
         ...basePipeline,
         getStats: () => ({
             viewport: { width: 1024, height: 768 },
@@ -50,6 +50,9 @@ function createPipelineWithoutDOM() {
             resources: { totalSize: 0, count: 0 },
         }),
     };
+    // Remove lastRenderResult so getCurrentDOM() returns null
+    delete (pipeline as Record<string, unknown>).lastRenderResult;
+    return pipeline;
 }
 
 // ---- Tests ----
@@ -544,6 +547,109 @@ Deno.test("DOMDomain - dispose() clears maps", async () => {
     // Dispose and verify
     domain.dispose();
     assertEquals(domain.getNodeMap().size, 0);
+});
+
+Deno.test("DOMDomain - responds to dom:getNode EventBus event", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", { id: "target" });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    // Trigger getDocument to populate nodeMap
+    await domain.handleMethod("getDocument", {});
+
+    // Query for a node via EventBus (the pattern CSSDomain uses)
+    let receivedNode: unknown = null;
+    eventBus.emit("dom:getNode", {
+        nodeId: div.nodeId,
+        callback: (node: unknown) => {
+            receivedNode = node;
+        },
+    });
+
+    assertExists(receivedNode);
+    assertEquals((receivedNode as Record<string, unknown>).nodeId, div.nodeId);
+});
+
+Deno.test("DOMDomain - serializeToHTML escapes attribute values", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", { title: 'he said "hello" & <bye>' });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    await domain.handleMethod("getDocument", {});
+
+    const result = await domain.handleMethod("getOuterHTML", { nodeId: div.nodeId });
+    const outerHTML = (result as Record<string, unknown>).outerHTML as string;
+
+    // Should not contain raw quotes or angle brackets in attribute
+    assertEquals(outerHTML.includes('"hello"'), false);
+    assertEquals(outerHTML.includes('&quot;'), true);
+    assertEquals(outerHTML.includes('&amp;'), true);
+    assertEquals(outerHTML.includes('&lt;bye&gt;'), true);
+});
+
+Deno.test("DOMDomain - serializeToHTML escapes text node content", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const textNode = createMockTextNode("<script>alert('xss')</script>");
+    const div = createMockElement("div", {}, [textNode]);
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    await domain.handleMethod("getDocument", {});
+
+    const result = await domain.handleMethod("getOuterHTML", { nodeId: div.nodeId });
+    const outerHTML = (result as Record<string, unknown>).outerHTML as string;
+
+    // Should not contain raw <script> tags
+    assertEquals(outerHTML.includes("<script>"), false);
+    assertEquals(outerHTML.includes("&lt;script&gt;"), true);
+});
+
+Deno.test("DOMDomain - dom:getNode returns null for unknown nodeId", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const doc = createMockDocument([]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    await domain.handleMethod("getDocument", {});
+
+    let receivedNode: unknown = "not-called";
+    eventBus.emit("dom:getNode", {
+        nodeId: 99999,
+        callback: (node: unknown) => {
+            receivedNode = node;
+        },
+    });
+
+    assertEquals(receivedNode, null);
 });
 
 // ============================================================================

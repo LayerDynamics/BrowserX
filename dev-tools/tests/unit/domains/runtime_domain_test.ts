@@ -658,6 +658,30 @@ Deno.test("RuntimeDomain - serialization: function", async () => {
     assertEquals(args[0]?.className, "Function");
 });
 
+Deno.test("RuntimeDomain - evaluate uses lastRenderResult.scriptExecutor directly", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new RuntimeDomain(eventBus);
+
+    // Attach scriptExecutor to lastRenderResult directly on the pipeline (not via getStats)
+    const mockExecutor = { execute: (code: string) => code === "1+1" ? 2 : undefined };
+    const renderResult = createMockRenderResult();
+    const pipeline = createMockRenderingPipeline(renderResult);
+    (pipeline as unknown as Record<string, unknown>).lastRenderResult = {
+        ...renderResult,
+        scriptExecutor: mockExecutor,
+    };
+
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    const result = await domain.handleMethod("evaluate", { expression: "1+1" });
+    const remoteObj = (result as Record<string, unknown>).result as Record<string, unknown>;
+    assertEquals(remoteObj.type, "number");
+    assertEquals(remoteObj.value, 2);
+});
+
 Deno.test("RuntimeDomain - serialization: NaN", async () => {
     resetNodeIdCounter();
     const eventBus = new EventBus();
