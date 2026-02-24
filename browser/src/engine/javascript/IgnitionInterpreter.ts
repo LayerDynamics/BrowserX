@@ -398,9 +398,16 @@ export class IgnitionInterpreter {
     const left = this.registers[registerIndex] || createUndefined();
     const right = this.accumulator;
 
-    const leftNum = toNumber(left);
-    const rightNum = toNumber(right);
-    this.accumulator = createNumber(leftNum + rightNum);
+    // JavaScript + operator: string concatenation if either operand is a string
+    if (left.type === JSValueType.STRING || right.type === JSValueType.STRING) {
+      const leftStr = jsToString(left);
+      const rightStr = jsToString(right);
+      this.accumulator = createString(leftStr + rightStr);
+    } else {
+      const leftNum = toNumber(left);
+      const rightNum = toNumber(right);
+      this.accumulator = createNumber(leftNum + rightNum);
+    }
   }
 
   /**
