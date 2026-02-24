@@ -60,93 +60,93 @@ export interface BrowserDevToolsConfig {
 /**
  * Domain metadata definitions for all 14 domains
  */
-const DOMAIN_METADATA: DomainMetadata[] = [
-    {
+const DOMAIN_METADATA: Map<DomainName, DomainMetadata> = new Map<DomainName, DomainMetadata>([
+    ["DOM", {
         name: "DOM",
         description: "DOM tree inspection and manipulation",
         version: "1.0",
         dependencies: [],
-    },
-    {
+    }],
+    ["Page", {
         name: "Page",
         description: "Page navigation, lifecycle, and screenshots",
         version: "1.0",
         dependencies: [],
-    },
-    {
+    }],
+    ["Network", {
         name: "Network",
         description: "HTTP request/response monitoring and interception",
         version: "1.0",
         dependencies: [],
-    },
-    {
+    }],
+    ["CSS", {
         name: "CSS",
         description: "Stylesheet inspection, computed styles, and rule matching",
         version: "1.0",
         dependencies: ["DOM"],
-    },
-    {
+    }],
+    ["Runtime", {
         name: "Runtime",
         description: "JavaScript evaluation, console API, and object inspection",
         version: "1.0",
         dependencies: [],
-    },
-    {
+    }],
+    ["Console", {
         name: "Console",
         description: "Console log messages, errors, and warnings",
         version: "1.0",
         dependencies: ["Runtime"],
-    },
-    {
+    }],
+    ["Storage", {
         name: "Storage",
         description: "Cookies, localStorage, and storage quota management",
         version: "1.0",
         dependencies: [],
-    },
-    {
+    }],
+    ["Security", {
         name: "Security",
         description: "TLS certificates, mixed content, and security state",
         version: "1.0",
         dependencies: ["Network"],
-    },
-    {
+    }],
+    ["Performance", {
         name: "Performance",
         description: "Performance profiling, metrics, and web vitals",
         version: "1.0",
         dependencies: ["Network", "Rendering"],
-    },
-    {
+    }],
+    ["Memory", {
         name: "Memory",
         description: "Heap snapshots, allocation sampling, and GC control",
         version: "1.0",
         dependencies: ["Runtime"],
-    },
-    {
+    }],
+    ["Rendering", {
         name: "Rendering",
         description: "Render tree, layout, paint, and compositor inspection",
         version: "1.0",
         dependencies: ["DOM"],
         experimental: true,
-    },
-    {
+    }],
+    ["Debugger", {
         name: "Debugger",
         description: "Breakpoints, stepping, call stacks, and script inspection",
         version: "1.0",
         dependencies: ["Runtime"],
-    },
-    {
+    }],
+    ["Overlay", {
         name: "Overlay",
         description: "Element highlighting, layout overlays, and inspect mode",
         version: "1.0",
         dependencies: ["DOM", "Rendering"],
-    },
-    {
+    }],
+    ["Emulation", {
         name: "Emulation",
         description: "Device emulation, viewport override, and network throttling",
         version: "1.0",
         dependencies: [],
-    },
-];
+    }],
+]);
 
 /**
  * BrowserDevTools - manages the full DevTools lifecycle
@@ -241,6 +241,74 @@ export class BrowserDevTools {
 }
 
 /**
+ * All 14 domain constructors in registration order.
+ */
+const domainConstructors: Array<new (eventBus: EventBus) => BaseDomain> = [
+    DOMDomain,
+    PageDomain,
+    NetworkDomain,
+    CSSDomain,
+    RuntimeDomain,
+    ConsoleDomain,
+    StorageDomain,
+    SecurityDomain,
+    PerformanceDomain,
+    MemoryDomain,
+    RenderingDomain,
+    DebuggerDomain,
+    OverlayDomain,
+    EmulationDomain,
+];
+
+/**
+ * Create a DomainRegistry with all 14 domains initialized against the given browser.
+ *
+ * Used both for the primary (schema-introspection) registry and for per-session
+ * registries created by the registryFactory.
+ */
+function createDomainRegistry(
+    browser: Browser,
+    eventBus: EventBus,
+): { registry: DomainRegistry; domainInstances: Map<DomainName, BaseDomain> } {
+    const registry = new DomainRegistry();
+    const context: DomainInitContext = {
+        browser,
+        requestPipeline: browser.getRequestPipeline(),
+        renderingPipeline: browser.getRenderingPipeline(),
+        storageManager: browser.getStorageManager(),
+        cookieManager: browser.getCookieManager(),
+        quotaManager: browser.getQuotaManager(),
+        eventBus,
+    };
+    const domainInstances = new Map<DomainName, BaseDomain>();
+    for (const DomainClass of domainConstructors) {
+        const domain = new DomainClass(eventBus);
+        domain.initialize(context);
+        const meta = DOMAIN_METADATA.get(domain.name);
+        if (!meta) {
+            throw new Error(`No metadata defined for domain "${domain.name}"`);
+        }
+        registry.register(domain, meta);
+        domainInstances.set(domain.name, domain);
+    }
+
+    // Wire registry into each domain for explicit cross-domain resolution
+    for (const domain of domainInstances.values()) {
+        domain.setRegistry(registry);
+    }
+
+    // Validate that all declared dependencies are satisfied
+    const depErrors = registry.validateDependencies();
+    if (depErrors.length > 0) {
+        for (const err of depErrors) {
+            console.error(`DevTools dependency error: ${err}`);
+        }
+    }
+
+    return { registry, domainInstances };
+}
+
+/**
  * Attach DevTools to a Browser instance.
  *
  * This is the main entry point for enabling DevTools on a BrowserX browser.
@@ -266,49 +334,8 @@ export function attachDevTools(
     // 1. Create event bus
     const eventBus = new EventBus();
 
-    // 2. Create domain registry
-    const registry = new DomainRegistry();
-
-    // 3. Build initialization context from browser subsystems
-    const context: DomainInitContext = {
-        browser,
-        requestPipeline: browser.getRequestPipeline(),
-        renderingPipeline: browser.getRenderingPipeline(),
-        storageManager: browser.getStorageManager(),
-        cookieManager: browser.getCookieManager(),
-        quotaManager: browser.getQuotaManager(),
-        eventBus,
-    };
-
-    // 4. Instantiate all 14 domain agents
-    const domainInstances = new Map<DomainName, BaseDomain>();
-
-    const domainConstructors: Array<{
-        DomainClass: new (eventBus: EventBus) => BaseDomain;
-        metaIndex: number;
-    }> = [
-        { DomainClass: DOMDomain, metaIndex: 0 },
-        { DomainClass: PageDomain, metaIndex: 1 },
-        { DomainClass: NetworkDomain, metaIndex: 2 },
-        { DomainClass: CSSDomain, metaIndex: 3 },
-        { DomainClass: RuntimeDomain, metaIndex: 4 },
-        { DomainClass: ConsoleDomain, metaIndex: 5 },
-        { DomainClass: StorageDomain, metaIndex: 6 },
-        { DomainClass: SecurityDomain, metaIndex: 7 },
-        { DomainClass: PerformanceDomain, metaIndex: 8 },
-        { DomainClass: MemoryDomain, metaIndex: 9 },
-        { DomainClass: RenderingDomain, metaIndex: 10 },
-        { DomainClass: DebuggerDomain, metaIndex: 11 },
-        { DomainClass: OverlayDomain, metaIndex: 12 },
-        { DomainClass: EmulationDomain, metaIndex: 13 },
-    ];
-
-    for (const { DomainClass, metaIndex } of domainConstructors) {
-        const domain = new DomainClass(eventBus);
-        domain.initialize(context);
-        registry.register(domain, DOMAIN_METADATA[metaIndex]);
-        domainInstances.set(domain.name, domain);
-    }
+    // 2. Create primary registry — only used for /json/protocol schema introspection
+    const { registry, domainInstances } = createDomainRegistry(browser, eventBus);
 
     console.log(
         `DevTools: Registered ${domainInstances.size} domains: ${
@@ -316,16 +343,23 @@ export function attachDevTools(
         }`,
     );
 
-    // 5. Create WebSocket server
+    // 3. Create WebSocket server
     const serverConfig: Partial<DevToolsServerConfig> = { port, host };
-    const server = new DevToolsServer(browser, registry, serverConfig);
+    // Factory creates a fresh DomainRegistry per session to isolate domain state
+    const registryFactory = (): DomainRegistry => {
+        const sessionEventBus = new EventBus();
+        const { registry: sessionRegistry } = createDomainRegistry(browser, sessionEventBus);
+        return sessionRegistry;
+    };
 
-    // 6. Auto-start if configured
+    const server = new DevToolsServer(browser, registry, serverConfig, registryFactory);
+
+    // 4. Auto-start if configured
     if (autoStart) {
         server.start();
     }
 
-    // 7. Return BrowserDevTools instance
+    // 5. Return BrowserDevTools instance
     return new BrowserDevTools(
         browser,
         eventBus,

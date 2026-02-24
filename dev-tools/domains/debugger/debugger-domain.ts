@@ -35,7 +35,7 @@ import type {
  * Internal breakpoint storage
  */
 interface BreakpointEntry {
-    location: Location;
+    locations: Location[];
     condition?: string;
 }
 
@@ -54,6 +54,10 @@ export class DebuggerDomain extends BaseDomain {
     /** Counters for ID generation */
     private breakpointCounter: number = 0;
     private scriptCounter: number = 0;
+
+    /** Remote object store for stable objectIds */
+    private objectStore: Map<string, unknown> = new Map();
+    private objectIdCounter: number = 0;
 
     /** Debugger pause state */
     private paused: boolean = false;
@@ -110,6 +114,10 @@ export class DebuggerDomain extends BaseDomain {
             return await this.getStackTrace();
         });
 
+        this.registerMethod("getProperties", "Get properties of a remote object by objectId", async (params) => {
+            return await this.getProperties(params as unknown as { objectId: string });
+        });
+
         // Register events
         this.registerEvent("scriptParsed", "A new script has been parsed");
         this.registerEvent("paused", "Script execution has been paused");
@@ -135,7 +143,7 @@ export class DebuggerDomain extends BaseDomain {
         }
 
         // Try to discover scripts from the rendering pipeline
-        this.discoverScripts();
+        await this.discoverScripts();
 
         return {};
     }
@@ -161,7 +169,7 @@ export class DebuggerDomain extends BaseDomain {
         const breakpointId: BreakpointID = `bp-${++this.breakpointCounter}`;
 
         const entry: BreakpointEntry = {
-            location: params.location,
+            locations: [params.location],
             condition: params.condition,
         };
 
@@ -207,7 +215,7 @@ export class DebuggerDomain extends BaseDomain {
         const locations: Location[] = [];
 
         if (matchingScripts.length > 0) {
-            // Create breakpoint entries for each matching script
+            // Create breakpoint locations for each matching script
             for (const script of matchingScripts) {
                 const location: Location = {
                     scriptId: script.scriptId,
@@ -217,12 +225,6 @@ export class DebuggerDomain extends BaseDomain {
 
                 locations.push(location);
 
-                const entry: BreakpointEntry = {
-                    location,
-                    condition: params.condition,
-                };
-                this.breakpoints.set(breakpointId, entry);
-
                 // Emit breakpointResolved for each resolved location
                 if (this.enabled) {
                     this.emitEvent("breakpointResolved", {
@@ -231,6 +233,12 @@ export class DebuggerDomain extends BaseDomain {
                     });
                 }
             }
+
+            // Store all locations under a single breakpoint entry
+            this.breakpoints.set(breakpointId, {
+                locations,
+                condition: params.condition,
+            });
         } else {
             // No matching scripts found yet - store as pending breakpoint
             // It will be resolved when a matching script is parsed
@@ -240,11 +248,10 @@ export class DebuggerDomain extends BaseDomain {
                 columnNumber: params.columnNumber ?? 0,
             };
 
-            const entry: BreakpointEntry = {
-                location: pendingLocation,
+            this.breakpoints.set(breakpointId, {
+                locations: [pendingLocation],
                 condition: params.condition,
-            };
-            this.breakpoints.set(breakpointId, entry);
+            });
         }
 
         return {
@@ -540,8 +547,10 @@ export class DebuggerDomain extends BaseDomain {
         const endLine = params.end?.lineNumber ?? script.endLine;
 
         // Generate possible breakpoint locations for each line in range
+        const MAX_BREAKPOINT_LOCATIONS = 10000;
         const locations: BreakLocation[] = [];
         for (let line = startLine; line <= endLine; line++) {
+            if (locations.length >= MAX_BREAKPOINT_LOCATIONS) break;
             locations.push({
                 scriptId: params.start.scriptId,
                 lineNumber: line,
@@ -564,12 +573,41 @@ export class DebuggerDomain extends BaseDomain {
         };
     }
 
+    /**
+     * Get properties of a stored remote object by objectId
+     */
+    private async getProperties(params: { objectId: string }): Promise<{ result: Array<{ name: string; value: RemoteObjectReference; writable: boolean; configurable: boolean; enumerable: boolean; isOwn: boolean }> }> {
+        const obj = this.objectStore.get(params.objectId);
+        if (!obj || typeof obj !== "object") {
+            return { result: [] };
+        }
+
+        const properties: Array<{ name: string; value: RemoteObjectReference; writable: boolean; configurable: boolean; enumerable: boolean; isOwn: boolean }> = [];
+        const target = obj as Record<string, unknown>;
+
+        for (const key of Object.keys(target)) {
+            const value = target[key];
+            const descriptor = Object.getOwnPropertyDescriptor(target, key);
+
+            properties.push({
+                name: key,
+                value: this.serializeValue(value),
+                writable: descriptor?.writable ?? true,
+                configurable: descriptor?.configurable ?? true,
+                enumerable: descriptor?.enumerable ?? true,
+                isOwn: true,
+            });
+        }
+
+        return { result: properties };
+    }
+
     // ---- Helper methods ----
 
     /**
      * Discover scripts from the rendering pipeline
      */
-    private discoverScripts(): void {
+    private async discoverScripts(): Promise<void> {
         try {
             const lastResult = this.context.renderingPipeline.lastRenderResult;
             if (!lastResult) {
@@ -589,13 +627,13 @@ export class DebuggerDomain extends BaseDomain {
                     }>;
 
                     for (const script of executorScripts) {
-                        this.registerScript(script.url, script.source);
+                        await this.registerScript(script.url, script.source);
                     }
                 } else {
                     // Register a synthetic script for the current page
                     const url = this.context.browser.getCurrentURL() || "about:blank";
                     if (url !== "about:blank") {
-                        this.registerScript(url, "");
+                        await this.registerScript(url, "");
                     }
                 }
             }
@@ -607,7 +645,7 @@ export class DebuggerDomain extends BaseDomain {
     /**
      * Register a new script and emit scriptParsed event
      */
-    registerScript(url: string, source: string): ScriptID {
+    async registerScript(url: string, source: string): Promise<ScriptID> {
         const scriptId: ScriptID = `script-${++this.scriptCounter}`;
         const lines = source.split("\n");
 
@@ -618,7 +656,7 @@ export class DebuggerDomain extends BaseDomain {
             startColumn: 0,
             endLine: Math.max(0, lines.length - 1),
             endColumn: lines.length > 0 ? lines[lines.length - 1].length : 0,
-            hash: this.simpleHash(source),
+            hash: await this.computeScriptHash(source),
         };
 
         this.scripts.set(scriptId, description);
@@ -648,18 +686,17 @@ export class DebuggerDomain extends BaseDomain {
      */
     private resolvePendingBreakpoints(url: string, scriptId: ScriptID): void {
         for (const [breakpointId, entry] of this.breakpoints) {
-            if (entry.location.scriptId === `pending-${url}`) {
-                // Update the breakpoint with the resolved script ID
+            const pendingIdx = entry.locations.findIndex(l => l.scriptId === `pending-${url}`);
+            if (pendingIdx !== -1) {
+                // Update the pending location with the resolved script ID
+                const pending = entry.locations[pendingIdx];
                 const resolvedLocation: Location = {
                     scriptId,
-                    lineNumber: entry.location.lineNumber,
-                    columnNumber: entry.location.columnNumber ?? 0,
+                    lineNumber: pending.lineNumber,
+                    columnNumber: pending.columnNumber ?? 0,
                 };
 
-                this.breakpoints.set(breakpointId, {
-                    ...entry,
-                    location: resolvedLocation,
-                });
+                entry.locations[pendingIdx] = resolvedLocation;
 
                 if (this.enabled) {
                     this.emitEvent("breakpointResolved", {
@@ -721,25 +758,30 @@ export class DebuggerDomain extends BaseDomain {
                 return { type: "number", value, description: String(value) };
             case "boolean":
                 return { type: "boolean", value, description: String(value) };
-            case "function":
+            case "function": {
+                const fnId = `obj-${++this.objectIdCounter}`;
+                this.objectStore.set(fnId, value);
                 return {
                     type: "function",
                     description: String(value),
-                    objectId: `fn-${Date.now()}`,
+                    objectId: fnId,
                 };
+            }
             case "object": {
+                const objId = `obj-${++this.objectIdCounter}`;
+                this.objectStore.set(objId, value);
                 if (Array.isArray(value)) {
                     return {
                         type: "object",
                         description: `Array(${value.length})`,
-                        objectId: `arr-${Date.now()}`,
+                        objectId: objId,
                     };
                 }
                 const className = (value as object).constructor?.name || "Object";
                 return {
                     type: "object",
                     description: className,
-                    objectId: `obj-${Date.now()}`,
+                    objectId: objId,
                 };
             }
             default:
@@ -748,7 +790,17 @@ export class DebuggerDomain extends BaseDomain {
     }
 
     /**
-     * Compute a simple hash of a string
+     * Compute a SHA-256 hash of a string (async, uses Web Crypto)
+     */
+    private async computeScriptHash(source: string): Promise<string> {
+        const data = new TextEncoder().encode(source);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    /**
+     * Compute a simple hash of a string (sync fallback)
      */
     private simpleHash(str: string): string {
         let hash = 0;
@@ -763,6 +815,8 @@ export class DebuggerDomain extends BaseDomain {
     override dispose(): void {
         this.breakpoints.clear();
         this.scripts.clear();
+        this.objectStore.clear();
+        this.objectIdCounter = 0;
         this.callFrames = [];
         this.paused = false;
         this.pauseReason = "";

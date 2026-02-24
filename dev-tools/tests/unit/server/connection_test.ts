@@ -154,8 +154,8 @@ Deno.test("Constructor assigns id and sets up WebSocket handlers", () => {
     const { connection, socket } = createTestConnection();
 
     assertEquals(connection.id, "conn-1");
-    // The constructor should have assigned onopen, onmessage, onclose, onerror
-    assertEquals(typeof socket.onopen, "function");
+    // The constructor should have assigned onmessage, onclose, onerror
+    // (onopen is no longer set — Deno.upgradeWebSocket returns already-open sockets)
     assertEquals(typeof socket.onmessage, "function");
     assertEquals(typeof socket.onclose, "function");
     assertEquals(typeof socket.onerror, "function");

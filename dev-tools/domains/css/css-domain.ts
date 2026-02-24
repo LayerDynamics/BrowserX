@@ -7,6 +7,7 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import type { DOMDomain } from "../dom/dom-domain.ts";
 import type { DOMElement } from "../../../browser/src/types/dom.ts";
 import type { CSSStyleSheet, CSSRule } from "../../../browser/src/types/css.ts";
 import type { NodeID } from "../../../browser/src/types/identifiers.ts";
@@ -84,21 +85,13 @@ export class CSSDomain extends BaseDomain {
      */
     private collectStyleSheets(): void {
         this.styleSheets.clear();
-        this.styleSheetCounter = 0;
 
-        const pipeline = this.context.renderingPipeline;
-        const stats = pipeline.getStats();
-        if (stats && typeof stats === "object" && "lastRenderResult" in stats) {
-            const result = (stats as Record<string, unknown>).lastRenderResult;
-            if (result && typeof result === "object" && "cssom" in result) {
-                const cssom = (result as Record<string, unknown>).cssom;
-                if (cssom && typeof cssom === "object" && "getStyleSheets" in cssom) {
-                    const sheets = (cssom as { getStyleSheets(): CSSStyleSheet[] }).getStyleSheets();
-                    for (const sheet of sheets) {
-                        const id = `sheet-${++this.styleSheetCounter}`;
-                        this.styleSheets.set(id, sheet);
-                    }
-                }
+        const lastResult = this.getLastRenderResult();
+        if (lastResult?.cssom && typeof lastResult.cssom === "object" && "getStyleSheets" in lastResult.cssom) {
+            const sheets = (lastResult.cssom as { getStyleSheets(): CSSStyleSheet[] }).getStyleSheets();
+            for (const sheet of sheets) {
+                const id = `sheet-${++this.styleSheetCounter}`;
+                this.styleSheets.set(id, sheet);
             }
         }
     }
@@ -119,23 +112,22 @@ export class CSSDomain extends BaseDomain {
     }
 
     /**
-     * Get a DOM element from the DOM domain's node map via event bus
+     * Get a DOM element by nodeId via explicit domain resolution.
+     * Resolves the DOM domain through the registry and calls getNodeById directly.
      */
     private getElementByNodeId(nodeId: NodeID): DOMElement | null {
-        // Use event bus to request node from DOM domain
-        let element: DOMElement | null = null;
-        this.eventBus.emit("dom:getNode", {
-            nodeId,
-            callback: (node: unknown) => {
-                if (node && typeof node === "object" && "nodeType" in node) {
-                    const domNode = node as { nodeType: number };
-                    if (domNode.nodeType === 1) {
-                        element = node as DOMElement;
-                    }
-                }
-            },
-        });
-        return element;
+        const domDomain = this.resolveDomain("DOM") as DOMDomain | null;
+        if (!domDomain) {
+            return null;
+        }
+        const node = domDomain.getNodeById(nodeId);
+        if (node && typeof node === "object" && "nodeType" in node) {
+            const domNode = node as { nodeType: number };
+            if (domNode.nodeType === 1) {
+                return node as unknown as DOMElement;
+            }
+        }
+        return null;
     }
 
     /**
@@ -220,15 +212,38 @@ export class CSSDomain extends BaseDomain {
         if (element && element.attributes instanceof Map) {
             const styleAttr = element.getAttribute("style");
             if (styleAttr) {
-                const props = styleAttr.split(";").filter(Boolean).map((decl) => {
-                    const [name, ...rest] = decl.split(":");
-                    const value = rest.join(":").trim();
+                // Split on semicolons respecting parentheses and quotes
+                // (e.g. url("data:image/png;base64,...") won't break)
+                const declarations: string[] = [];
+                let current = "";
+                let parenDepth = 0;
+                let inQuote = false;
+                let quoteChar = "";
+                for (const ch of styleAttr) {
+                    if (!inQuote && (ch === "'" || ch === '"')) { inQuote = true; quoteChar = ch; }
+                    else if (inQuote && ch === quoteChar) { inQuote = false; }
+                    else if (!inQuote && ch === "(") { parenDepth++; }
+                    else if (!inQuote && ch === ")") { parenDepth--; }
+                    if (ch === ";" && parenDepth === 0 && !inQuote) {
+                        if (current.trim()) declarations.push(current.trim());
+                        current = "";
+                    } else {
+                        current += ch;
+                    }
+                }
+                if (current.trim()) declarations.push(current.trim());
+
+                const props = declarations.map((decl) => {
+                    const colonIdx = decl.indexOf(":");
+                    if (colonIdx === -1) return null;
+                    const name = decl.substring(0, colonIdx).trim();
+                    const value = decl.substring(colonIdx + 1).trim();
                     return {
-                        name: name.trim(),
+                        name,
                         value: value.replace(/!important/i, "").trim(),
                         important: /!important/i.test(value),
                     };
-                });
+                }).filter(Boolean) as Array<{ name: string; value: string; important: boolean }>;
                 inlineStyle = {
                     cssProperties: props,
                     shorthandEntries: [],
@@ -276,6 +291,7 @@ export class CSSDomain extends BaseDomain {
 
     override dispose(): void {
         this.styleSheets.clear();
+        this.styleSheetCounter = 0;
         this.forcedPseudoStates.clear();
         super.dispose();
     }

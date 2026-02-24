@@ -26,14 +26,7 @@ import type { ProtocolEvent } from "../../../protocol/types.ts";
  */
 function createPipelineWithDOM(renderResult?: ReturnType<typeof createMockRenderResult>) {
     const result = renderResult ?? createMockRenderResult();
-    const basePipeline = createMockRenderingPipeline(result);
-    return {
-        ...basePipeline,
-        getStats: () => ({
-            ...basePipeline.getStats(),
-            lastRenderResult: result,
-        }),
-    };
+    return createMockRenderingPipeline(result);
 }
 
 /**
@@ -549,7 +542,7 @@ Deno.test("DOMDomain - dispose() clears maps", async () => {
     assertEquals(domain.getNodeMap().size, 0);
 });
 
-Deno.test("DOMDomain - responds to dom:getNode EventBus event", async () => {
+Deno.test("DOMDomain - getNodeById returns node after getDocument populates nodeMap", async () => {
     resetNodeIdCounter();
     const eventBus = new EventBus();
     const domain = new DOMDomain(eventBus);
@@ -565,14 +558,8 @@ Deno.test("DOMDomain - responds to dom:getNode EventBus event", async () => {
     // Trigger getDocument to populate nodeMap
     await domain.handleMethod("getDocument", {});
 
-    // Query for a node via EventBus (the pattern CSSDomain uses)
-    let receivedNode: unknown = null;
-    eventBus.emit("dom:getNode", {
-        nodeId: div.nodeId,
-        callback: (node: unknown) => {
-            receivedNode = node;
-        },
-    });
+    // Query for a node via the public getNodeById method
+    const receivedNode = domain.getNodeById(div.nodeId);
 
     assertExists(receivedNode);
     assertEquals((receivedNode as Record<string, unknown>).nodeId, div.nodeId);
@@ -627,7 +614,7 @@ Deno.test("DOMDomain - serializeToHTML escapes text node content", async () => {
     assertEquals(outerHTML.includes("&lt;script&gt;"), true);
 });
 
-Deno.test("DOMDomain - dom:getNode returns null for unknown nodeId", async () => {
+Deno.test("DOMDomain - getNodeById returns null for unknown nodeId", async () => {
     resetNodeIdCounter();
     const eventBus = new EventBus();
     const domain = new DOMDomain(eventBus);
@@ -641,14 +628,7 @@ Deno.test("DOMDomain - dom:getNode returns null for unknown nodeId", async () =>
 
     await domain.handleMethod("getDocument", {});
 
-    let receivedNode: unknown = "not-called";
-    eventBus.emit("dom:getNode", {
-        nodeId: 99999,
-        callback: (node: unknown) => {
-            receivedNode = node;
-        },
-    });
-
+    const receivedNode = domain.getNodeById(99999);
     assertEquals(receivedNode, null);
 });
 
@@ -791,4 +771,166 @@ Deno.test("DOMDomain - handleMethod throws for unknown method", async () => {
         Error,
         "not found",
     );
+});
+
+// ============================================================================
+// New Tests: XSS, comment nodes, attribute sanitization, dispose EventBus
+// ============================================================================
+
+Deno.test("DOMDomain - serializeToHTML sanitizes comment node XSS (-->)", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    // Create a comment node with XSS payload
+    const xssComment = {
+        nodeId: 9990,
+        nodeType: DOMNodeType.COMMENT,
+        nodeName: "#comment",
+        nodeValue: 'xss --><script>alert(1)</script><!--',
+        parentNode: null,
+        childNodes: [],
+        firstChild: null,
+        lastChild: null,
+        previousSibling: null,
+        nextSibling: null,
+        ownerDocument: null,
+        cloneNode() { return this; },
+        appendChild() { return this; },
+        removeChild(c: unknown) { return c; },
+    } as unknown as DOMNode;
+
+    const div = createMockElement("div", {}, [xssComment]);
+    // Link parent
+    (xssComment as unknown as Record<string, unknown>).parentNode = div;
+    const doc = createMockDocument([div]);
+
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+    await domain.handleMethod("getDocument", {});
+
+    const result = await domain.handleMethod("getOuterHTML", { nodeId: div.nodeId });
+    const html = (result as Record<string, unknown>).outerHTML as string;
+
+    // The raw --> should NOT appear in the output (it's escaped to --&gt;)
+    assertEquals(html.includes('--><script>'), false);
+    assertEquals(html.includes('--&gt;'), true);
+});
+
+Deno.test("DOMDomain - serializeToHTML sanitizes attribute names", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    // Create element with malicious attribute name
+    const div = createMockElement("div", {});
+    const attrs = (div as unknown as Record<string, unknown>).attributes as Map<string, string>;
+    attrs.set('" onclick="alert(1)', "injected");
+    attrs.set("valid-attr", "ok");
+
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+    await domain.handleMethod("getDocument", {});
+
+    const result = await domain.handleMethod("getOuterHTML", { nodeId: div.nodeId });
+    const html = (result as Record<string, unknown>).outerHTML as string;
+
+    // The malicious attribute name with quotes/spaces/= should be sanitized
+    // The raw injection pattern '" onclick="alert(1)' should not appear
+    assertEquals(html.includes('" onclick='), false);
+    // Valid attribute should still be present
+    assertEquals(html.includes('valid-attr="ok"'), true);
+});
+
+Deno.test("DOMDomain - serializeToHTML comment node basic serialization", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const comment = {
+        nodeId: 9991,
+        nodeType: DOMNodeType.COMMENT,
+        nodeName: "#comment",
+        nodeValue: "This is a comment",
+        parentNode: null,
+        childNodes: [],
+        firstChild: null,
+        lastChild: null,
+        previousSibling: null,
+        nextSibling: null,
+        ownerDocument: null,
+        cloneNode() { return this; },
+        appendChild() { return this; },
+        removeChild(c: unknown) { return c; },
+    } as unknown as DOMNode;
+
+    const div = createMockElement("div", {}, [comment]);
+    (comment as unknown as Record<string, unknown>).parentNode = div;
+    const doc = createMockDocument([div]);
+
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+    await domain.handleMethod("getDocument", {});
+
+    const result = await domain.handleMethod("getOuterHTML", { nodeId: div.nodeId });
+    const html = (result as Record<string, unknown>).outerHTML as string;
+
+    assertEquals(html.includes("<!--This is a comment-->"), true);
+});
+
+Deno.test("DOMDomain - dispose() clears nodeMap so getNodeById returns null", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", { id: "test" });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+    await domain.handleMethod("getDocument", {});
+
+    // Verify getNodeById works before dispose
+    const received = domain.getNodeById(div.nodeId);
+    assertExists(received);
+
+    // Dispose the domain
+    domain.dispose();
+
+    // After dispose, nodeMap is cleared — getNodeById returns null
+    const afterDispose = domain.getNodeById(div.nodeId);
+    assertEquals(afterDispose, null);
+});
+
+Deno.test("DOMDomain - escapeHtmlAttribute escapes single quotes", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", { title: "it's a test" });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+    await domain.handleMethod("getDocument", {});
+
+    const result = await domain.handleMethod("getOuterHTML", { nodeId: div.nodeId });
+    const html = (result as Record<string, unknown>).outerHTML as string;
+
+    assertEquals(html.includes("&#39;"), true);
+    assertEquals(html.includes("it's"), false);
 });

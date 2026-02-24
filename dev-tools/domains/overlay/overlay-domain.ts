@@ -57,6 +57,10 @@ export class OverlayDomain extends BaseDomain {
     /** Active quad highlights */
     private highlightedQuads: Array<{ quad: number[]; color?: RGBA; outlineColor?: RGBA }> = [];
 
+    /** Stored EventBus handler references for cleanup */
+    private nodeSelectedHandler: ((data: unknown) => void) | null = null;
+    private documentUpdatedHandler: (() => void) | null = null;
+
     /** Highlighted frame ID */
     private highlightedFrameId: string | null = null;
 
@@ -111,20 +115,22 @@ export class OverlayDomain extends BaseDomain {
         this.registerEvent("inspectModeCanceled", "Inspect mode was canceled");
 
         // Listen for DOM node selection events from other domains
-        this.eventBus.on("DOM.nodeSelected", (data: unknown) => {
+        this.nodeSelectedHandler = (data: unknown) => {
             if (!this.enabled) return;
             const eventData = data as Record<string, unknown>;
             const nodeId = eventData?.nodeId as number | undefined;
             if (nodeId !== undefined) {
                 this.handleNodeSelected(nodeId);
             }
-        });
+        };
+        this.eventBus.on("DOM.nodeSelected", this.nodeSelectedHandler);
 
         // Listen for DOM document updates to clear stale highlights
-        this.eventBus.on("DOM.documentUpdated", () => {
+        this.documentUpdatedHandler = () => {
             if (!this.enabled) return;
             this.clearAllHighlightState();
-        });
+        };
+        this.eventBus.on("DOM.documentUpdated", this.documentUpdatedHandler);
     }
 
     override async enable(): Promise<Record<string, unknown>> {
@@ -584,6 +590,14 @@ export class OverlayDomain extends BaseDomain {
     }
 
     override dispose(): void {
+        if (this.nodeSelectedHandler) {
+            this.eventBus.off("DOM.nodeSelected", this.nodeSelectedHandler);
+            this.nodeSelectedHandler = null;
+        }
+        if (this.documentUpdatedHandler) {
+            this.eventBus.off("DOM.documentUpdated", this.documentUpdatedHandler);
+            this.documentUpdatedHandler = null;
+        }
         this.clearAllHighlightState();
         this.inspectMode = "none";
         this.showGridOverlays = false;

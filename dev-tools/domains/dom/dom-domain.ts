@@ -7,6 +7,7 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import { domToGraph } from "./dom-graph.ts";
 import { type DOMNode, type DOMElement, DOMNodeType } from "../../../browser/src/types/dom.ts";
 import type { NodeID } from "../../../browser/src/types/identifiers.ts";
 import type { LayoutBox } from "../../../browser/src/types/rendering.ts";
@@ -33,6 +34,8 @@ import type {
     GetSearchResultsResult,
 } from "./dom-types.ts";
 
+const MAX_SERIALIZE_DEPTH = 100;
+
 /**
  * DOM Domain - inspects and manipulates the DOM tree
  */
@@ -42,12 +45,12 @@ export class DOMDomain extends BaseDomain {
     /** Node map for fast lookups by nodeId */
     private nodeMap: Map<NodeID, DOMNode> = new Map();
 
+    /** Dirty flag — when true, nodeMap must be rebuilt before use */
+    private nodeMapDirty: boolean = true;
+
     /** Search results cache */
     private searchResults: Map<string, NodeID[]> = new Map();
     private searchIdCounter: number = 0;
-
-    /** EventBus handler for cross-domain node lookup */
-    private domGetNodeHandler: ((data: unknown) => void) | null = null;
 
     protected setup(): void {
         // Register methods
@@ -95,6 +98,13 @@ export class DOMDomain extends BaseDomain {
             return await this.getSearchResults(params as unknown as GetSearchResultsParams);
         });
 
+        this.registerMethod("getGraphVisualization", "Get DOM tree as GraphX visualization", async (_params) => {
+            const lastResult = this.getLastRenderResult();
+            if (!lastResult?.dom) return { svg: "" };
+            const graph = domToGraph(lastResult.dom);
+            return { graph: { nodes: graph.getNodes().length, edges: graph.getEdges().length } };
+        });
+
         // Register events
         this.registerEvent("documentUpdated", "DOM tree structure changed");
         this.registerEvent("setChildNodes", "Children fetched for a node");
@@ -104,26 +114,15 @@ export class DOMDomain extends BaseDomain {
         this.registerEvent("childNodeInserted", "Child node inserted");
         this.registerEvent("characterDataModified", "Text content changed");
 
-        // Register EventBus handler so other domains (CSS) can look up nodes by ID
-        this.domGetNodeHandler = (data: unknown) => {
-            const req = data as { nodeId: number; callback: (node: unknown) => void };
-            if (req && typeof req.callback === "function") {
-                const node = this.nodeMap.get(req.nodeId) ?? null;
-                req.callback(node);
-            }
-        };
-        this.eventBus.on("dom:getNode", this.domGetNodeHandler);
     }
 
     /**
      * Get the current DOM tree from the rendering pipeline
      */
     private getCurrentDOM(): DOMNode | null {
-        const pipeline = this.context.renderingPipeline;
-        // Access lastRenderResult directly on the pipeline (not via getStats)
-        const lastResult = (pipeline as unknown as Record<string, unknown>).lastRenderResult;
-        if (lastResult && typeof lastResult === "object" && "dom" in lastResult) {
-            return (lastResult as Record<string, unknown>).dom as DOMNode;
+        const lastResult = this.getLastRenderResult();
+        if (lastResult) {
+            return lastResult.dom;
         }
         return null;
     }
@@ -143,13 +142,25 @@ export class DOMDomain extends BaseDomain {
     /**
      * Serialize a DOMNode to protocol format
      */
-    private serializeNode(node: DOMNode, depth: number = 1): DOMNodeDescription {
+    private serializeNode(node: DOMNode, depth: number = 1, _currentDepth: number = 0): DOMNodeDescription {
+        if (_currentDepth > MAX_SERIALIZE_DEPTH) {
+            return {
+                nodeId: node.nodeId,
+                backendNodeId: node.nodeId,
+                nodeType: node.nodeType,
+                nodeName: node.nodeName,
+                localName: node.nodeType === DOMNodeType.ELEMENT ? (node.nodeName || "").toLowerCase() : "",
+                nodeValue: node.nodeValue || "",
+                childNodeCount: node.childNodes?.length ?? 0,
+            };
+        }
+
         const desc: DOMNodeDescription = {
             nodeId: node.nodeId,
             backendNodeId: node.nodeId,
             nodeType: node.nodeType,
             nodeName: node.nodeName,
-            localName: node.nodeName.toLowerCase(),
+            localName: node.nodeType === DOMNodeType.ELEMENT ? (node.nodeName || "").toLowerCase() : "",
             nodeValue: node.nodeValue || "",
         };
 
@@ -172,7 +183,7 @@ export class DOMDomain extends BaseDomain {
             desc.childNodeCount = node.childNodes.length;
             if (depth > 0) {
                 desc.children = node.childNodes.map((child) =>
-                    this.serializeNode(child, depth - 1)
+                    this.serializeNode(child, depth - 1, _currentDepth + 1)
                 );
             }
         }
@@ -196,6 +207,7 @@ export class DOMDomain extends BaseDomain {
         return value
             .replace(/&/g, "&amp;")
             .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
     }
@@ -208,7 +220,8 @@ export class DOMDomain extends BaseDomain {
                 .replace(/>/g, "&gt;");
         }
         if (node.nodeType === DOMNodeType.COMMENT) {
-            return `<!--${node.nodeValue || ""}-->`;
+            const safe = (node.nodeValue ?? "").replace(/-->/g, "--&gt;");
+            return `<!--${safe}-->`;
         }
         if (node.nodeType === DOMNodeType.ELEMENT) {
             const element = node as unknown as DOMElement;
@@ -216,7 +229,9 @@ export class DOMDomain extends BaseDomain {
             let attrs = "";
             if (element.attributes instanceof Map) {
                 for (const [key, value] of element.attributes) {
-                    attrs += ` ${key}="${this.escapeHtmlAttribute(String(value))}"`;
+                    const safeName = key.replace(/[^a-zA-Z0-9\-_:.]/g, "");
+                    if (!safeName) continue;
+                    attrs += ` ${safeName}="${this.escapeHtmlAttribute(String(value))}"`;
                 }
             }
             const children = (node.childNodes || [])
@@ -235,20 +250,26 @@ export class DOMDomain extends BaseDomain {
     /**
      * Search the DOM tree for matching text content or attributes
      */
-    private searchDOM(node: DOMNode, query: string): NodeID[] {
+    private searchDOM(node: DOMNode, query: string, seen?: Set<NodeID>): NodeID[] {
         const results: NodeID[] = [];
+        const dedup = seen ?? new Set<NodeID>();
         const lowerQuery = query.toLowerCase();
+
+        const addResult = (id: NodeID) => {
+            if (!dedup.has(id)) {
+                dedup.add(id);
+                results.push(id);
+            }
+        };
 
         // Check node name
         if (node.nodeName.toLowerCase().includes(lowerQuery)) {
-            results.push(node.nodeId);
+            addResult(node.nodeId);
         }
 
         // Check text content
         if (node.nodeValue && node.nodeValue.toLowerCase().includes(lowerQuery)) {
-            if (!results.includes(node.nodeId)) {
-                results.push(node.nodeId);
-            }
+            addResult(node.nodeId);
         }
 
         // Check attributes for elements
@@ -260,9 +281,7 @@ export class DOMDomain extends BaseDomain {
                         key.toLowerCase().includes(lowerQuery) ||
                         value.toLowerCase().includes(lowerQuery)
                     ) {
-                        if (!results.includes(node.nodeId)) {
-                            results.push(node.nodeId);
-                        }
+                        addResult(node.nodeId);
                         break;
                     }
                 }
@@ -272,7 +291,7 @@ export class DOMDomain extends BaseDomain {
         // Recurse into children
         if (node.childNodes) {
             for (const child of node.childNodes) {
-                results.push(...this.searchDOM(child, query));
+                results.push(...this.searchDOM(child, query, dedup));
             }
         }
 
@@ -298,9 +317,12 @@ export class DOMDomain extends BaseDomain {
             };
         }
 
-        // Rebuild node map
-        this.nodeMap.clear();
-        this.buildNodeMap(dom);
+        // Rebuild node map only when dirty
+        if (this.nodeMapDirty) {
+            this.nodeMap.clear();
+            this.buildNodeMap(dom);
+            this.nodeMapDirty = false;
+        }
 
         const depth = params.depth ?? 2;
         return { root: this.serializeNode(dom, depth) };
@@ -349,11 +371,14 @@ export class DOMDomain extends BaseDomain {
         }
         const element = node as unknown as DOMElement;
         element.setAttribute(params.name, params.value);
-        this.emitEvent("attributeModified", {
-            nodeId: params.nodeId,
-            name: params.name,
-            value: params.value,
-        });
+        this.nodeMapDirty = true;
+        if (this.enabled) {
+            this.emitEvent("attributeModified", {
+                nodeId: params.nodeId,
+                name: params.name,
+                value: params.value,
+            });
+        }
         return {};
     }
 
@@ -364,10 +389,13 @@ export class DOMDomain extends BaseDomain {
         }
         const element = node as unknown as DOMElement;
         element.removeAttribute(params.name);
-        this.emitEvent("attributeRemoved", {
-            nodeId: params.nodeId,
-            name: params.name,
-        });
+        this.nodeMapDirty = true;
+        if (this.enabled) {
+            this.emitEvent("attributeRemoved", {
+                nodeId: params.nodeId,
+                name: params.name,
+            });
+        }
         return {};
     }
 
@@ -379,6 +407,7 @@ export class DOMDomain extends BaseDomain {
         const parentId = node.parentNode.nodeId;
         node.parentNode.removeChild(node);
         this.nodeMap.delete(params.nodeId);
+        this.nodeMapDirty = true;
         this.emitEvent("childNodeRemoved", {
             parentNodeId: parentId,
             nodeId: params.nodeId,
@@ -457,6 +486,11 @@ export class DOMDomain extends BaseDomain {
     }
 
     async performSearch(params: PerformSearchParams): Promise<PerformSearchResult> {
+        // Cap query length to prevent excessive processing
+        if (params.query && params.query.length > 1000) {
+            return { searchId: "error", resultCount: 0 };
+        }
+
         const dom = this.getCurrentDOM();
         if (!dom) {
             return { searchId: "0", resultCount: 0 };
@@ -464,6 +498,12 @@ export class DOMDomain extends BaseDomain {
 
         const results = this.searchDOM(dom, params.query);
         const searchId = String(++this.searchIdCounter);
+
+        // Cap search results cache to prevent unbounded growth
+        if (this.searchResults.size >= 100) {
+            const oldest = this.searchResults.keys().next().value;
+            if (oldest !== undefined) this.searchResults.delete(oldest);
+        }
         this.searchResults.set(searchId, results);
 
         return { searchId, resultCount: results.length };
@@ -478,6 +518,14 @@ export class DOMDomain extends BaseDomain {
     }
 
     /**
+     * Look up a DOM node by its nodeId.
+     * Used by sibling domains (CSS, Overlay) for explicit cross-domain resolution.
+     */
+    getNodeById(nodeId: NodeID): DOMNode | null {
+        return this.nodeMap.get(nodeId) ?? null;
+    }
+
+    /**
      * Get the node map (for use by other domains like CSS, Overlay)
      */
     getNodeMap(): Map<NodeID, DOMNode> {
@@ -485,10 +533,6 @@ export class DOMDomain extends BaseDomain {
     }
 
     override dispose(): void {
-        if (this.domGetNodeHandler) {
-            this.eventBus.off("dom:getNode", this.domGetNodeHandler);
-            this.domGetNodeHandler = null;
-        }
         this.nodeMap.clear();
         this.searchResults.clear();
         super.dispose();

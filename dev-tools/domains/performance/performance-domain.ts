@@ -28,6 +28,9 @@ import type {
 /**
  * Performance Domain - metrics collection and profiling
  */
+/** Maximum number of collected metric snapshots to retain (rolling window) */
+const MAX_COLLECTED_METRICS = 5000;
+
 export class PerformanceDomain extends BaseDomain {
     readonly name: DomainName = "Performance";
 
@@ -42,6 +45,9 @@ export class PerformanceDomain extends BaseDomain {
 
     /** Periodic metrics emission timer */
     private metricsInterval: ReturnType<typeof setInterval> | null = null;
+
+    /** Profiling sampling interval timer */
+    private samplingTimer: ReturnType<typeof setInterval> | null = null;
 
     protected setup(): void {
         this.registerMethod("getMetrics", "Collect performance metrics from all subsystems", async (params) => {
@@ -79,6 +85,11 @@ export class PerformanceDomain extends BaseDomain {
     override async enable(): Promise<Record<string, unknown>> {
         await super.enable();
 
+        // Guard against double-start — clear existing interval first
+        if (this.metricsInterval !== null) {
+            clearInterval(this.metricsInterval);
+        }
+
         // Start periodic metrics emission
         this.metricsInterval = setInterval(() => {
             if (this.enabled) {
@@ -99,6 +110,10 @@ export class PerformanceDomain extends BaseDomain {
         // Stop profiling if active
         if (this.profiling) {
             this.profiling = false;
+        }
+        if (this.samplingTimer !== null) {
+            clearInterval(this.samplingTimer);
+            this.samplingTimer = null;
         }
 
         await super.disable();
@@ -160,10 +175,10 @@ export class PerformanceDomain extends BaseDomain {
             metrics.push({ name: "CSSRuleCount", value: cssRuleCount });
         }
 
-        // Memory-related metrics (estimates based on resource sizes)
+        // Memory-related metrics (estimates based on resource sizes — not real heap data)
         const totalResourceSize = renderingStats.resources.totalSize;
-        metrics.push({ name: "JSHeapUsedSize", value: totalResourceSize * 3 });
-        metrics.push({ name: "JSHeapTotalSize", value: totalResourceSize * 5 });
+        metrics.push({ name: "JSHeapUsedSize (estimate)", value: totalResourceSize * 3 });
+        metrics.push({ name: "JSHeapTotalSize (estimate)", value: totalResourceSize * 5 });
 
         // Request pipeline stats
         const requestStats = renderingStats.requestPipeline;
@@ -211,13 +226,23 @@ export class PerformanceDomain extends BaseDomain {
             return { error: "Profiling already in progress" };
         }
 
-        const _samplingInterval = params.samplingInterval ?? 1000;
+        const samplingInterval = params.samplingInterval ?? 1000;
         this.profiling = true;
         this.profilingStartTime = performance.now() * 1000; // Convert to microseconds
         this.collectedMetrics = [];
 
         // Collect an initial snapshot of metrics
-        this.collectedMetrics = this.collectMetrics();
+        this.collectedMetrics.push(...this.collectMetrics());
+
+        // Start periodic sampling at the requested interval
+        this.samplingTimer = setInterval(() => {
+            if (this.profiling) {
+                this.collectedMetrics.push(...this.collectMetrics());
+                if (this.collectedMetrics.length > MAX_COLLECTED_METRICS) {
+                    this.collectedMetrics = this.collectedMetrics.slice(-MAX_COLLECTED_METRICS);
+                }
+            }
+        }, samplingInterval);
 
         return {};
     }
@@ -236,6 +261,10 @@ export class PerformanceDomain extends BaseDomain {
         }
 
         this.profiling = false;
+        if (this.samplingTimer !== null) {
+            clearInterval(this.samplingTimer);
+            this.samplingTimer = null;
+        }
         const startTime = this.profilingStartTime;
 
         // Build a profile from collected data
@@ -529,6 +558,10 @@ export class PerformanceDomain extends BaseDomain {
         if (this.metricsInterval !== null) {
             clearInterval(this.metricsInterval);
             this.metricsInterval = null;
+        }
+        if (this.samplingTimer !== null) {
+            clearInterval(this.samplingTimer);
+            this.samplingTimer = null;
         }
         this.profiling = false;
         this.collectedMetrics = [];

@@ -97,55 +97,55 @@ export class EmulationDomain extends BaseDomain {
     protected setup(): void {
         // Register methods
         this.registerMethod("setDeviceMetricsOverride", "Override device metrics (viewport, scale, mobile)", async (params) => {
-            return await this.setDeviceMetricsOverride(params as unknown as DeviceMetricsParams);
+            return this.setDeviceMetricsOverride(params as unknown as DeviceMetricsParams);
         });
 
         this.registerMethod("clearDeviceMetricsOverride", "Clear device metrics override", async () => {
-            return await this.clearDeviceMetricsOverride();
+            return this.clearDeviceMetricsOverride();
         });
 
         this.registerMethod("setUserAgentOverride", "Override the user agent string", async (params) => {
-            return await this.setUserAgentOverride(params as unknown as SetUserAgentOverrideParams);
+            return this.setUserAgentOverride(params as unknown as SetUserAgentOverrideParams);
         });
 
         this.registerMethod("setEmulatedMedia", "Override CSS media type and features", async (params) => {
-            return await this.setEmulatedMedia(params as unknown as SetEmulatedMediaParams);
+            return this.setEmulatedMedia(params as unknown as SetEmulatedMediaParams);
         });
 
         this.registerMethod("setGeolocationOverride", "Override geolocation position", async (params) => {
-            return await this.setGeolocationOverride(params as unknown as SetGeolocationOverrideParams);
+            return this.setGeolocationOverride(params as unknown as SetGeolocationOverrideParams);
         });
 
         this.registerMethod("clearGeolocationOverride", "Clear geolocation override", async () => {
-            return await this.clearGeolocationOverride();
+            return this.clearGeolocationOverride();
         });
 
         this.registerMethod("setTimezoneOverride", "Override timezone", async (params) => {
-            return await this.setTimezoneOverride(params as unknown as SetTimezoneOverrideParams);
+            return this.setTimezoneOverride(params as unknown as SetTimezoneOverrideParams);
         });
 
         this.registerMethod("setLocaleOverride", "Override locale", async (params) => {
-            return await this.setLocaleOverride(params as unknown as SetLocaleOverrideParams);
+            return this.setLocaleOverride(params as unknown as SetLocaleOverrideParams);
         });
 
         this.registerMethod("setTouchEmulationEnabled", "Enable or disable touch emulation", async (params) => {
-            return await this.setTouchEmulationEnabled(params as unknown as SetTouchEmulationEnabledParams);
+            return this.setTouchEmulationEnabled(params as unknown as SetTouchEmulationEnabledParams);
         });
 
         this.registerMethod("setNetworkConditions", "Set network throttling conditions", async (params) => {
-            return await this.setNetworkConditions(params as unknown as SetNetworkConditionsParams);
+            return this.setNetworkConditions(params as unknown as SetNetworkConditionsParams);
         });
 
         this.registerMethod("setCPUThrottlingRate", "Set CPU throttling rate", async (params) => {
-            return await this.setCPUThrottlingRate(params as unknown as SetCPUThrottlingRateParams);
+            return this.setCPUThrottlingRate(params as unknown as SetCPUThrottlingRateParams);
         });
 
         this.registerMethod("setScriptExecutionDisabled", "Disable or enable script execution", async (params) => {
-            return await this.setScriptExecutionDisabled(params as unknown as SetScriptExecutionDisabledParams);
+            return this.setScriptExecutionDisabled(params as unknown as SetScriptExecutionDisabledParams);
         });
 
         this.registerMethod("canEmulate", "Check if emulation is supported", async () => {
-            return await this.canEmulate();
+            return this.canEmulate();
         });
     }
 
@@ -161,7 +161,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Override device metrics (viewport, scale factor, mobile flag)
      */
-    private async setDeviceMetricsOverride(params: DeviceMetricsParams): Promise<Record<string, unknown>> {
+    private setDeviceMetricsOverride(params: DeviceMetricsParams): Record<string, unknown> {
         this.deviceMetrics = {
             width: params.width,
             height: params.height,
@@ -200,7 +200,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Clear device metrics override, restoring original values
      */
-    private async clearDeviceMetricsOverride(): Promise<Record<string, unknown>> {
+    private clearDeviceMetricsOverride(): Record<string, unknown> {
         this.deviceMetrics = {
             width: 0,
             height: 0,
@@ -224,7 +224,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Override the user agent string
      */
-    private async setUserAgentOverride(params: SetUserAgentOverrideParams): Promise<Record<string, unknown>> {
+    private setUserAgentOverride(params: SetUserAgentOverrideParams): Record<string, unknown> {
         this.userAgent = params.userAgent;
         this.acceptLanguage = params.acceptLanguage ?? "";
         this.platform = params.platform ?? "";
@@ -243,7 +243,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Override CSS media type and/or media features
      */
-    private async setEmulatedMedia(params: SetEmulatedMediaParams): Promise<Record<string, unknown>> {
+    private setEmulatedMedia(params: SetEmulatedMediaParams): Record<string, unknown> {
         this.emulatedMedia = params.media ?? null;
         this.emulatedMediaFeatures = params.features ?? [];
 
@@ -258,7 +258,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Override the geolocation position
      */
-    private async setGeolocationOverride(params: SetGeolocationOverrideParams): Promise<Record<string, unknown>> {
+    private setGeolocationOverride(params: SetGeolocationOverrideParams): Record<string, unknown> {
         if (params.latitude !== undefined && params.longitude !== undefined) {
             this.geolocation = {
                 latitude: params.latitude,
@@ -280,7 +280,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Clear the geolocation override
      */
-    private async clearGeolocationOverride(): Promise<Record<string, unknown>> {
+    private clearGeolocationOverride(): Record<string, unknown> {
         this.geolocation = null;
 
         this.eventBus.emit("Emulation.geolocationChanged", {
@@ -293,7 +293,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Override the timezone
      */
-    private async setTimezoneOverride(params: SetTimezoneOverrideParams): Promise<Record<string, unknown>> {
+    private setTimezoneOverride(params: SetTimezoneOverrideParams): Record<string, unknown> {
         if (params.timezoneId === "") {
             this.timezoneId = null;
         } else {
@@ -310,7 +310,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Override the locale
      */
-    private async setLocaleOverride(params: SetLocaleOverrideParams): Promise<Record<string, unknown>> {
+    private setLocaleOverride(params: SetLocaleOverrideParams): Record<string, unknown> {
         if (!params.locale || params.locale === "") {
             this.locale = null;
         } else {
@@ -327,7 +327,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Enable or disable touch emulation
      */
-    private async setTouchEmulationEnabled(params: SetTouchEmulationEnabledParams): Promise<Record<string, unknown>> {
+    private setTouchEmulationEnabled(params: SetTouchEmulationEnabledParams): Record<string, unknown> {
         this.touchEmulation = params.enabled;
         this.maxTouchPoints = params.maxTouchPoints ?? (params.enabled ? 1 : 0);
 
@@ -342,7 +342,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Set network throttling conditions
      */
-    private async setNetworkConditions(params: SetNetworkConditionsParams): Promise<Record<string, unknown>> {
+    private setNetworkConditions(params: SetNetworkConditionsParams): Record<string, unknown> {
         this.networkConditions = {
             offline: params.offline,
             latency: params.latency,
@@ -360,7 +360,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Set CPU throttling rate
      */
-    private async setCPUThrottlingRate(params: SetCPUThrottlingRateParams): Promise<Record<string, unknown>> {
+    private setCPUThrottlingRate(params: SetCPUThrottlingRateParams): Record<string, unknown> {
         if (params.rate < 1) {
             throw new Error("CPU throttling rate must be >= 1");
         }
@@ -377,7 +377,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Enable or disable script execution
      */
-    private async setScriptExecutionDisabled(params: SetScriptExecutionDisabledParams): Promise<Record<string, unknown>> {
+    private setScriptExecutionDisabled(params: SetScriptExecutionDisabledParams): Record<string, unknown> {
         this.scriptExecutionDisabled = params.value;
 
         this.eventBus.emit("Emulation.scriptExecutionChanged", {
@@ -390,7 +390,7 @@ export class EmulationDomain extends BaseDomain {
     /**
      * Check if the browser supports emulation
      */
-    private async canEmulate(): Promise<Record<string, unknown>> {
+    private canEmulate(): Record<string, unknown> {
         return { result: true };
     }
 

@@ -166,9 +166,19 @@ export class SecurityDomain extends BaseDomain {
             return { certificate: null };
         }
 
-        // Check if we have a cached certificate for the current page
+        // Check if we have a cached certificate matching the requested origin
         if (this.currentCertificate) {
-            return { certificate: this.currentCertificate };
+            try {
+                const requestedHost = new URL(params.origin).hostname;
+                const certSubject = this.currentCertificate.subject;
+                const altNames = this.currentCertificate.subjectAltNames ?? [];
+                if (certSubject === requestedHost || altNames.includes(requestedHost)) {
+                    return { certificate: this.currentCertificate };
+                }
+            } catch {
+                // Invalid origin URL — return cached cert as best effort
+                return { certificate: this.currentCertificate };
+            }
         }
 
         // Try to get certificate from RequestPipeline connection pool
@@ -179,15 +189,16 @@ export class SecurityDomain extends BaseDomain {
 
             // If we have active secure connections, construct certificate info
             if (stats.activeConnections > 0 || stats.idleConnections > 0) {
-                // Build a synthetic certificate info based on the origin
+                // Real TLS introspection is not available — return a clearly-marked
+                // synthetic placeholder so callers know this is not authoritative.
                 const origin = new URL(params.origin);
                 const certificateInfo: CertificateInfo = {
                     subject: origin.hostname,
-                    issuer: "Unknown CA",
+                    issuer: "(unavailable — real TLS introspection not implemented)",
                     validFrom: new Date().toISOString(),
                     validTo: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-                    serialNumber: "00",
-                    fingerprint: "SHA-256",
+                    serialNumber: "(unavailable)",
+                    fingerprint: "(unavailable)",
                     protocol: "TLS 1.3",
                     keyExchange: "ECDHE",
                     cipher: "AES_256_GCM",

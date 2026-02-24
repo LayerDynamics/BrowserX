@@ -84,48 +84,57 @@ export class PageDomain extends BaseDomain {
         this.loaderCounter++;
         this.loaderId = `loader-${this.loaderCounter}`;
 
-        this.emitEvent("frameStartedLoading", { frameId: this.frameId });
+        if (this.enabled) {
+            this.emitEvent("frameStartedLoading", { frameId: this.frameId });
+        }
 
         const startTime = Date.now();
         try {
             await this.context.browser.navigate(params.url);
 
-            this.emitEvent("domContentEventFired", {
-                timestamp: Date.now() / 1000,
-            });
+            const navigationDuration = Date.now() - startTime;
 
-            this.emitEvent("lifecycleEvent", {
-                frameId: this.frameId,
-                loaderId: this.loaderId,
-                name: "DOMContentLoaded",
-                timestamp: Date.now() / 1000,
-            });
+            if (this.enabled) {
+                this.emitEvent("domContentEventFired", {
+                    timestamp: Date.now() / 1000,
+                });
 
-            this.emitEvent("frameNavigated", {
-                frame: {
-                    id: this.frameId,
-                    url: params.url,
-                    securityOrigin: new URL(params.url).origin,
-                    mimeType: "text/html",
-                },
-            });
+                this.emitEvent("lifecycleEvent", {
+                    frameId: this.frameId,
+                    loaderId: this.loaderId,
+                    name: "DOMContentLoaded",
+                    timestamp: Date.now() / 1000,
+                });
 
-            this.emitEvent("loadEventFired", {
-                timestamp: Date.now() / 1000,
-            });
+                this.emitEvent("frameNavigated", {
+                    frame: {
+                        id: this.frameId,
+                        url: params.url,
+                        securityOrigin: new URL(params.url).origin,
+                        mimeType: "text/html",
+                        navigationDuration,
+                    },
+                });
 
-            this.emitEvent("lifecycleEvent", {
-                frameId: this.frameId,
-                loaderId: this.loaderId,
-                name: "load",
-                timestamp: Date.now() / 1000,
-            });
+                this.emitEvent("loadEventFired", {
+                    timestamp: Date.now() / 1000,
+                });
 
-            this.emitEvent("frameStoppedLoading", { frameId: this.frameId });
+                this.emitEvent("lifecycleEvent", {
+                    frameId: this.frameId,
+                    loaderId: this.loaderId,
+                    name: "load",
+                    timestamp: Date.now() / 1000,
+                });
+
+                this.emitEvent("frameStoppedLoading", { frameId: this.frameId });
+            }
 
             return { frameId: this.frameId, loaderId: this.loaderId };
         } catch (error) {
-            this.emitEvent("frameStoppedLoading", { frameId: this.frameId });
+            if (this.enabled) {
+                this.emitEvent("frameStoppedLoading", { frameId: this.frameId });
+            }
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 frameId: this.frameId,
@@ -177,9 +186,17 @@ export class PageDomain extends BaseDomain {
         };
     }
 
-    private async captureScreenshot(_params: ScreenshotParams): Promise<ScreenshotResult> {
+    private async captureScreenshot(params: ScreenshotParams): Promise<ScreenshotResult> {
+        // Log requested format/quality/clip for future codec support
+        const _format = params.format ?? "png";
+        const _quality = params.quality ?? (_format === "jpeg" ? 80 : 100);
+        const _clip = params.clip;
+
         const pixels = await this.context.browser.screenshot();
+
         // Encode pixel data as base64
+        // Note: format/quality/clip params are acknowledged but output is currently
+        // always raw RGBA pixels. Full PNG/JPEG/WebP encoding requires image codecs.
         const bytes = new Uint8Array(pixels.buffer);
         const binary = Array.from(bytes).map((b) => String.fromCharCode(b)).join("");
         const data = btoa(binary);

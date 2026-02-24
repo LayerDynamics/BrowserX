@@ -40,6 +40,9 @@ interface SamplingEntry {
 /**
  * Memory Domain - heap inspection and memory profiling
  */
+/** Maximum number of sampling entries to retain (rolling window) */
+const MAX_SAMPLING_ENTRIES = 1000;
+
 export class MemoryDomain extends BaseDomain {
     readonly name: DomainName = "Memory";
 
@@ -145,11 +148,12 @@ export class MemoryDomain extends BaseDomain {
             };
         }
 
-        // Fall back to estimates based on rendering pipeline resource data
+        // Fall back to estimates based on rendering pipeline resource data.
+        // NOTE: These are rough estimates, not real V8 heap data.
         const stats = this.context.renderingPipeline.getStats();
         const totalResourceSize = stats.resources.totalSize;
 
-        // Estimate heap usage based on resource sizes with typical expansion factors
+        // Estimated heap usage based on resource sizes with typical expansion factors
         const estimatedUsedHeap = totalResourceSize * 3;
         const estimatedTotalHeap = totalResourceSize * 5;
         const heapSizeLimit = 2147483648; // 2GB default
@@ -245,6 +249,11 @@ export class MemoryDomain extends BaseDomain {
                     });
                 }
             }
+        }
+
+        // Enforce rolling window cap
+        if (this.samplingData.length > MAX_SAMPLING_ENTRIES) {
+            this.samplingData = this.samplingData.slice(-MAX_SAMPLING_ENTRIES);
         }
 
         // Emit heap stats update event
@@ -395,9 +404,12 @@ export class MemoryDomain extends BaseDomain {
                 this.emitEvent("addHeapSnapshotChunk", chunkData as unknown as Record<string, unknown>);
             }
 
-            if (reportProgress) {
-                // Progress is available through the chunk emission itself
-                // Clients can track chunks received vs expected
+            if (reportProgress && this.enabled) {
+                this.emitEvent("reportHeapSnapshotProgress", {
+                    done: Math.min(end, serialized.length),
+                    total: serialized.length,
+                    finished: end >= serialized.length,
+                } as unknown as Record<string, unknown>);
             }
         }
 

@@ -61,12 +61,12 @@ Deno.test("RuntimeDomain - enable() emits executionContextCreated", async () => 
     assertExists(ctx.uniqueId);
 });
 
-Deno.test("RuntimeDomain - evaluate() returns serialized result (undefined fallback)", async () => {
+Deno.test("RuntimeDomain - evaluate() returns serialized result with exceptionDetails (no executor fallback)", async () => {
     resetNodeIdCounter();
     const eventBus = new EventBus();
     const domain = new RuntimeDomain(eventBus);
 
-    // Use a pipeline with no scriptExecutor so evaluate falls back to undefined
+    // Use a pipeline with no scriptExecutor so evaluate falls back to undefined + exceptionDetails
     const renderResult = createMockRenderResult();
     const pipeline = createMockRenderingPipeline(renderResult);
     const context = createMockContext({ eventBus, renderingPipeline: pipeline });
@@ -74,11 +74,16 @@ Deno.test("RuntimeDomain - evaluate() returns serialized result (undefined fallb
     await domain.enable();
 
     const result = await domain.handleMethod("evaluate", { expression: "1 + 1" });
-    const remoteObj = (result as Record<string, unknown>).result as Record<string, unknown>;
+    const res = result as Record<string, unknown>;
+    const remoteObj = res.result as Record<string, unknown>;
 
     assertExists(remoteObj);
     // Without scriptExecutor, value will be undefined
     assertEquals(remoteObj.type, "undefined");
+    // Should also include exceptionDetails
+    const exceptionDetails = res.exceptionDetails as Record<string, unknown>;
+    assertExists(exceptionDetails);
+    assertEquals((exceptionDetails.text as string).includes("unavailable"), true);
 });
 
 Deno.test("RuntimeDomain - evaluate() uses scriptExecutor when available", async () => {
@@ -699,6 +704,62 @@ Deno.test("RuntimeDomain - serialization: NaN", async () => {
     assertEquals(args[0]?.type, "number");
     assertEquals(args[0]?.unserializableValue, "NaN");
     assertEquals(args[0]?.description, "NaN");
+});
+
+Deno.test("RuntimeDomain - evaluate() returns exceptionDetails when no scriptExecutor", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new RuntimeDomain(eventBus);
+
+    // Use a pipeline with no scriptExecutor
+    const renderResult = createMockRenderResult();
+    const pipeline = createMockRenderingPipeline(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    const result = await domain.handleMethod("evaluate", { expression: "1 + 1" });
+    const res = result as Record<string, unknown>;
+
+    // Should return exceptionDetails indicating no executor
+    const exceptionDetails = res.exceptionDetails as Record<string, unknown>;
+    assertExists(exceptionDetails);
+    assertEquals(typeof exceptionDetails.text, "string");
+    assertEquals((exceptionDetails.text as string).includes("unavailable"), true);
+    assertEquals((res.result as Record<string, unknown>).type, "undefined");
+});
+
+Deno.test("RuntimeDomain - getHeapUsage() returns non-zero when executor present", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new RuntimeDomain(eventBus);
+
+    // Create mock with scriptExecutor that has getIsolate().getHeapStatistics()
+    const renderResult = createMockRenderResult();
+    (renderResult as unknown as Record<string, unknown>).scriptExecutor = {
+        execute: (code: string) => code,
+        getIsolate: () => ({
+            getHeapStatistics: () => ({
+                totalSize: 1048576,
+                totalAllocated: 524288,
+                youngGenerationSize: 262144,
+                oldGenerationSize: 262144,
+                objectCount: 100,
+                youngObjectCount: 60,
+                oldObjectCount: 40,
+                gcStats: { collections: 0, totalPauseTime: 0, lastPauseTime: 0, lastCollectionType: "" },
+            }),
+        }),
+    };
+    const pipeline = createMockRenderingPipeline(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    const result = await domain.handleMethod("getHeapUsage", {});
+    const usage = result as Record<string, unknown>;
+    assertEquals(usage.usedSize, 524288);
+    assertEquals(usage.totalSize, 1048576);
 });
 
 Deno.test("RuntimeDomain - serialization: Infinity", async () => {

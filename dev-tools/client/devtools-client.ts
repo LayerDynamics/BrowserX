@@ -18,6 +18,7 @@ import type {
     ProtocolError,
     MessageID,
 } from "../protocol/types.ts";
+import { ProtocolErrorCode } from "../protocol/types.ts";
 
 /**
  * Configuration for creating a DevToolsClient.
@@ -130,7 +131,7 @@ export class DevToolsClient {
                 for (const [id, pending] of this.pendingRequests) {
                     clearTimeout(pending.timer);
                     pending.reject({
-                        code: -32000,
+                        code: ProtocolErrorCode.SERVER_ERROR,
                         message: "WebSocket connection closed",
                     });
                     this.pendingRequests.delete(id);
@@ -282,7 +283,7 @@ export class DevToolsClient {
             for (const [id, pending] of this.pendingRequests) {
                 clearTimeout(pending.timer);
                 pending.reject({
-                    code: -32000,
+                    code: ProtocolErrorCode.SERVER_ERROR,
                     message: "Client disconnected",
                 });
             }
@@ -304,9 +305,9 @@ export class DevToolsClient {
                     return;
                 }
 
-                socket.onclose = () => {
+                socket.addEventListener("close", () => {
                     resolve();
-                };
+                }, { once: true });
 
                 socket.close();
             });
@@ -322,8 +323,16 @@ export class DevToolsClient {
      * @param name - Domain name (e.g. "DOM", "Network", "Runtime")
      * @returns A DomainAccessor for the given domain
      */
+    /** Cache for domain accessors to avoid creating new objects on every access */
+    private domainAccessorCache: Map<string, DomainAccessor> = new Map();
+
     domain(name: string): DomainAccessor {
-        return new DomainAccessor(name, this);
+        let accessor = this.domainAccessorCache.get(name);
+        if (!accessor) {
+            accessor = new DomainAccessor(name, this);
+            this.domainAccessorCache.set(name, accessor);
+        }
+        return accessor;
     }
 
     // ---- Domain shorthand accessors ----
@@ -412,8 +421,9 @@ export class DevToolsClient {
                 for (const handler of handlers) {
                     try {
                         handler(params);
-                    } catch {
-                        // Prevent handler errors from breaking the message loop
+                    } catch (error) {
+                        // Log handler errors but prevent them from breaking the message loop
+                        console.error(`[DevToolsClient] Event handler error for ${event.method}:`, error);
                     }
                 }
             }
@@ -437,11 +447,11 @@ export class DevToolsClient {
  * ```
  */
 export class DomainAccessor {
-    private name: string;
+    readonly domainName: string;
     private client: DevToolsClient;
 
     constructor(name: string, client: DevToolsClient) {
-        this.name = name;
+        this.domainName = name;
         this.client = client;
     }
 
@@ -453,7 +463,7 @@ export class DomainAccessor {
      * @returns The result from the server
      */
     async call(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
-        return await this.client.send(`${this.name}.${method}` as ProtocolMethod, params);
+        return await this.client.send(`${this.domainName}.${method}` as ProtocolMethod, params);
     }
 
     /**
@@ -479,7 +489,7 @@ export class DomainAccessor {
      * @param handler - Callback to invoke when the event fires
      */
     on(event: string, handler: EventHandler): void {
-        this.client.on(`${this.name}.${event}`, handler);
+        this.client.on(`${this.domainName}.${event}`, handler);
     }
 
     /**
@@ -489,7 +499,7 @@ export class DomainAccessor {
      * @param handler - The handler to remove
      */
     off(event: string, handler: EventHandler): void {
-        this.client.off(`${this.name}.${event}`, handler);
+        this.client.off(`${this.domainName}.${event}`, handler);
     }
 
     /**
@@ -500,6 +510,6 @@ export class DomainAccessor {
      * @returns The event params
      */
     async waitForEvent(event: string, timeout?: number): Promise<Record<string, unknown>> {
-        return await this.client.waitForEvent(`${this.name}.${event}`, timeout);
+        return await this.client.waitForEvent(`${this.domainName}.${event}`, timeout);
     }
 }

@@ -85,11 +85,17 @@ Deno.test("isResponse returns true for a response with an error", () => {
     assertEquals(isResponse(msg as ProtocolMessage), true);
 });
 
-Deno.test("isResponse returns true for a minimal response with only id", () => {
+Deno.test("isResponse returns true for a minimal response with id and result", () => {
     const msg: ProtocolResponse = {
         id: 99,
+        result: {},
     };
     assertEquals(isResponse(msg as ProtocolMessage), true);
+});
+
+Deno.test("isResponse returns false for a message with only id (no result or error)", () => {
+    const msg = { id: 99 } as ProtocolMessage;
+    assertEquals(isResponse(msg as ProtocolMessage), false);
 });
 
 Deno.test("isResponse returns false for a request (has both id and method)", () => {
@@ -155,8 +161,8 @@ Deno.test("message with both id and method is classified as request, not event",
     assertEquals(isEvent(msg), false);
 });
 
-Deno.test("message with only id is classified as response", () => {
-    const msg = { id: 10 } as ProtocolMessage;
+Deno.test("message with only id and result is classified as response", () => {
+    const msg = { id: 10, result: {} } as ProtocolMessage;
     assertEquals(isRequest(msg), false);
     assertEquals(isResponse(msg), true);
     assertEquals(isEvent(msg), false);
@@ -177,7 +183,7 @@ Deno.test("empty object is classified as none of the three", () => {
 });
 
 Deno.test("message with id=0 is still detected as having an id", () => {
-    const msg = { id: 0 } as ProtocolMessage;
+    const msg = { id: 0, result: {} } as ProtocolMessage;
     assertEquals(isResponse(msg), true);
     assertEquals(isRequest(msg), false);
 });

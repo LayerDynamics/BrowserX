@@ -20,6 +20,10 @@ export class ConsoleDomain extends BaseDomain {
     private messages: ConsoleMessage[] = [];
     private maxMessages: number = 1000;
 
+    /** Stored EventBus handler references for cleanup */
+    private consoleApiHandler: ((data: unknown) => void) | null = null;
+    private exceptionHandler: ((data: unknown) => void) | null = null;
+
     protected setup(): void {
         this.registerMethod("clearMessages", "Clear console message buffer", async () => {
             return await this.clearMessages();
@@ -33,7 +37,7 @@ export class ConsoleDomain extends BaseDomain {
         this.registerEvent("messageAdded", "New console message");
 
         // Subscribe to Runtime.consoleAPICalled events via event bus
-        this.eventBus.on("Runtime.consoleAPICalled" as ProtocolMethod, (data: unknown) => {
+        this.consoleApiHandler = (data: unknown) => {
             if (!this.enabled) return;
             const params = data as {
                 type: string;
@@ -58,10 +62,11 @@ export class ConsoleDomain extends BaseDomain {
                 timestamp: params.timestamp,
                 stackTrace: params.stackTrace,
             });
-        });
+        };
+        this.eventBus.on("Runtime.consoleAPICalled" as ProtocolMethod, this.consoleApiHandler);
 
         // Subscribe to Runtime.exceptionThrown events
-        this.eventBus.on("Runtime.exceptionThrown" as ProtocolMethod, (data: unknown) => {
+        this.exceptionHandler = (data: unknown) => {
             if (!this.enabled) return;
             const params = data as {
                 timestamp: number;
@@ -84,7 +89,8 @@ export class ConsoleDomain extends BaseDomain {
                 timestamp: params.timestamp,
                 stackTrace: params.exceptionDetails.stackTrace,
             });
-        });
+        };
+        this.eventBus.on("Runtime.exceptionThrown" as ProtocolMethod, this.exceptionHandler);
     }
 
     /**
@@ -150,6 +156,14 @@ export class ConsoleDomain extends BaseDomain {
     }
 
     override dispose(): void {
+        if (this.consoleApiHandler) {
+            this.eventBus.off("Runtime.consoleAPICalled" as ProtocolMethod, this.consoleApiHandler);
+            this.consoleApiHandler = null;
+        }
+        if (this.exceptionHandler) {
+            this.eventBus.off("Runtime.exceptionThrown" as ProtocolMethod, this.exceptionHandler);
+            this.exceptionHandler = null;
+        }
         this.messages = [];
         super.dispose();
     }

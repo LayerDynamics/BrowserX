@@ -252,10 +252,16 @@ export class StorageDomain extends BaseDomain {
 
         for (const storageType of typesToClear) {
             switch (storageType) {
-                case "local_storage":
-                case "session_storage":
-                    storageManager.clearOrigin(params.origin, params.origin);
+                case "local_storage": {
+                    const localStorage = storageManager.getLocalStorage(params.origin);
+                    localStorage.clear(params.origin);
                     break;
+                }
+                case "session_storage": {
+                    const sessionStorage = storageManager.getSessionStorage(params.origin);
+                    sessionStorage.clear(params.origin);
+                    break;
+                }
 
                 case "cookies":
                     // Clear cookies for the origin's domain

@@ -110,14 +110,14 @@ export type ProtocolMessage = ProtocolRequest | ProtocolResponse | ProtocolEvent
  * Type guard for request messages
  */
 export function isRequest(msg: ProtocolMessage): msg is ProtocolRequest {
-    return "id" in msg && "method" in msg;
+    return "id" in msg && "method" in msg && typeof (msg as ProtocolRequest).id === "number" && typeof (msg as ProtocolRequest).method === "string";
 }
 
 /**
  * Type guard for response messages
  */
 export function isResponse(msg: ProtocolMessage): msg is ProtocolResponse {
-    return "id" in msg && !("method" in msg);
+    return "id" in msg && typeof (msg as ProtocolResponse).id === "number" && !("method" in msg) && ("result" in msg || "error" in msg);
 }
 
 /**

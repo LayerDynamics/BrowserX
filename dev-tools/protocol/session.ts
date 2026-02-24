@@ -65,10 +65,32 @@ export class DevToolsSession {
         return {
             targetId: this.targetId,
             type: "page",
-            title: this.browser.getCurrentURL() || "about:blank",
+            title: this.getDocumentTitle(),
             url: this.browser.getCurrentURL() || "about:blank",
             attached: this.attached,
         };
+    }
+
+    /**
+     * Try to get the document title from the DOM tree, falling back to the URL.
+     */
+    private getDocumentTitle(): string {
+        try {
+            const pipeline = this.browser.getRenderingPipeline();
+            const lastResult = (pipeline as { lastRenderResult?: any }).lastRenderResult as { dom?: { childNodes?: Array<{ nodeName: string; childNodes?: Array<{ nodeName: string; childNodes?: Array<{ nodeName: string; textContent?: string }> }> }> } } | undefined;
+            if (lastResult?.dom) {
+                // Walk DOM: html > head > title
+                const html = lastResult.dom.childNodes?.find((n) => n.nodeName === "HTML" || n.nodeName === "html");
+                const head = html?.childNodes?.find((n) => n.nodeName === "HEAD" || n.nodeName === "head");
+                const titleNode = head?.childNodes?.find((n) => n.nodeName === "TITLE" || n.nodeName === "title");
+                if (titleNode?.textContent) {
+                    return titleNode.textContent;
+                }
+            }
+        } catch {
+            // Fall through to URL fallback
+        }
+        return this.browser.getCurrentURL() || "about:blank";
     }
 
     /**

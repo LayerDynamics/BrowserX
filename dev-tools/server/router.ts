@@ -14,6 +14,7 @@ import type {
 } from "../protocol/types.ts";
 import { ProtocolErrorCode } from "../protocol/types.ts";
 import type { DomainRegistry } from "../protocol/domains.ts";
+import { DomainError } from "../protocol/domains.ts";
 
 /**
  * Protocol message router - dispatches incoming requests to the correct domain
@@ -67,41 +68,41 @@ export class Router {
         try {
             parsed = JSON.parse(data);
         } catch {
-            throw {
-                code: ProtocolErrorCode.PARSE_ERROR,
-                message: "Failed to parse JSON message",
-            };
+            throw new DomainError(
+                ProtocolErrorCode.PARSE_ERROR,
+                "Failed to parse JSON message",
+            );
         }
 
         if (typeof parsed !== "object" || parsed === null) {
-            throw {
-                code: ProtocolErrorCode.INVALID_REQUEST,
-                message: "Message must be a JSON object",
-            };
+            throw new DomainError(
+                ProtocolErrorCode.INVALID_REQUEST,
+                "Message must be a JSON object",
+            );
         }
 
         const msg = parsed as Record<string, unknown>;
 
         if (typeof msg.id !== "number") {
-            throw {
-                code: ProtocolErrorCode.INVALID_REQUEST,
-                message: 'Message must contain a numeric "id" field',
-            };
+            throw new DomainError(
+                ProtocolErrorCode.INVALID_REQUEST,
+                'Message must contain a numeric "id" field',
+            );
         }
 
         if (typeof msg.method !== "string") {
-            throw {
-                code: ProtocolErrorCode.INVALID_REQUEST,
-                message: 'Message must contain a string "method" field',
-            };
+            throw new DomainError(
+                ProtocolErrorCode.INVALID_REQUEST,
+                'Message must contain a string "method" field',
+            );
         }
 
         // Validate "Domain.method" format
         if (!msg.method.includes(".")) {
-            throw {
-                code: ProtocolErrorCode.INVALID_REQUEST,
-                message: `Invalid method format: "${msg.method}". Expected "Domain.method".`,
-            };
+            throw new DomainError(
+                ProtocolErrorCode.INVALID_REQUEST,
+                `Invalid method format: "${msg.method}". Expected "Domain.method".`,
+            );
         }
 
         const request: ProtocolRequest = {
@@ -111,16 +112,20 @@ export class Router {
 
         if (msg.params !== undefined) {
             if (typeof msg.params !== "object" || msg.params === null) {
-                throw {
-                    code: ProtocolErrorCode.INVALID_PARAMS,
-                    message: '"params" must be an object',
-                };
+                throw new DomainError(
+                    ProtocolErrorCode.INVALID_PARAMS,
+                    '"params" must be an object',
+                );
             }
             request.params = msg.params as Record<string, unknown>;
         }
 
         if (typeof msg.sessionId === "string") {
-            request.sessionId = msg.sessionId;
+            // Validate sessionId format: alphanumeric, hyphens, underscores only
+            if (/^[\w-]+$/.test(msg.sessionId)) {
+                request.sessionId = msg.sessionId;
+            }
+            // Invalid format — silently strip the sessionId
         }
 
         return request;

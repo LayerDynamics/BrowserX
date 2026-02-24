@@ -10,6 +10,20 @@ import { ProtocolErrorCode } from "./types.ts";
 import type { BaseDomain } from "../domains/base-domain.ts";
 
 /**
+ * Error class for domain-level protocol errors.
+ * Extends Error so that `instanceof Error` checks work and stack traces are preserved.
+ */
+export class DomainError extends Error {
+    readonly code: number;
+
+    constructor(code: number, message: string) {
+        super(message);
+        this.name = "DomainError";
+        this.code = code;
+    }
+}
+
+/**
  * Domain metadata
  */
 export interface DomainMetadata {
@@ -26,6 +40,7 @@ export interface DomainMetadata {
 export class DomainRegistry {
     private domains: Map<DomainName, BaseDomain> = new Map();
     private metadata: Map<DomainName, DomainMetadata> = new Map();
+    private disposed = false;
 
     /**
      * Register a domain agent with metadata
@@ -60,18 +75,18 @@ export class DomainRegistry {
 
         const domain = this.domains.get(domainName as DomainName);
         if (!domain) {
-            throw {
-                code: ProtocolErrorCode.METHOD_NOT_FOUND,
-                message: `Domain "${domainName}" not found`,
-            };
+            throw new DomainError(
+                ProtocolErrorCode.METHOD_NOT_FOUND,
+                `Domain "${domainName}" not found`,
+            );
         }
 
         // enable/disable don't require the domain to already be enabled
         if (methodName !== "enable" && methodName !== "disable" && !domain.isEnabled()) {
-            throw {
-                code: ProtocolErrorCode.DOMAIN_NOT_ENABLED,
-                message: `Domain "${domainName}" is not enabled. Call ${domainName}.enable first.`,
-            };
+            throw new DomainError(
+                ProtocolErrorCode.DOMAIN_NOT_ENABLED,
+                `Domain "${domainName}" is not enabled. Call ${domainName}.enable first.`,
+            );
         }
 
         return await domain.handleMethod(methodName, params);
@@ -107,6 +122,8 @@ export class DomainRegistry {
      * Dispose all domains
      */
     dispose(): void {
+        if (this.disposed) return;
+        this.disposed = true;
         for (const domain of this.domains.values()) {
             domain.dispose();
         }
@@ -115,15 +132,31 @@ export class DomainRegistry {
     }
 
     /**
+     * Validate that all domain dependencies are registered.
+     * Returns an array of error messages (empty if all dependencies are satisfied).
+     */
+    validateDependencies(): string[] {
+        const errors: string[] = [];
+        for (const [domain, meta] of this.metadata) {
+            for (const dep of meta.dependencies ?? []) {
+                if (!this.domains.has(dep)) {
+                    errors.push(`Domain "${domain}" depends on "${dep}" which is not registered`);
+                }
+            }
+        }
+        return errors;
+    }
+
+    /**
      * Parse "Domain.methodName" into [domainName, methodName]
      */
     private parseMethod(method: ProtocolMethod): [string, string] {
         const dotIndex = method.indexOf(".");
         if (dotIndex === -1) {
-            throw {
-                code: ProtocolErrorCode.INVALID_REQUEST,
-                message: `Invalid method format: "${method}". Expected "Domain.method".`,
-            };
+            throw new DomainError(
+                ProtocolErrorCode.INVALID_REQUEST,
+                `Invalid method format: "${method}". Expected "Domain.method".`,
+            );
         }
         return [method.substring(0, dotIndex), method.substring(dotIndex + 1)];
     }

@@ -15,6 +15,7 @@ import type {
     ProtocolMethod,
 } from "../protocol/types.ts";
 import type { EventBus } from "../integration/event-bus.ts";
+import type { DomainRegistry } from "../protocol/domains.ts";
 import type { Browser } from "../../browser/src/main.ts";
 import type { RequestPipeline } from "../../browser/src/engine/RequestPipeline.ts";
 import type { RenderingPipeline } from "../../browser/src/engine/RenderingPipeline.ts";
@@ -47,10 +48,28 @@ export abstract class BaseDomain {
     protected enabled: boolean = false;
 
     /** Initialization context with browser subsystem references */
-    protected context!: DomainInitContext;
+    private _context: DomainInitContext | undefined;
+
+    /** Access the initialization context, throwing if not yet initialized */
+    protected get context(): DomainInitContext {
+        if (!this._context) {
+            throw new Error(`Domain "${this.name}" not initialized — call initialize() before accessing context`);
+        }
+        return this._context;
+    }
+
+    protected set context(value: DomainInitContext) {
+        this._context = value;
+    }
 
     /** Event bus for cross-domain communication */
     protected eventBus: EventBus;
+
+    /** Domain registry for cross-domain resolution */
+    private _registry: DomainRegistry | null = null;
+
+    /** Cached result of getMethodNames() */
+    private _methodNamesCache: string[] | null = null;
 
     /** Registered methods: methodName -> definition */
     private methods: Map<string, MethodDefinition> = new Map();
@@ -63,6 +82,22 @@ export abstract class BaseDomain {
 
     constructor(eventBus: EventBus) {
         this.eventBus = eventBus;
+    }
+
+    /**
+     * Set the domain registry for cross-domain resolution.
+     * Called after all domains are registered.
+     */
+    setRegistry(registry: DomainRegistry): void {
+        this._registry = registry;
+    }
+
+    /**
+     * Resolve a sibling domain by name.
+     * Returns null if registry is not set or domain not found.
+     */
+    protected resolveDomain(name: DomainName): BaseDomain | null {
+        return this._registry?.getDomain(name) ?? null;
     }
 
     /**
@@ -108,6 +143,7 @@ export abstract class BaseDomain {
      */
     protected registerMethod(name: string, description: string, handler: MethodHandler): void {
         this.methods.set(name, { name, description, handler });
+        this._methodNamesCache = null; // Invalidate cache
     }
 
     /**
@@ -181,7 +217,10 @@ export abstract class BaseDomain {
      * Get all registered method names
      */
     getMethodNames(): string[] {
-        return ["enable", "disable", ...this.methods.keys()];
+        if (!this._methodNamesCache) {
+            this._methodNamesCache = ["enable", "disable", ...this.methods.keys()];
+        }
+        return this._methodNamesCache;
     }
 
     /**
@@ -192,12 +231,26 @@ export abstract class BaseDomain {
     }
 
     /**
+     * Get the last render result from the rendering pipeline.
+     * Centralizes the cast chain so every domain uses a single access pattern.
+     */
+    protected getLastRenderResult(): { dom?: any; cssom?: any; renderTree?: any; layoutTree?: any; displayList?: any; timing?: any; resources?: any[]; scriptExecutor?: any } | null {
+        try {
+            const pipeline = this.context.renderingPipeline;
+            return (pipeline as { lastRenderResult?: any }).lastRenderResult ?? null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * Cleanup resources
      */
     dispose(): void {
         this.eventListeners = [];
         this.methods.clear();
         this.events.clear();
+        this._methodNamesCache = null;
         this.enabled = false;
     }
 }

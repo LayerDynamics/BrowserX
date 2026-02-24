@@ -39,15 +39,17 @@ export class DevToolsServer {
     private config: DevToolsServerConfig;
     private browser: Browser;
     private registry: DomainRegistry;
+    private registryFactory: (() => DomainRegistry) | null;
     private connections: Map<string, DevToolsConnection> = new Map();
     private sessions: Map<string, DevToolsSession> = new Map();
     private server: Deno.HttpServer | null = null;
-    private connectionCounter: number = 0;
+
 
     constructor(
         browser: Browser,
         registry: DomainRegistry,
         config?: Partial<DevToolsServerConfig>,
+        registryFactory?: () => DomainRegistry,
     ) {
         this.config = {
             port: config?.port ?? 9222,
@@ -55,6 +57,7 @@ export class DevToolsServer {
         };
         this.browser = browser;
         this.registry = registry;
+        this.registryFactory = registryFactory ?? null;
     }
 
     /**
@@ -127,23 +130,42 @@ export class DevToolsServer {
      * DevToolsConnection to handle CDP protocol traffic.
      */
     private handleWebSocketUpgrade(request: Request): Response {
+        // Validate WebSocket upgrade header
+        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+            return new Response("Upgrade Required", { status: 426, headers: { "Connection": "Upgrade", "Upgrade": "websocket" } });
+        }
+
+        // Validate Origin header to prevent cross-origin WebSocket hijacking
+        const origin = request.headers.get("origin");
+        if (origin !== null && origin !== "devtools://devtools" && !origin.startsWith("chrome-devtools://")) {
+            // Allow null origin (direct WebSocket connections, CLI tools)
+            // Allow devtools:// and chrome-devtools:// origins
+            // Reject browser-initiated cross-origin requests
+            return new Response("Forbidden", { status: 403 });
+        }
+
         const url = new URL(request.url);
         const pathParts = url.pathname.split("/");
-        const targetId = pathParts[pathParts.length - 1] || "default";
+        const rawTargetId = pathParts[pathParts.length - 1] || "default";
+
+        // Sanitize targetId to prevent log injection
+        const targetId = /^[A-Za-z0-9_-]+$/.test(rawTargetId) ? rawTargetId : "default";
 
         // Upgrade to WebSocket
         const { socket, response } = Deno.upgradeWebSocket(request);
 
         // Generate unique connection and session IDs
-        this.connectionCounter++;
-        const connectionId = `conn-${this.connectionCounter}`;
-        const sessionId = `session-${this.connectionCounter}`;
+        const connectionId = `conn-${crypto.randomUUID()}`;
+        const sessionId = `session-${crypto.randomUUID()}`;
+
+        // Create a per-session domain registry (isolates domain state between clients)
+        const sessionRegistry = this.registryFactory ? this.registryFactory() : this.registry;
 
         // Create a new session for this connection
         const session = new DevToolsSession(
             sessionId,
             this.browser,
-            this.registry,
+            sessionRegistry,
         );
         session.attach();
         this.sessions.set(sessionId, session);
@@ -247,8 +269,8 @@ export class DevToolsServer {
             "Browser": "BrowserX/1.0.0",
             "Protocol-Version": "1.3",
             "User-Agent": "BrowserX/1.0.0",
-            "V8-Version": "0.0.0",
-            "WebKit-Version": "0.0.0",
+            "V8-Version": "12.9.202.13",
+            "WebKit-Version": "537.36",
             "webSocketDebuggerUrl": `ws://${host}/devtools/browser`,
         };
 
@@ -331,13 +353,13 @@ export class DevToolsServer {
         console.log("Stopping DevTools server...");
 
         // Close all active connections
-        for (const [id, connection] of this.connections) {
+        for (const [id, connection] of Array.from(this.connections)) {
             connection.close();
             this.connections.delete(id);
         }
 
         // Dispose all sessions
-        for (const [id, session] of this.sessions) {
+        for (const [id, session] of Array.from(this.sessions)) {
             session.dispose();
             this.sessions.delete(id);
         }

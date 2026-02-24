@@ -8,6 +8,9 @@
 import { assertEquals, assertRejects, assertExists } from "@std/assert";
 import { EventBus } from "../../../integration/event-bus.ts";
 import { CSSDomain } from "../../../domains/css/css-domain.ts";
+import { DomainRegistry } from "../../../protocol/domains.ts";
+import { BaseDomain } from "../../../domains/base-domain.ts";
+import type { DomainName } from "../../../protocol/types.ts";
 import {
     createMockContext,
     createMockElement,
@@ -17,6 +20,36 @@ import {
     resetNodeIdCounter,
 } from "../../helpers/mocks.ts";
 import type { ProtocolEvent } from "../../../protocol/types.ts";
+import type { DOMNode } from "../../../../browser/src/types/dom.ts";
+
+/**
+ * Helper: create a mock DOMDomain with a nodeMap and wire it into a registry with the CSSDomain
+ */
+function wireRegistryWithMockDOM(
+    domain: CSSDomain,
+    eventBus: EventBus,
+    nodes: Map<number, unknown>,
+): DomainRegistry {
+    // Create a minimal mock DOMDomain that implements getNodeById
+    const mockDomDomain = Object.assign(Object.create(BaseDomain.prototype), {
+        name: "DOM" as DomainName,
+        enabled: false,
+        eventBus,
+        _context: undefined,
+        _registry: null,
+        getNodeById(nodeId: number): unknown {
+            return nodes.get(nodeId) ?? null;
+        },
+        setup() {},
+        dispose() {},
+    }) as BaseDomain & { getNodeById(nodeId: number): unknown };
+
+    const registry = new DomainRegistry();
+    registry.register(mockDomDomain, { name: "DOM", description: "mock", version: "1.0" });
+    registry.register(domain, { name: "CSS", description: "mock", version: "1.0" });
+    domain.setRegistry(registry);
+    return registry;
+}
 
 /**
  * Helper: create a mock stylesheet
@@ -145,13 +178,9 @@ Deno.test("CSSDomain - getComputedStyleForNode() returns computed styles via pro
     const context = createMockContext({ eventBus, renderingPipeline: pipeline });
     domain.initialize(context);
 
-    // Hook up the dom:getNode event so CSSDomain can look up nodes
-    eventBus.on("dom:getNode", (data: unknown) => {
-        const req = data as { nodeId: number; callback: (node: unknown) => void };
-        if (req.nodeId === div.nodeId) {
-            req.callback(div);
-        }
-    });
+    // Wire registry so CSSDomain can resolve DOMDomain.getNodeById
+    const nodeMap = new Map<number, unknown>([[div.nodeId, div]]);
+    wireRegistryWithMockDOM(domain, eventBus, nodeMap);
 
     await domain.enable();
 
@@ -208,12 +237,7 @@ Deno.test("CSSDomain - getMatchedStylesForNode() returns matched styles", async 
     const context = createMockContext({ eventBus, renderingPipeline: pipeline });
     domain.initialize(context);
 
-    eventBus.on("dom:getNode", (data: unknown) => {
-        const req = data as { nodeId: number; callback: (node: unknown) => void };
-        if (req.nodeId === div.nodeId) {
-            req.callback(div);
-        }
-    });
+    wireRegistryWithMockDOM(domain, eventBus, new Map([[div.nodeId, div]]));
 
     await domain.enable();
 
@@ -241,12 +265,7 @@ Deno.test("CSSDomain - getMatchedStylesForNode() parses inline style attribute",
     const context = createMockContext({ eventBus, renderingPipeline: pipeline });
     domain.initialize(context);
 
-    eventBus.on("dom:getNode", (data: unknown) => {
-        const req = data as { nodeId: number; callback: (node: unknown) => void };
-        if (req.nodeId === div.nodeId) {
-            req.callback(div);
-        }
-    });
+    wireRegistryWithMockDOM(domain, eventBus, new Map([[div.nodeId, div]]));
 
     await domain.enable();
 
@@ -434,12 +453,7 @@ Deno.test("CSSDomain - getComputedStyleForNode with getPropertyNames API", async
     const context = createMockContext({ eventBus, renderingPipeline: pipeline });
     domain.initialize(context);
 
-    eventBus.on("dom:getNode", (data: unknown) => {
-        const req = data as { nodeId: number; callback: (node: unknown) => void };
-        if (req.nodeId === div.nodeId) {
-            req.callback(div);
-        }
-    });
+    wireRegistryWithMockDOM(domain, eventBus, new Map([[div.nodeId, div]]));
 
     await domain.enable();
 
@@ -484,12 +498,7 @@ Deno.test("CSSDomain - getMatchedStylesForNode with no inline style returns unde
     const context = createMockContext({ eventBus, renderingPipeline: pipeline });
     domain.initialize(context);
 
-    eventBus.on("dom:getNode", (data: unknown) => {
-        const req = data as { nodeId: number; callback: (node: unknown) => void };
-        if (req.nodeId === div.nodeId) {
-            req.callback(div);
-        }
-    });
+    wireRegistryWithMockDOM(domain, eventBus, new Map([[div.nodeId, div]]));
 
     await domain.enable();
 

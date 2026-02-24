@@ -7,6 +7,7 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import type { ScriptExecutor} from "../../../browser/src/engine/javascript/ScriptExecutor.ts";
 import type {
     RemoteObject,
     RemoteObjectID,
@@ -96,9 +97,8 @@ export class RuntimeDomain extends BaseDomain {
      * Store a value as a remote object
      */
     private storeRemoteObject(value: unknown, group?: string): RemoteObject {
-        const objectId = `obj-${++this.objectIdCounter}`;
-
         if (value !== null && value !== undefined && typeof value === "object") {
+            const objectId = `obj-${++this.objectIdCounter}`;
             this.remoteObjects.set(objectId, value);
             if (group) {
                 if (!this.objectGroups.has(group)) {
@@ -106,9 +106,10 @@ export class RuntimeDomain extends BaseDomain {
                 }
                 this.objectGroups.get(group)!.add(objectId);
             }
+            return this.serializeValue(value, objectId);
         }
 
-        return this.serializeValue(value, objectId);
+        return this.serializeValue(value);
     }
 
     /**
@@ -303,22 +304,46 @@ export class RuntimeDomain extends BaseDomain {
     private async evaluate(params: EvaluateParams): Promise<EvaluateResult> {
         try {
             // Try to use ScriptExecutor if available from the rendering pipeline
-            const pipeline = this.context.renderingPipeline;
-            type ScriptExecutorLike = { execute: (code: string) => unknown };
-            let scriptExecutor: ScriptExecutorLike | null = null;
+            const lastResult = this.getLastRenderResult();
+            const scriptExecutor: ScriptExecutor | undefined = lastResult?.scriptExecutor;
 
-            // Access lastRenderResult directly (same pattern as DebuggerDomain.getScriptSource)
-            const lastResult = (pipeline as unknown as Record<string, unknown>).lastRenderResult;
-            if (lastResult && typeof lastResult === "object" && "scriptExecutor" in lastResult) {
-                scriptExecutor = (lastResult as Record<string, unknown>).scriptExecutor as ScriptExecutorLike;
+            if (!scriptExecutor) {
+                // No script executor available — page has not been rendered yet
+                return {
+                    result: { type: "undefined" } as RemoteObject,
+                    exceptionDetails: {
+                        exceptionId: ++this.exceptionCounter,
+                        text: "Script execution unavailable: page has not been rendered yet",
+                        lineNumber: 0,
+                        columnNumber: 0,
+                    },
+                };
             }
 
-            let value: unknown;
-            if (scriptExecutor) {
-                value = scriptExecutor.execute(params.expression);
-            } else {
-                // Fallback: evaluate in current context
-                value = undefined;
+            let value: unknown = scriptExecutor.execute(params.expression);
+
+            // Handle awaitPromise: wait for the result if it's a Promise
+            if (params.awaitPromise && value instanceof Promise) {
+                if (params.timeout && params.timeout > 0) {
+                    value = await Promise.race([
+                        value,
+                        new Promise((_, reject) =>
+                            setTimeout(() => reject(new Error("Evaluation timed out")), params.timeout)
+                        ),
+                    ]);
+                } else {
+                    value = await value;
+                }
+            }
+
+            // Handle returnByValue: serialize to JSON-safe value
+            if (params.returnByValue && value !== undefined && value !== null) {
+                try {
+                    const jsonValue = JSON.parse(JSON.stringify(value));
+                    return { result: { type: typeof jsonValue, value: jsonValue } as RemoteObject };
+                } catch {
+                    // If not serializable, fall through to normal path
+                }
             }
 
             const remoteObj = this.storeRemoteObject(value, params.objectGroup);
@@ -346,18 +371,41 @@ export class RuntimeDomain extends BaseDomain {
 
         const properties: GetPropertiesResult["result"] = [];
         const target = obj as Record<string, unknown>;
+        const ownOnly = params.ownProperties ?? true;
+        const accessorOnly = params.accessorPropertiesOnly ?? false;
 
-        for (const key of Object.keys(target)) {
-            const value = target[key];
+        // Collect property names: own only or include prototype chain
+        const keys = ownOnly
+            ? Object.getOwnPropertyNames(target)
+            : (() => {
+                const allKeys = new Set<string>();
+                const MAX_PROTO_DEPTH = 20;
+                let current: object | null = target;
+                let depth = 0;
+                while (current && depth < MAX_PROTO_DEPTH) {
+                    for (const k of Object.getOwnPropertyNames(current)) allKeys.add(k);
+                    current = Object.getPrototypeOf(current);
+                    depth++;
+                }
+                return Array.from(allKeys);
+            })();
+
+        for (const key of keys) {
             const descriptor = Object.getOwnPropertyDescriptor(target, key);
+            const isOwn = Object.prototype.hasOwnProperty.call(target, key);
+            const isAccessor = descriptor ? ("get" in descriptor || "set" in descriptor) : false;
 
+            // If accessorPropertiesOnly, skip non-accessor properties
+            if (accessorOnly && !isAccessor) continue;
+
+            const value = target[key];
             properties.push({
                 name: key,
                 value: this.storeRemoteObject(value),
                 writable: descriptor?.writable ?? true,
                 configurable: descriptor?.configurable ?? true,
                 enumerable: descriptor?.enumerable ?? true,
-                isOwn: true,
+                isOwn,
             });
         }
 
@@ -381,7 +429,14 @@ export class RuntimeDomain extends BaseDomain {
     }
 
     private async getHeapUsage(): Promise<GetHeapUsageResult> {
-        // Try to get stats from V8Isolate
+        // Try to get heap stats from V8Isolate via ScriptExecutor
+        const lastResult = this.getLastRenderResult();
+        const executor = lastResult?.scriptExecutor;
+        if (executor) {
+            const isolate = executor.getIsolate();
+            const stats = isolate.getHeapStatistics();
+            return { usedSize: stats.totalAllocated, totalSize: stats.totalSize };
+        }
         return {
             usedSize: 0,
             totalSize: 0,

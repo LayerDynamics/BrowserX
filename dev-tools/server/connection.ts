@@ -28,6 +28,7 @@ export class DevToolsConnection {
     private closed: boolean = false;
     private eventListener: (event: ProtocolEvent) => void;
     private subscribedDomains: Set<BaseDomain> = new Set();
+    private readonly textDecoder = new TextDecoder();
 
     constructor(
         id: string,
@@ -46,15 +47,10 @@ export class DevToolsConnection {
         };
 
         // Set up WebSocket event handlers
-        this.socket.onopen = () => {
-            console.log(`DevTools connection ${this.id}: opened`);
-            this.subscribeToAllDomains();
-        };
-
         this.socket.onmessage = (event: MessageEvent) => {
             const data = typeof event.data === "string"
                 ? event.data
-                : new TextDecoder().decode(event.data as ArrayBuffer);
+                : this.textDecoder.decode(event.data as ArrayBuffer);
             this.handleMessage(data);
         };
 
@@ -68,11 +64,8 @@ export class DevToolsConnection {
             this.cleanup();
         };
 
-        // If the socket is already open (possible with Deno.upgradeWebSocket),
-        // subscribe immediately
-        if (this.socket.readyState === WebSocket.OPEN) {
-            this.subscribeToAllDomains();
-        }
+        // Subscribe immediately — Deno.upgradeWebSocket returns an already-open socket
+        this.subscribeToAllDomains();
     }
 
     /**
@@ -81,8 +74,25 @@ export class DevToolsConnection {
      * Parses the raw JSON via the router, routes to the correct domain,
      * and sends the response back over the socket.
      */
+    /** Maximum message size in bytes (1 MB) */
+    private static readonly MAX_MESSAGE_SIZE = 1_048_576;
+
     private async handleMessage(data: string): Promise<void> {
         try {
+            if (data.length > DevToolsConnection.MAX_MESSAGE_SIZE) {
+                const errorResponse = {
+                    id: 0,
+                    error: {
+                        code: ProtocolErrorCode.PARSE_ERROR,
+                        message: `Message too large: ${data.length} bytes exceeds ${DevToolsConnection.MAX_MESSAGE_SIZE} byte limit`,
+                    },
+                };
+                if (!this.closed) {
+                    this.socket.send(JSON.stringify(errorResponse));
+                }
+                return;
+            }
+
             const request = this.router.parseMessage(data);
             const response = await this.router.route(request);
             const serialized = this.router.serialize(response);

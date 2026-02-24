@@ -84,7 +84,7 @@ Deno.test("DebuggerDomain: enable() emits scriptParsed for pre-registered script
     const { domain, events } = setup();
 
     // Register a script before enabling
-    domain.registerScript("https://example.com/app.js", "console.log('hello');");
+    await domain.registerScript("https://example.com/app.js", "console.log('hello');");
 
     await domain.enable();
 
@@ -109,7 +109,7 @@ Deno.test("DebuggerDomain: registerScript() registers and emits event when enabl
     // Clear events from enable
     events.length = 0;
 
-    const scriptId = domain.registerScript(
+    const scriptId = await domain.registerScript(
         "https://example.com/main.js",
         "function foo() {\n  return 42;\n}\n",
     );
@@ -123,11 +123,11 @@ Deno.test("DebuggerDomain: registerScript() registers and emits event when enabl
     assertEquals(parsed.params?.endLine, 3);
 });
 
-Deno.test("DebuggerDomain: registerScript() does not emit event when disabled", () => {
+Deno.test("DebuggerDomain: registerScript() does not emit event when disabled", async () => {
     const { domain, events } = setup();
     // Domain is not enabled
 
-    const scriptId = domain.registerScript("https://example.com/lib.js", "var x = 1;");
+    const scriptId = await domain.registerScript("https://example.com/lib.js", "var x = 1;");
     assertExists(scriptId);
 
     const parsed = events.find((e) => e.method === "Debugger.scriptParsed");
@@ -142,7 +142,7 @@ Deno.test("DebuggerDomain: setBreakpoint() returns breakpointId and location", a
     const { domain } = setup();
     await domain.enable();
 
-    const scriptId = domain.registerScript("https://example.com/app.js", "line1\nline2\nline3\n");
+    const scriptId = await domain.registerScript("https://example.com/app.js", "line1\nline2\nline3\n");
 
     const result = await domain.handleMethod("setBreakpoint", {
         location: { scriptId, lineNumber: 2, columnNumber: 0 },
@@ -162,7 +162,7 @@ Deno.test("DebuggerDomain: setBreakpoint() emits breakpointResolved event", asyn
     await domain.enable();
     events.length = 0;
 
-    const scriptId = domain.registerScript("https://example.com/app.js", "x\ny\nz\n");
+    const scriptId = await domain.registerScript("https://example.com/app.js", "x\ny\nz\n");
     events.length = 0;
 
     await domain.handleMethod("setBreakpoint", {
@@ -182,7 +182,7 @@ Deno.test("DebuggerDomain: setBreakpointByUrl() returns breakpointId and locatio
     const { domain } = setup();
     await domain.enable();
 
-    domain.registerScript("https://example.com/app.js", "a\nb\nc\n");
+    await domain.registerScript("https://example.com/app.js", "a\nb\nc\n");
 
     const result = await domain.handleMethod("setBreakpointByUrl", {
         url: "https://example.com/app.js",
@@ -217,7 +217,7 @@ Deno.test("DebuggerDomain: removeBreakpoint() removes existing breakpoint", asyn
     const { domain } = setup();
     await domain.enable();
 
-    const scriptId = domain.registerScript("https://example.com/app.js", "a\nb\n");
+    const scriptId = await domain.registerScript("https://example.com/app.js", "a\nb\n");
 
     const setResult = await domain.handleMethod("setBreakpoint", {
         location: { scriptId, lineNumber: 0 },
@@ -249,7 +249,7 @@ Deno.test("DebuggerDomain: getScriptSource() returns source for registered scrip
     const { domain } = setup();
     await domain.enable();
 
-    const scriptId = domain.registerScript("https://example.com/app.js", "var x = 42;");
+    const scriptId = await domain.registerScript("https://example.com/app.js", "var x = 42;");
 
     const result = await domain.handleMethod("getScriptSource", { scriptId });
     assertExists(result.scriptSource);
@@ -437,7 +437,7 @@ Deno.test("DebuggerDomain: getPossibleBreakpoints() returns locations for known 
     const { domain } = setup();
     await domain.enable();
 
-    const scriptId = domain.registerScript(
+    const scriptId = await domain.registerScript(
         "https://example.com/app.js",
         "line1\nline2\nline3\nline4\nline5\n",
     );
@@ -501,7 +501,7 @@ Deno.test("DebuggerDomain: triggerBreakpoint() emits paused event with correct d
     const { domain, events } = setup();
     await domain.enable();
 
-    const scriptId = domain.registerScript("https://example.com/app.js", "a\nb\n");
+    const scriptId = await domain.registerScript("https://example.com/app.js", "a\nb\n");
 
     const setResult = await domain.handleMethod("setBreakpoint", {
         location: { scriptId, lineNumber: 1 },
@@ -536,11 +536,11 @@ Deno.test("DebuggerDomain: triggerBreakpoint() emits paused event with correct d
     assertEquals(hitBreakpoints[0], breakpointId);
 });
 
-Deno.test("DebuggerDomain: triggerBreakpoint() does nothing when domain is disabled", () => {
+Deno.test("DebuggerDomain: triggerBreakpoint() does nothing when domain is disabled", async () => {
     const { domain, events } = setup();
     // Domain is NOT enabled
 
-    domain.registerScript("https://example.com/app.js", "a\n");
+    await domain.registerScript("https://example.com/app.js", "a\n");
     // We can't call handleMethod since domain is not enabled, so just trigger directly
     domain.triggerBreakpoint("bp-nonexistent", []);
 
@@ -584,7 +584,7 @@ Deno.test("DebuggerDomain: dispose() cleans up all state", async () => {
     const { domain } = setup();
     await domain.enable();
 
-    domain.registerScript("https://example.com/app.js", "code");
+    await domain.registerScript("https://example.com/app.js", "code");
     await domain.handleMethod("setBreakpoint", {
         location: { scriptId: "script-1", lineNumber: 0 },
     });

@@ -80,7 +80,7 @@ export class RenderingDomain extends BaseDomain {
         await super.enable();
 
         // Emit initial rendering stats if a render result is available
-        const lastResult = this.context.renderingPipeline.lastRenderResult;
+        const lastResult = this.getLastRenderResult();
         if (lastResult) {
             this.emitEvent("renderingStatsUpdated", {
                 timing: this.extractTimingInfo(lastResult.timing),
@@ -105,7 +105,7 @@ export class RenderingDomain extends BaseDomain {
      * Get the render tree serialized as RenderTreeNode hierarchy
      */
     private async getRenderTree(): Promise<GetRenderTreeResult> {
-        const lastResult = this.context.renderingPipeline.lastRenderResult;
+        const lastResult = this.getLastRenderResult();
 
         if (!lastResult || !lastResult.renderTree) {
             return { root: null };
@@ -124,7 +124,7 @@ export class RenderingDomain extends BaseDomain {
      * Get the layout tree serialized as LayoutTreeNode hierarchy
      */
     private async getLayoutTree(): Promise<GetLayoutTreeResult> {
-        const lastResult = this.context.renderingPipeline.lastRenderResult;
+        const lastResult = this.getLastRenderResult();
 
         if (!lastResult || !lastResult.layoutTree) {
             return { root: null };
@@ -142,7 +142,7 @@ export class RenderingDomain extends BaseDomain {
      * Get the display list as serialized paint commands
      */
     private async getDisplayList(): Promise<GetDisplayListResult> {
-        const lastResult = this.context.renderingPipeline.lastRenderResult;
+        const lastResult = this.getLastRenderResult();
 
         if (!lastResult || !lastResult.displayList) {
             return { commands: [] };
@@ -150,7 +150,7 @@ export class RenderingDomain extends BaseDomain {
 
         try {
             const rawCommands = lastResult.displayList.getCommands();
-            const commands: DisplayListEntry[] = rawCommands.map((cmd) => {
+            const commands: DisplayListEntry[] = rawCommands.map((cmd: PaintCommand) => {
                 return this.serializePaintCommand(cmd);
             });
             return { commands };
@@ -199,7 +199,7 @@ export class RenderingDomain extends BaseDomain {
      * Get rendering timing breakdown
      */
     private async getRenderingTiming(): Promise<GetRenderingTimingResult> {
-        const lastResult = this.context.renderingPipeline.lastRenderResult;
+        const lastResult = this.getLastRenderResult();
 
         if (!lastResult || !lastResult.timing) {
             return {
@@ -322,17 +322,22 @@ export class RenderingDomain extends BaseDomain {
 
         const childBoxes = layoutBox.children || [];
 
+        // Use DOM nodeId directly when available; fall back to synthetic ID
+        const effectiveNodeId = layoutBox.nodeId ?? nodeId;
+
         const node: LayoutTreeNode = {
-            nodeId,
+            nodeId: effectiveNodeId,
             box,
             childCount: childBoxes.length,
         };
 
         // Recursively serialize children
         if (childBoxes.length > 0) {
-            node.children = childBoxes.map((child, index) =>
-                this.serializeLayoutBox(child, nodeId * 1000 + index + 1)
-            );
+            node.children = childBoxes.map((child, index) => {
+                // Synthetic fallback: parent synthetic ID * 1000 + index + 1
+                const syntheticChildId = effectiveNodeId * 1000 + index + 1;
+                return this.serializeLayoutBox(child, syntheticChildId);
+            });
         }
 
         return node;
@@ -398,7 +403,7 @@ export class RenderingDomain extends BaseDomain {
             htmlParse: timing.htmlParse,
             cssParse: timing.cssParse,
             styleResolution: timing.styleResolution,
-            renderTreeBuild: timing.styleResolution, // Render tree build is part of style resolution phase
+            renderTreeBuild: 0, // Not separately tracked in RenderingTiming; included in styleResolution
             layout: timing.layoutComputation,
             paint: timing.paintRecording,
             composite: timing.compositing,

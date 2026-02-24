@@ -184,12 +184,13 @@ export class NetworkDomain extends BaseDomain {
         const tracked = this.trackedRequests.get(requestId);
         if (!tracked) return;
 
-        tracked.endTime = Date.now();
+        const now = Date.now();
+        tracked.endTime = now;
 
         if (this.enabled) {
             this.emitEvent("loadingFailed", {
                 requestId,
-                timestamp: Date.now() / 1000,
+                timestamp: now / 1000,
                 type: tracked.resourceType,
                 errorText,
                 canceled: false,
