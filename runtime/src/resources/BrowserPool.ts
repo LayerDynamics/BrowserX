@@ -65,6 +65,7 @@ interface AcquisitionOptions {
  * Manages browser instances with pooling and lifecycle management.
  */
 export class BrowserPool {
+  readonly componentId: ComponentId = "browser-pool";
   private instances: Map<string, BrowserInstance> = new Map();
   private config: BrowserPoolConfig;
   private eventCoordinator?: EventCoordinator;
@@ -79,6 +80,9 @@ export class BrowserPool {
   private totalErrors = 0;
   private lifetimes: number[] = [];
   private useCounts: number[] = [];
+
+  // Promise-based waiter queue (replaces busy-wait polling)
+  private waiters: Array<{ resolve: (id: string) => void; reject: (err: Error) => void; timer: number }> = [];
 
   constructor(
     config: BrowserPoolConfig,
@@ -167,6 +171,8 @@ export class BrowserPool {
     this.instances.set(id, instance);
     this.totalCreated++;
 
+    this.emitEvent({ type: "pool_instance_created", instanceId: id });
+
     return instance;
   }
 
@@ -175,42 +181,61 @@ export class BrowserPool {
    */
   async acquire(options: AcquisitionOptions = {}): Promise<BrowserInstance> {
     const timeout = options.timeout ?? 30000;
-    const startTime = Date.now();
 
-    while (Date.now() - startTime < timeout) {
-      // Try to get an idle instance
-      for (const instance of this.instances.values()) {
-        if (instance.state === "idle") {
-          instance.state = "in_use";
-          instance.lastUsedAt = Date.now();
-          instance.useCount++;
-
-          if (options.url) {
-            instance.currentUrl = options.url;
-          }
-
-          return instance;
-        }
+    // Try to get an idle instance immediately
+    for (const instance of this.instances.values()) {
+      if (instance.state === "idle") {
+        return this.markInUse(instance, options.url);
       }
-
-      // No idle instance available - try to create new one
-      if (this.instances.size < this.config.maxInstances) {
-        const instance = await this.createInstance();
-        instance.state = "in_use";
-        instance.useCount++;
-
-        if (options.url) {
-          instance.currentUrl = options.url;
-        }
-
-        return instance;
-      }
-
-      // Pool exhausted - wait a bit and retry
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
-    throw new Error("Failed to acquire browser instance: pool exhausted and timeout reached");
+    // No idle instance available - try to create new one
+    if (this.instances.size < this.config.maxInstances) {
+      const instance = await this.createInstance();
+      return this.markInUse(instance, options.url);
+    }
+
+    // Pool exhausted - wait for a release with timeout
+    return new Promise<BrowserInstance>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        // Remove this waiter from queue on timeout
+        const idx = this.waiters.findIndex((w) => w.timer === timer);
+        if (idx !== -1) {
+          this.waiters.splice(idx, 1);
+        }
+        reject(new Error("Failed to acquire browser instance: pool exhausted and timeout reached"));
+      }, timeout);
+
+      this.waiters.push({
+        resolve: (instanceId: string) => {
+          clearTimeout(timer);
+          const instance = this.instances.get(instanceId);
+          if (instance) {
+            resolve(this.markInUse(instance, options.url));
+          } else {
+            reject(new Error("Released instance no longer exists"));
+          }
+        },
+        reject: (err: Error) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+        timer,
+      });
+    });
+  }
+
+  private markInUse(instance: BrowserInstance, url?: string): BrowserInstance {
+    instance.state = "in_use";
+    instance.lastUsedAt = Date.now();
+    instance.useCount++;
+    if (url) {
+      instance.currentUrl = url;
+    }
+
+    this.emitEvent({ type: "pool_instance_acquired", instanceId: instance.id, url });
+
+    return instance;
   }
 
   /**
@@ -234,7 +259,16 @@ export class BrowserPool {
     // Check if instance exceeded max lifetime
     const lifetime = Date.now() - instance.createdAt;
     if (lifetime > this.config.maxLifetime) {
-      this.closeInstance(instanceId, "max_lifetime_exceeded");
+      this.closeInstance(instanceId, "max_lifetime_exceeded").catch((error) => {
+        console.error(`[BrowserPool] Error closing expired instance ${instanceId}:`, error);
+      });
+      return;
+    }
+
+    // Check if any waiters are queued - hand instance directly to first waiter
+    if (this.waiters.length > 0) {
+      const waiter = this.waiters.shift()!;
+      waiter.resolve(instanceId);
       return;
     }
 
@@ -242,6 +276,8 @@ export class BrowserPool {
     instance.state = "idle";
     instance.lastUsedAt = Date.now();
     instance.currentUrl = undefined;
+
+    this.emitEvent({ type: "pool_instance_released", instanceId });
   }
 
   /**
@@ -257,6 +293,12 @@ export class BrowserPool {
     instance.state = "closing";
 
     try {
+      // Close browser engine if present
+      const engine = instance.browserEngine as { close?: () => void };
+      if (engine && typeof engine.close === 'function') {
+        engine.close();
+      }
+
       // Stop event loop if present
       if (instance.eventLoopHandle) {
         instance.eventLoopHandle.stop();
@@ -276,11 +318,19 @@ export class BrowserPool {
       instance.state = "closed";
       this.instances.delete(instanceId);
       this.totalClosed++;
+
+      this.emitEvent({ type: "pool_instance_closed", instanceId, reason });
     } catch (error) {
       instance.state = "error";
       instance.error = error instanceof Error ? error : new Error(String(error));
       this.totalErrors++;
       console.error(`[BrowserPool] Error closing instance ${instanceId}:`, error);
+
+      this.emitEvent({
+        type: "pool_instance_error",
+        instanceId,
+        error: instance.error,
+      });
     }
   }
 
@@ -356,6 +406,13 @@ export class BrowserPool {
     if (!this.started) {
       return;
     }
+
+    // Reject all pending waiters
+    for (const waiter of this.waiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("Pool stopped"));
+    }
+    this.waiters = [];
 
     // Stop cleanup intervals
     this.stopCleanupIntervals();
@@ -470,7 +527,20 @@ export class BrowserPool {
    * Generate a unique instance ID
    */
   private generateInstanceId(): string {
-    return `browser_${Date.now()}_${crypto.randomUUID().slice(0, 9)}`;
+    return crypto.randomUUID();
+  }
+
+  /**
+   * Emit event to all listeners
+   */
+  private emitEvent(event: RuntimeEvent): void {
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Ignore listener errors
+      }
+    }
   }
 
   /**

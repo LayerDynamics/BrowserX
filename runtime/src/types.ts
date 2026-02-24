@@ -66,7 +66,16 @@ export type RuntimeEvent =
   | { type: "plugin_error"; pluginId: string; error: Error }
   | { type: "session_created"; sessionId: string; instanceId: string }
   | { type: "session_closed"; sessionId: string; instanceId: string; reason: string }
-  | { type: "session_expired"; sessionId: string; instanceId: string };
+  | { type: "session_expired"; sessionId: string; instanceId: string }
+  | { type: "pool_instance_created"; instanceId: string }
+  | { type: "pool_instance_acquired"; instanceId: string; url?: string }
+  | { type: "pool_instance_released"; instanceId: string }
+  | { type: "pool_instance_closed"; instanceId: string; reason: string }
+  | { type: "pool_instance_error"; instanceId: string; error: Error }
+  | { type: "metrics_counter_changed"; name: string; value: number }
+  | { type: "metrics_gauge_changed"; name: string; value: number }
+  | { type: "metrics_server_started"; port: number; hostname: string }
+  | { type: "metrics_server_stopped" };
 
 /**
  * Runtime event listener callback

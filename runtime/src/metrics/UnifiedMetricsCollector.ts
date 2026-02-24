@@ -174,6 +174,8 @@ export class UnifiedMetricsCollector {
     try {
       this.metricsServer = Deno.serve({ port, hostname }, handler);
       console.log(`[Metrics] Server listening on http://${hostname}:${port}/metrics`);
+
+      this.emitEvent({ type: "metrics_server_started", port, hostname });
     } catch (error) {
       console.error("[Metrics] Failed to start metrics server:", error);
     }
@@ -194,6 +196,8 @@ export class UnifiedMetricsCollector {
         console.error("[Metrics] Error stopping metrics server:", error);
       }
       this.metricsServer = undefined;
+
+      this.emitEvent({ type: "metrics_server_stopped" });
     }
 
     this.started = false;
@@ -205,7 +209,10 @@ export class UnifiedMetricsCollector {
   incrementCounter(name: string, value = 1, labels?: Record<string, string>): void {
     const key = this.getMetricKey(name, labels);
     const current = this.counters.get(key) ?? 0;
-    this.counters.set(key, current + value);
+    const newValue = current + value;
+    this.counters.set(key, newValue);
+
+    this.emitEvent({ type: "metrics_counter_changed", name: key, value: newValue });
   }
 
   /**
@@ -214,6 +221,8 @@ export class UnifiedMetricsCollector {
   setGauge(name: string, value: number, labels?: Record<string, string>): void {
     const key = this.getMetricKey(name, labels);
     this.gauges.set(key, value);
+
+    this.emitEvent({ type: "metrics_gauge_changed", name: key, value });
   }
 
   /**
@@ -464,6 +473,57 @@ export class UnifiedMetricsCollector {
    */
   isRunning(): boolean {
     return this.started;
+  }
+
+  /**
+   * Update metrics from runtime stats snapshot
+   */
+  updateFromRuntimeStats(stats: RuntimeStats): void {
+    this.updateRuntimeState(stats.state);
+    this.updateUptime(stats.uptime);
+    this.updateFromMemoryStats(stats.memory);
+    this.updateFromResourceStats(stats.resources);
+    this.updateFromQueryStats(stats.queries);
+  }
+
+  /**
+   * Update metrics from memory stats
+   */
+  updateFromMemoryStats(memory: MemoryStats): void {
+    this.setGauge("browserx_memory_heap_used_bytes", memory.heapUsed);
+    this.setGauge("browserx_memory_heap_total_bytes", memory.heapTotal);
+    this.setGauge("browserx_memory_rss_bytes", memory.rss);
+  }
+
+  /**
+   * Update metrics from resource stats
+   */
+  updateFromResourceStats(resources: ResourceStats): void {
+    this.setGauge("browserx_browser_instances", resources.browserInstances);
+    this.setGauge("browserx_active_sessions", resources.activeSessions);
+  }
+
+  /**
+   * Update metrics from query stats
+   */
+  updateFromQueryStats(queries: QueryStats): void {
+    this.setGauge("browserx_queries_active", queries.active);
+    this.counters.set("browserx_queries_total", queries.total);
+    this.counters.set("browserx_queries_successful", queries.successful);
+    this.counters.set("browserx_queries_failed", queries.failed);
+  }
+
+  /**
+   * Emit event to all listeners
+   */
+  private emitEvent(event: RuntimeEvent): void {
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Ignore listener errors
+      }
+    }
   }
 
   /**
