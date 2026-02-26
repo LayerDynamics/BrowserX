@@ -2089,10 +2089,10 @@ Deno.test("navigator - navigator global is an object", () => {
   context.dispose();
 });
 
-Deno.test("navigator - userAgent is GeoProx-Browser/1.0", () => {
+Deno.test("navigator - userAgent is BrowserX/1.0", () => {
   const { context } = setup();
   const nav = getProperty(context.global, "navigator")!;
-  assertEquals(jsStr(getProperty(nav, "userAgent")!), "GeoProx-Browser/1.0");
+  assertEquals(jsStr(getProperty(nav, "userAgent")!), "BrowserX/1.0");
   context.dispose();
 });
 
@@ -2103,10 +2103,10 @@ Deno.test("navigator - language is en-US", () => {
   context.dispose();
 });
 
-Deno.test("navigator - platform is GeoProx", () => {
+Deno.test("navigator - platform is BrowserX", () => {
   const { context } = setup();
   const nav = getProperty(context.global, "navigator")!;
-  assertEquals(jsStr(getProperty(nav, "platform")!), "GeoProx");
+  assertEquals(jsStr(getProperty(nav, "platform")!), "BrowserX");
   context.dispose();
 });
 

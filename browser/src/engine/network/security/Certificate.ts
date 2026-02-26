@@ -63,13 +63,18 @@ export async function validateCertificate(
 
   // 5. Verify root CA is trusted
   const root = chain[chain.length - 1];
-  const trustedRoot = trustedCAs.find((ca) => ca.subject === root.subject && ca.serialNumber === root.serialNumber);
+  const trustedRoot = trustedCAs.find((ca) =>
+    ca.subject === root.subject &&
+    ca.serialNumber === root.serialNumber &&
+    arraysEqual(ca.publicKey, root.publicKey)
+  );
   if (!trustedRoot) {
     return { valid: false, reason: "Untrusted root CA" };
   }
 
   // 6. Check revocation status (optional, expensive)
-  const revoked = await checkRevocationStatus(cert);
+  const issuerCert = chain.length > 1 ? chain[1] : undefined;
+  const revoked = await checkRevocationStatus(cert, issuerCert);
   if (revoked) {
     return { valid: false, reason: "Certificate revoked" };
   }
@@ -182,7 +187,7 @@ async function verifySignature(cert: Certificate, issuer: Certificate): Promise<
 /**
  * Check certificate revocation status
  */
-export async function checkRevocationStatus(cert: Certificate): Promise<boolean> {
+export async function checkRevocationStatus(cert: Certificate, issuerCert?: Certificate): Promise<boolean> {
   // Extract AIA OCSP responder URL from the certificate's parsed extensions
   // The parseDERCertificate function stores it on the cert object if found
   const ocspUrl = (cert as Certificate & { ocspResponderUrl?: string }).ocspResponderUrl;
@@ -209,9 +214,20 @@ export async function checkRevocationStatus(cert: Certificate): Promise<boolean>
     const hashAlgContent = new Uint8Array([...sha1OID, ...nullParam]);
     const hashAlg = derWrap(0x30, hashAlgContent);
 
-    // Placeholder issuer hashes (20 zero bytes each)
-    const issuerNameHash = new Uint8Array([0x04, 20, ...new Uint8Array(20)]);
-    const issuerKeyHash = new Uint8Array([0x04, 20, ...new Uint8Array(20)]);
+    // Compute SHA-1 hashes of issuer name and public key for CertID
+    let nameHashBytes: Uint8Array;
+    let keyHashBytes: Uint8Array;
+    if (issuerCert) {
+      const encoder = new TextEncoder();
+      nameHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", encoder.encode(cert.issuer)));
+      keyHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerCert.publicKey));
+    } else {
+      // No issuer cert available — use zero-byte placeholders (OCSP responder may return "unknown")
+      nameHashBytes = new Uint8Array(20);
+      keyHashBytes = new Uint8Array(20);
+    }
+    const issuerNameHash = new Uint8Array([0x04, 20, ...nameHashBytes]);
+    const issuerKeyHash = new Uint8Array([0x04, 20, ...keyHashBytes]);
     const serialInt = new Uint8Array([0x02, serialBytes.length, ...serialBytes]);
 
     const certID = derWrap(0x30, new Uint8Array([...hashAlg, ...issuerNameHash, ...issuerKeyHash, ...serialInt]));
@@ -556,6 +572,7 @@ const SYSTEM_CA_PATHS: Record<string, string[]> = {
  * Cached system CA certificates
  */
 let systemCACache: Certificate[] | null = null;
+let systemCAsLoading: Promise<Certificate[]> | null = null;
 
 /**
  * Load system trusted CA certificates
@@ -565,6 +582,24 @@ export async function loadSystemCAs(): Promise<Certificate[]> {
   if (systemCACache !== null) {
     return systemCACache;
   }
+
+  // Prevent concurrent duplicate loads via promise guard
+  if (systemCAsLoading !== null) {
+    return systemCAsLoading;
+  }
+
+  systemCAsLoading = loadSystemCAsImpl();
+  try {
+    return await systemCAsLoading;
+  } finally {
+    systemCAsLoading = null;
+  }
+}
+
+/**
+ * Internal implementation of system CA loading
+ */
+async function loadSystemCAsImpl(): Promise<Certificate[]> {
 
   const platform = Deno.build.os;
   const paths = SYSTEM_CA_PATHS[platform] || [];
@@ -617,7 +652,7 @@ export function parsePEMCertificates(pem: string): Certificate[] {
   const certificates: Certificate[] = [];
   const certRegex = /-----BEGIN CERTIFICATE-----\r?\n([\s\S]*?)\r?\n-----END CERTIFICATE-----/g;
 
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = certRegex.exec(pem)) !== null) {
     try {
       const base64 = match[1].replace(/\s/g, "");
@@ -1018,7 +1053,14 @@ function parseOID(data: ByteBuffer, offset: number): string {
       return "ECDSA-SHA384";
     }
   }
-  return "RSA-SHA256"; // Default
+  // Decode OID bytes to dotted notation for error message
+  if (data[offset] === 0x06) {
+    const len = data[offset + 1];
+    const oidBytes = data.slice(offset + 2, offset + 2 + len);
+    const oidStr = decodeOIDBytes(oidBytes);
+    throw new Error("Unknown signature algorithm OID: " + oidStr);
+  }
+  throw new Error("Unknown signature algorithm OID: no OID tag found");
 }
 
 /**
@@ -1059,9 +1101,10 @@ function parseDN(data: ByteBuffer, offset: number): string {
       pos++;
       const { length: seqLen, bytesRead: seqBytesRead } = parseDERLength(data, pos);
       pos += seqBytesRead;
+      const seqEnd = pos + seqLen;
 
       // Parse OID
-      if (data[pos] === 0x06) {
+      if (data[pos] === 0x06 && pos < seqEnd) {
         if (pos + 1 >= data.length) break;
         const oidLen = data[pos + 1];
         if (pos + 2 + oidLen > data.length) break;
@@ -1159,7 +1202,7 @@ function parseTime(data: ByteBuffer, offset: number): Date {
     return new Date(Date.UTC(year, month, day, hour, minute, second));
   }
 
-  return new Date();
+  throw new Error("Invalid DER time tag: 0x" + tag.toString(16));
 }
 
 /**
@@ -1174,8 +1217,40 @@ function getTimeLength(data: ByteBuffer, offset: number): number {
 }
 
 /**
+ * Compare two ByteBuffer/Uint8Array instances for equality
+ */
+function arraysEqual(a: ByteBuffer, b: ByteBuffer): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Decode DER OID bytes to dotted notation string
+ */
+function decodeOIDBytes(oidBytes: ByteBuffer): string {
+  if (oidBytes.length === 0) return "";
+  const components: number[] = [];
+  // First byte encodes first two components: value = 40*X + Y
+  components.push(Math.floor(oidBytes[0] / 40));
+  components.push(oidBytes[0] % 40);
+  let value = 0;
+  for (let i = 1; i < oidBytes.length; i++) {
+    value = (value << 7) | (oidBytes[i] & 0x7f);
+    if ((oidBytes[i] & 0x80) === 0) {
+      components.push(value);
+      value = 0;
+    }
+  }
+  return components.join(".");
+}
+
+/**
  * Clear the system CA cache (useful for testing)
  */
 export function clearSystemCACache(): void {
   systemCACache = null;
+  systemCAsLoading = null;
 }

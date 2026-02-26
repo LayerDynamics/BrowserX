@@ -199,6 +199,9 @@ export class AuthenticationManager {
   private formAutomation: FormAutomation;
   private currentSession: AuthSession | null = null;
   private onStateChange?: (event: AuthStateChangeEvent) => void;
+  private storedClientId: string = "";
+  private storedClientSecret: string = "";
+  private storedTokenUrl: string = "";
 
   constructor(page: BrowserPage) {
     this.page = page;
@@ -349,8 +352,18 @@ export class AuthenticationManager {
     credentials: CookieAuthCredentials,
   ): Promise<AuthenticationResult> {
     try {
-      // In a full implementation, this would set cookies via the browser's cookie API
-      // For now, we store the cookie configuration in the session
+      // Set each cookie on the page via document.cookie
+      for (const cookie of credentials.cookies) {
+        let cookieStr = `${encodeURIComponent(cookie.name)}=${encodeURIComponent(cookie.value)}`;
+        if (cookie.path) cookieStr += `; path=${cookie.path}`;
+        if (cookie.domain) cookieStr += `; domain=${cookie.domain}`;
+        if (cookie.secure) cookieStr += "; secure";
+        if (cookie.sameSite) cookieStr += `; SameSite=${cookie.sameSite}`;
+        if (cookie.expires) cookieStr += `; expires=${cookie.expires.toUTCString()}`;
+
+        await this.page.evaluate(`document.cookie = ${JSON.stringify(cookieStr)}`);
+      }
+
       const session: AuthSession = {
         type: "cookie",
         cookies: credentials.cookies,
@@ -474,18 +487,46 @@ export class AuthenticationManager {
   private async oauth2ClientCredentials(
     credentials: OAuth2Credentials,
   ): Promise<AuthenticationResult> {
-    // In a real implementation, this would make an HTTP request to the token endpoint
-    // For now, we simulate the flow
-    console.log(`OAuth2 Client Credentials: POST ${credentials.tokenUrl}`);
+    const body = new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: credentials.clientId,
+    });
+    if (credentials.clientSecret) {
+      body.set("client_secret", credentials.clientSecret);
+    }
+    if (credentials.scopes && credentials.scopes.length > 0) {
+      body.set("scope", credentials.scopes.join(" "));
+    }
+
+    const response = await fetch(credentials.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Token request failed (${response.status}): ${errorText}` };
+    }
+
+    const tokenData = await response.json();
+
+    this.storedClientId = credentials.clientId;
+    this.storedClientSecret = credentials.clientSecret || "";
+    this.storedTokenUrl = credentials.tokenUrl;
+
+    const accessToken = tokenData.access_token;
+    const expiresIn = tokenData.expires_in || 3600;
 
     const session: AuthSession = {
       type: "oauth2",
-      accessToken: credentials.accessToken || "simulated_access_token",
-      expiresAt: new Date(Date.now() + 3600 * 1000), // 1 hour
+      accessToken,
+      refreshToken: tokenData.refresh_token,
+      expiresAt: new Date(Date.now() + expiresIn * 1000),
       authenticated: true,
       createdAt: new Date(),
       headers: {
-        "Authorization": `Bearer ${credentials.accessToken || "simulated_access_token"}`,
+        "Authorization": `Bearer ${accessToken}`,
       },
     };
 
@@ -506,17 +547,48 @@ export class AuthenticationManager {
       };
     }
 
-    console.log(`OAuth2 Password Grant: POST ${credentials.tokenUrl}`);
+    const body = new URLSearchParams({
+      grant_type: "password",
+      client_id: credentials.clientId,
+      username: credentials.username!,
+      password: credentials.password!,
+    });
+    if (credentials.clientSecret) {
+      body.set("client_secret", credentials.clientSecret);
+    }
+    if (credentials.scopes && credentials.scopes.length > 0) {
+      body.set("scope", credentials.scopes.join(" "));
+    }
+
+    const response = await fetch(credentials.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Token request failed (${response.status}): ${errorText}` };
+    }
+
+    const tokenData = await response.json();
+
+    this.storedClientId = credentials.clientId;
+    this.storedClientSecret = credentials.clientSecret || "";
+    this.storedTokenUrl = credentials.tokenUrl;
+
+    const accessToken = tokenData.access_token;
+    const expiresIn = tokenData.expires_in || 3600;
 
     const session: AuthSession = {
       type: "oauth2",
-      accessToken: credentials.accessToken || "simulated_access_token",
-      refreshToken: "simulated_refresh_token",
-      expiresAt: new Date(Date.now() + 3600 * 1000),
+      accessToken,
+      refreshToken: tokenData.refresh_token,
+      expiresAt: new Date(Date.now() + expiresIn * 1000),
       authenticated: true,
       createdAt: new Date(),
       headers: {
-        "Authorization": `Bearer ${credentials.accessToken || "simulated_access_token"}`,
+        "Authorization": `Bearer ${accessToken}`,
       },
     };
 
@@ -537,17 +609,44 @@ export class AuthenticationManager {
       };
     }
 
-    console.log(`OAuth2 Refresh Token: POST ${credentials.tokenUrl}`);
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: credentials.refreshToken!,
+      client_id: credentials.clientId,
+    });
+    if (credentials.clientSecret) {
+      body.set("client_secret", credentials.clientSecret);
+    }
+
+    const response = await fetch(credentials.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Token refresh failed (${response.status}): ${errorText}` };
+    }
+
+    const tokenData = await response.json();
+
+    this.storedClientId = credentials.clientId;
+    this.storedClientSecret = credentials.clientSecret || "";
+    this.storedTokenUrl = credentials.tokenUrl;
+
+    const accessToken = tokenData.access_token;
+    const expiresIn = tokenData.expires_in || 3600;
 
     const session: AuthSession = {
       type: "oauth2",
-      accessToken: "new_simulated_access_token",
-      refreshToken: credentials.refreshToken,
-      expiresAt: new Date(Date.now() + 3600 * 1000),
+      accessToken,
+      refreshToken: tokenData.refresh_token || credentials.refreshToken,
+      expiresAt: new Date(Date.now() + expiresIn * 1000),
       authenticated: true,
       createdAt: new Date(),
       headers: {
-        "Authorization": "Bearer new_simulated_access_token",
+        "Authorization": `Bearer ${accessToken}`,
       },
     };
 
@@ -579,26 +678,79 @@ export class AuthenticationManager {
       authUrl.searchParams.set("scope", credentials.scopes.join(" "));
     }
 
-    console.log(`OAuth2 Authorization Code: Navigate to ${authUrl.toString()}`);
+    // Navigate to authorization page for user consent
 
     // Navigate to authorization page
     await this.page.navigate(authUrl.toString());
 
-    // In a real implementation, this would:
-    // 1. Wait for user to authenticate and authorize
-    // 2. Capture the redirect with authorization code
-    // 3. Exchange code for tokens
-    // For now, we simulate success
+    // Wait for the redirect back with the authorization code
+    // Poll the current URL for the redirect URI with a code parameter
+    const timeout = 60000;
+    const startTime = Date.now();
+    let code: string | null = null;
+
+    while (Date.now() - startTime < timeout) {
+      const currentUrl = this.page.getCurrentURL() || "";
+      if (currentUrl.startsWith(credentials.redirectUri!)) {
+        try {
+          const redirectUrl = new URL(currentUrl);
+          code = redirectUrl.searchParams.get("code");
+          if (code) break;
+          const error = redirectUrl.searchParams.get("error");
+          if (error) {
+            return { success: false, error: `Authorization denied: ${error}` };
+          }
+        } catch {
+          // URL parsing failed, keep waiting
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    if (!code) {
+      return { success: false, error: "Authorization code not received within timeout" };
+    }
+
+    // Exchange code for tokens
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: credentials.clientId,
+      redirect_uri: credentials.redirectUri!,
+    });
+    if (credentials.clientSecret) {
+      body.set("client_secret", credentials.clientSecret);
+    }
+
+    const response = await fetch(credentials.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Token exchange failed (${response.status}): ${errorText}` };
+    }
+
+    const tokenData = await response.json();
+
+    this.storedClientId = credentials.clientId;
+    this.storedClientSecret = credentials.clientSecret || "";
+    this.storedTokenUrl = credentials.tokenUrl;
+
+    const accessToken = tokenData.access_token;
+    const expiresIn = tokenData.expires_in || 3600;
 
     const session: AuthSession = {
       type: "oauth2",
-      accessToken: "simulated_access_token_from_code",
-      refreshToken: "simulated_refresh_token_from_code",
-      expiresAt: new Date(Date.now() + 3600 * 1000),
+      accessToken,
+      refreshToken: tokenData.refresh_token,
+      expiresAt: new Date(Date.now() + expiresIn * 1000),
       authenticated: true,
       createdAt: new Date(),
       headers: {
-        "Authorization": "Bearer simulated_access_token_from_code",
+        "Authorization": `Bearer ${accessToken}`,
       },
     };
 
@@ -700,8 +852,9 @@ export class AuthenticationManager {
     return this.oauth2RefreshToken({
       type: "oauth2",
       grantType: "refresh_token",
-      clientId: "",
-      tokenUrl: "",
+      clientId: this.storedClientId,
+      clientSecret: this.storedClientSecret || undefined,
+      tokenUrl: this.storedTokenUrl,
       refreshToken: this.currentSession.refreshToken,
     });
   }

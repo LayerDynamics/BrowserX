@@ -562,7 +562,7 @@ Deno.test({
     const userAgent = getProperty(navigatorObj, "userAgent");
     assertEquals(userAgent.type, "string");
     if (userAgent.type === "string") {
-      assertEquals(userAgent.value, "GeoProx-Browser/1.0");
+      assertEquals(userAgent.value, "BrowserX/1.0");
     }
 
     context.dispose();
@@ -602,7 +602,7 @@ Deno.test({
     const platform = getProperty(navigatorObj, "platform");
     assertEquals(platform.type, "string");
     if (platform.type === "string") {
-      assertEquals(platform.value, "GeoProx");
+      assertEquals(platform.value, "BrowserX");
     }
 
     context.dispose();

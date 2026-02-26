@@ -98,6 +98,7 @@ export class RequestPipeline {
   private connectionPool: ConnectionPool;
   private connectionManager: ConnectionManager;
   private cacheStorage: CacheStorage;
+  private requestParser: typeof HTTPRequestParser = HTTPRequestParser;
   private requestIdCounter: number = 1;
   private observer?: PipelineObserver;
 
@@ -165,16 +166,17 @@ export class RequestPipeline {
 
     const racers: Promise<RequestResult | never>[] = [requestPromise];
 
+    let timeoutId: number | undefined;
     if (timeout > 0) {
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           reject(
             new RequestPipelineError(
               `Request timed out after ${timeout}ms`,
               "timeout",
             ),
           );
-        }, timeout);
+        }, timeout) as unknown as number;
       });
       racers.push(timeoutPromise);
     }
@@ -189,7 +191,14 @@ export class RequestPipeline {
       racers.push(abortPromise);
     }
 
-    return Promise.race(racers);
+    try {
+      const result = await Promise.race(racers);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      return result;
+    } catch (err) {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      throw err;
+    }
   }
 
   /**
@@ -306,227 +315,242 @@ export class RequestPipeline {
         connection,
       );
 
-      // 3. TLS Handshake timing (if secure and new connection)
-      if (isSecure && connection.useCount === 1) {
-        timing.tlsHandshake = timing.tcpConnection; // Approximate
-      } else {
-        timing.tlsHandshake = 0;
-      }
-      this.emitStage(
-        "tls-handshake",
-        "TLS Handshake",
-        "completed",
-        Date.now(),
-        Date.now(),
-        timing.tlsHandshake ?? 0,
-      );
+      // Track whether connection was already released (e.g. on success path)
+      let connectionReleased = false;
 
-      // 4. Send HTTP request
-      this.emitStage("http-send", "HTTP Send", "running", Date.now());
-      const reqStart = Date.now();
-      const requestData = this.serializeRequest(request);
-      await connection.socket.write(requestData);
-      timing.requestSent = Date.now() - reqStart;
-      this.emitStage(
-        "http-send",
-        "HTTP Send",
-        "completed",
-        reqStart,
-        Date.now(),
-        timing.requestSent,
-        request,
-      );
-
-      // 5. Receive HTTP response
-      this.emitStage("http-receive", "HTTP Receive", "running", Date.now());
-      const respStart = Date.now();
-      const chunks: Uint8Array[] = [];
-      let totalBytes = 0;
-      let headersComplete = false;
-      let isChunked = false;
-      let contentLength = -1;
-      let bodyStartIndex = 0;
-
-      // Read until response is complete
-      while (true) {
-        // Check if aborted in read loop
-        if (options.signal?.aborted) {
-          // Close the connection on abort
-          await connection.socket.close();
-          throw options.signal.reason || new RequestPipelineError("Request aborted", "aborted");
+      try {
+        // 3. TLS Handshake timing (if secure and new connection)
+        if (isSecure && connection.useCount === 1) {
+          timing.tlsHandshake = timing.tcpConnection; // Approximate
+        } else {
+          timing.tlsHandshake = 0;
         }
+        this.emitStage(
+          "tls-handshake",
+          "TLS Handshake",
+          "completed",
+          Date.now(),
+          Date.now(),
+          timing.tlsHandshake ?? 0,
+        );
 
-        const chunk = new Uint8Array(16384); // 16KB chunks
-        const bytesRead = await connection.socket.read(chunk, { signal: options.signal });
+        // 4. Send HTTP request
+        this.emitStage("http-send", "HTTP Send", "running", Date.now());
+        const reqStart = Date.now();
+        const requestData = this.serializeRequest(request);
+        await connection.socket.write(requestData);
+        timing.requestSent = Date.now() - reqStart;
+        this.emitStage(
+          "http-send",
+          "HTTP Send",
+          "completed",
+          reqStart,
+          Date.now(),
+          timing.requestSent,
+          request,
+        );
 
-        if (totalBytes === 0) {
-          timing.firstByte = Date.now() - respStart;
-        }
+        // 5. Receive HTTP response
+        this.emitStage("http-receive", "HTTP Receive", "running", Date.now());
+        const respStart = Date.now();
+        const chunks: Uint8Array[] = [];
+        let totalBytes = 0;
+        let headersComplete = false;
+        let isChunked = false;
+        let contentLength = -1;
+        let bodyStartIndex = 0;
 
-        if (bytesRead === null || bytesRead === 0) {
-          break; // Connection closed
-        }
+        // Read until response is complete
+        while (true) {
+          // Check if aborted in read loop
+          if (options.signal?.aborted) {
+            // Close the connection on abort
+            await connection.socket.close();
+            throw options.signal.reason || new RequestPipelineError("Request aborted", "aborted");
+          }
 
-        chunks.push(chunk.slice(0, bytesRead));
-        totalBytes += bytesRead;
+          const chunk = new Uint8Array(16384); // 16KB chunks
+          const bytesRead = await connection.socket.read(chunk, { signal: options.signal });
 
-        // Check if headers are complete
-        if (!headersComplete) {
-          const partialResponse = this.concatChunks(chunks, totalBytes);
-          const text = new TextDecoder().decode(partialResponse);
-          const headerEndIndex = text.indexOf("\r\n\r\n");
+          if (totalBytes === 0) {
+            timing.firstByte = Date.now() - respStart;
+          }
 
-          if (headerEndIndex !== -1) {
-            headersComplete = true;
-            bodyStartIndex = headerEndIndex + 4;
+          if (bytesRead === null || bytesRead === 0) {
+            break; // Connection closed
+          }
 
-            // Check for chunked encoding or content-length
-            const lowerText = text.toLowerCase();
-            if (lowerText.includes("transfer-encoding: chunked")) {
-              isChunked = true;
-            }
+          chunks.push(chunk.slice(0, bytesRead));
+          totalBytes += bytesRead;
 
-            // Check for multiple Content-Length headers (potential HTTP desync attack)
-            const clMatches = lowerText.match(/content-length:\s*\d+/g);
-            if (clMatches && clMatches.length > 1) {
-              throw new Error(
-                "Multiple Content-Length headers detected - potential HTTP desync attack",
-              );
-            }
+          // Check if headers are complete
+          if (!headersComplete) {
+            const partialResponse = this.concatChunks(chunks, totalBytes);
+            const text = new TextDecoder().decode(partialResponse);
+            const headerEndIndex = text.indexOf("\r\n\r\n");
 
-            const clMatch = lowerText.match(/content-length:\s*(\d+)/);
-            if (clMatch) {
-              const parsedLength = parseInt(clMatch[1], 10);
-              // Validate Content-Length is a valid non-negative integer
-              if (Number.isNaN(parsedLength) || parsedLength < 0) {
-                throw new Error(`Invalid Content-Length value: ${clMatch[1]}`);
+            if (headerEndIndex !== -1) {
+              headersComplete = true;
+              bodyStartIndex = headerEndIndex + 4;
+
+              // Check for chunked encoding or content-length
+              const lowerText = text.toLowerCase();
+              if (lowerText.includes("transfer-encoding: chunked")) {
+                isChunked = true;
               }
-              // Validate Content-Length doesn't exceed max response size (10MB)
-              const maxResponseSize = 10 * 1024 * 1024;
-              if (parsedLength > maxResponseSize) {
+
+              // Check for multiple Content-Length headers (potential HTTP desync attack)
+              const clMatches = lowerText.match(/content-length:\s*\d+/g);
+              if (clMatches && clMatches.length > 1) {
                 throw new Error(
-                  `Content-Length ${parsedLength} exceeds maximum allowed size of ${maxResponseSize} bytes`,
+                  "Multiple Content-Length headers detected - potential HTTP desync attack",
                 );
               }
-              contentLength = parsedLength;
-            }
-          }
-        }
 
-        // Check if response is complete
-        if (headersComplete) {
-          const partialResponse = this.concatChunks(chunks, totalBytes);
-
-          if (isChunked) {
-            // Check for chunked terminator: 0\r\n followed by optional trailers and final \r\n
-            // RFC 7230 Section 4.1: chunked-body = *chunk last-chunk trailer-part CRLF
-            // last-chunk = "0" *( ";" chunk-ext ) CRLF
-            // trailer-part = *( header-field CRLF )
-            const text = new TextDecoder().decode(partialResponse.slice(bodyStartIndex));
-            // Find the zero-length chunk (can be "0\r\n" or "0;ext\r\n")
-            const zeroChunkMatch = text.match(/\r\n0(?:;[^\r\n]*)?\r\n/);
-            if (zeroChunkMatch) {
-              // Zero-length chunk found - check if the message ends with \r\n\r\n
-              // (either no trailers: "0\r\n\r\n" or trailers followed by "\r\n\r\n")
-              if (text.endsWith("\r\n\r\n")) {
-                break; // Chunked response complete
-              }
-            }
-          } else if (contentLength >= 0) {
-            const bodyBytes = totalBytes - bodyStartIndex;
-            if (bodyBytes >= contentLength) {
-              break; // Content-Length reached
-            }
-          } else {
-            // No content-length or chunked - read a bit more then stop
-            // This handles responses with no body
-            if (totalBytes > bodyStartIndex) {
-              break;
-            }
-          }
-        }
-
-        // Safety limit - should match Content-Length validation (10MB)
-        if (totalBytes > 10 * 1024 * 1024) { // 10MB max
-          break;
-        }
-      }
-
-      if (totalBytes === 0) {
-        throw new Error("No response received from server");
-      }
-
-      const responseData = this.concatChunks(chunks, totalBytes);
-
-      // Parse response
-      const response = this.parseResponse(responseData as ByteBuffer, request.id);
-      response.fromCache = false;
-      timing.download = Date.now() - respStart - (timing.firstByte || 0);
-
-      // Release connection back to pool
-      await this.connectionPool.release(connection);
-
-      // 6. Store in cache (if cacheable)
-      if (
-        this.isCacheable(request, response) && options.cache !== "no-store" &&
-        options.cache !== false
-      ) {
-        await this.storeInCache(request, response);
-      }
-
-      // Handle redirects
-      if (
-        options.followRedirects !== false &&
-        response.statusCode >= 300 &&
-        response.statusCode < 400 &&
-        response.headers.has("location")
-      ) {
-        const maxRedirects = options.maxRedirects ?? 5;
-        if (maxRedirects > 0) {
-          const locationHeader = response.headers.get("location")!;
-          // Resolve relative URLs against the original request URL
-          // This handles both absolute URLs (https://...) and relative URLs (/path, ./path, ../path)
-          const redirectUrl = new URL(locationHeader, request.url).toString();
-
-          // Create redirect options, removing host header so it will be set correctly for new URL
-          // The host header must match the target hostname, not the original hostname
-          const redirectHeaders = options.headers ? { ...options.headers } : undefined;
-          if (redirectHeaders) {
-            // Remove host header (case-insensitive) so buildRequest can set it correctly
-            for (const key of Object.keys(redirectHeaders)) {
-              if (key.toLowerCase() === "host") {
-                delete redirectHeaders[key];
+              const clMatch = lowerText.match(/content-length:\s*(\d+)/);
+              if (clMatch) {
+                const parsedLength = parseInt(clMatch[1], 10);
+                // Validate Content-Length is a valid non-negative integer
+                if (Number.isNaN(parsedLength) || parsedLength < 0) {
+                  throw new Error(`Invalid Content-Length value: ${clMatch[1]}`);
+                }
+                // Validate Content-Length doesn't exceed max response size (10MB)
+                const maxResponseSize = 10 * 1024 * 1024;
+                if (parsedLength > maxResponseSize) {
+                  throw new Error(
+                    `Content-Length ${parsedLength} exceeds maximum allowed size of ${maxResponseSize} bytes`,
+                  );
+                }
+                contentLength = parsedLength;
               }
             }
           }
 
-          const redirectOptions: RequestOptions = {
-            ...options,
-            headers: redirectHeaders,
-            maxRedirects: maxRedirects - 1,
-          };
-          return await this.request(redirectUrl, redirectOptions);
+          // Check if response is complete
+          if (headersComplete) {
+            const partialResponse = this.concatChunks(chunks, totalBytes);
+
+            if (isChunked) {
+              // Check for chunked terminator: 0\r\n followed by optional trailers and final \r\n
+              // RFC 7230 Section 4.1: chunked-body = *chunk last-chunk trailer-part CRLF
+              // last-chunk = "0" *( ";" chunk-ext ) CRLF
+              // trailer-part = *( header-field CRLF )
+              const text = new TextDecoder().decode(partialResponse.slice(bodyStartIndex));
+              // Find the zero-length chunk (can be "0\r\n" or "0;ext\r\n")
+              const zeroChunkMatch = text.match(/\r\n0(?:;[^\r\n]*)?\r\n/);
+              if (zeroChunkMatch) {
+                // Zero-length chunk found - check if the message ends with \r\n\r\n
+                // (either no trailers: "0\r\n\r\n" or trailers followed by "\r\n\r\n")
+                if (text.endsWith("\r\n\r\n")) {
+                  break; // Chunked response complete
+                }
+              }
+            } else if (contentLength >= 0) {
+              const bodyBytes = totalBytes - bodyStartIndex;
+              if (bodyBytes >= contentLength) {
+                break; // Content-Length reached
+              }
+            } else {
+              // No content-length or chunked - read a bit more then stop
+              // This handles responses with no body
+              if (totalBytes > bodyStartIndex) {
+                break;
+              }
+            }
+          }
+
+          // Safety limit - should match Content-Length validation (10MB)
+          if (totalBytes > 10 * 1024 * 1024) { // 10MB max
+            break;
+          }
+        }
+
+        if (totalBytes === 0) {
+          throw new Error("No response received from server");
+        }
+
+        const responseData = this.concatChunks(chunks, totalBytes);
+
+        // Parse response
+        const response = this.parseResponse(responseData as ByteBuffer, request.id);
+        response.fromCache = false;
+        timing.download = Date.now() - respStart - (timing.firstByte || 0);
+
+        // Release connection back to pool
+        await this.connectionPool.release(connection);
+        connectionReleased = true;
+
+        // 6. Store in cache (if cacheable)
+        if (
+          this.isCacheable(request, response) && options.cache !== "no-store" &&
+          options.cache !== false
+        ) {
+          await this.storeInCache(request, response);
+        }
+
+        // Handle redirects
+        if (
+          options.followRedirects !== false &&
+          response.statusCode >= 300 &&
+          response.statusCode < 400 &&
+          response.headers.has("location")
+        ) {
+          const maxRedirects = options.maxRedirects ?? 5;
+          if (maxRedirects > 0) {
+            const locationHeader = response.headers.get("location")!;
+            // Resolve relative URLs against the original request URL
+            // This handles both absolute URLs (https://...) and relative URLs (/path, ./path, ../path)
+            const redirectUrl = new URL(locationHeader, request.url).toString();
+
+            // Create redirect options, removing host header so it will be set correctly for new URL
+            // The host header must match the target hostname, not the original hostname
+            const redirectHeaders = options.headers ? { ...options.headers } : undefined;
+            if (redirectHeaders) {
+              // Remove host header (case-insensitive) so buildRequest can set it correctly
+              for (const key of Object.keys(redirectHeaders)) {
+                if (key.toLowerCase() === "host") {
+                  delete redirectHeaders[key];
+                }
+              }
+            }
+
+            const redirectOptions: RequestOptions = {
+              ...options,
+              headers: redirectHeaders,
+              maxRedirects: maxRedirects - 1,
+            };
+            return await this.request(redirectUrl, redirectOptions);
+          }
+        }
+
+        this.emitStage(
+          "http-receive",
+          "HTTP Receive",
+          "completed",
+          respStart,
+          Date.now(),
+          Date.now() - respStart,
+          response,
+        );
+
+        timing.total = Date.now() - startTime;
+
+        return {
+          request,
+          response,
+          fromCache: false,
+          timing: timing as RequestTiming,
+        };
+      } finally {
+        // Ensure connection is always released back to the pool, even on error
+        if (!connectionReleased) {
+          try {
+            await this.connectionPool.release(connection);
+          } catch {
+            // Ignore release errors during error handling
+          }
         }
       }
-
-      this.emitStage(
-        "http-receive",
-        "HTTP Receive",
-        "completed",
-        respStart,
-        Date.now(),
-        Date.now() - respStart,
-        response,
-      );
-
-      timing.total = Date.now() - startTime;
-
-      return {
-        request,
-        response,
-        fromCache: false,
-        timing: timing as RequestTiming,
-      };
     } catch (error) {
       if (error instanceof RequestPipelineError) {
         throw error;
@@ -593,7 +617,7 @@ export class RequestPipeline {
 
     // Resolve via DNS
     try {
-      const result = await this.dnsResolver.resolve(hostname);
+      const result: DNSResult = await this.dnsResolver.resolve(hostname);
 
       // Store in cache
       this.dnsCache.set(result);
@@ -619,7 +643,8 @@ export class RequestPipeline {
   ): Promise<HTTPResponse | undefined> {
     if (options.cache === "force-cache") {
       // Always use cache if available
-      return await this.cacheStorage.match(request);
+      const matchOptions: CacheMatchOptions = { ignoreSearch: false, ignoreMethod: false, ignoreVary: false };
+      return await this.cacheStorage.match(request, matchOptions);
     }
 
     if (options.cache === "no-cache") {
@@ -690,7 +715,7 @@ export class RequestPipeline {
 
     // Add default headers
     headers.set("host", url.host);
-    headers.set("user-agent", "GeoProx-Browser/1.0");
+    headers.set("user-agent", "BrowserX/1.0");
     headers.set("accept", "*/*");
     headers.set("connection", "keep-alive");
 
@@ -744,9 +769,13 @@ export class RequestPipeline {
       const combined = new Uint8Array(headerData.byteLength + request.body.byteLength);
       combined.set(headerData, 0);
       combined.set(new Uint8Array(request.body), headerData.byteLength);
+      // Validate serialized request is parseable
+      this.requestParser.parseRequest(combined);
       return combined;
     }
 
+    // Validate serialized request is parseable
+    this.requestParser.parseRequest(headerData);
     return headerData;
   }
 
@@ -880,6 +909,7 @@ export class RequestPipeline {
    * Close all connections
    */
   async close(): Promise<void> {
+    this.dnsCache.dispose();
     await this.connectionManager.closeAll();
   }
 

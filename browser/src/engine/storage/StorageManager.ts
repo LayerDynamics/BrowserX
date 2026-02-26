@@ -89,13 +89,14 @@ class OriginStorage {
     }
 
     // Emit storage event
-    this.eventEmitter.emit({
+    const setEvent: StorageEvent = {
       key,
       oldValue: oldValue ?? null,
       newValue: value,
       url,
       storageArea: this.area,
-    });
+    };
+    this.eventEmitter.emit(setEvent);
   }
 
   /**
@@ -113,13 +114,14 @@ class OriginStorage {
       this.quotaManager.updateUsage(this.origin, -size);
 
       // Emit storage event
-      this.eventEmitter.emit({
+      const removeEvent: StorageEvent = {
         key,
         oldValue,
         newValue: null,
         url,
         storageArea: this.area,
-      });
+      };
+      this.eventEmitter.emit(removeEvent);
     }
   }
 
@@ -143,14 +145,15 @@ class OriginStorage {
     // Update quota
     this.quotaManager.updateUsage(this.origin, -totalSize);
 
-    // Emit storage event (with null key to indicate clear)
-    this.eventEmitter.emit({
+    // Emit storage event (with empty key to indicate clear)
+    const clearEvent: StorageEvent = {
       key: "",
       oldValue: null,
       newValue: null,
       url,
       storageArea: this.area,
-    });
+    };
+    this.eventEmitter.emit(clearEvent);
   }
 
   /**
@@ -224,8 +227,14 @@ class OriginStorage {
    */
   import(data: Record<string, string>): void {
     this.data.clear();
+    let totalBytes = 0;
     for (const [key, value] of Object.entries(data)) {
       this.data.set(key, value);
+      totalBytes += this.calculateSize(key, value);
+    }
+    // Update quota tracking for imported data
+    if (totalBytes > 0) {
+      this.quotaManager.updateUsage(this.origin, totalBytes);
     }
   }
 }

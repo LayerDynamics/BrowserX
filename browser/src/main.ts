@@ -508,7 +508,7 @@ export class Browser {
  */
 export async function main(): Promise<void> {
   console.log("=".repeat(60));
-  console.log("GeoProx Browser - Starting");
+  console.log("BrowserX - Starting");
   console.log("=".repeat(60));
 
   // Create browser instance

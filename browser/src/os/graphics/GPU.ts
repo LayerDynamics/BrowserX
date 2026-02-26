@@ -38,6 +38,9 @@ export class GPU {
   private context?: GPUCanvasContext;
   private textures: Map<string, GPUTextureHandle> = new Map();
   private nextTextureId = 0;
+  private compositePipeline?: GPURenderPipeline;
+  private sampler?: GPUSampler;
+  private bindGroupLayout?: GPUBindGroupLayout;
 
   /**
    * Initialize GPU device
@@ -177,12 +180,23 @@ export class GPU {
         continue;
       }
 
-      // Basic compositing: in a full implementation this would set up
-      // a pipeline with blend state, vertex buffers for the quad, and
-      // uniform buffers for transform/opacity. The full compositing
-      // pipeline is handled by WebGPUCompositorThread; this provides
-      // a basic pass that binds each layer's texture.
-      // For now we record the pass per layer (no-op draw without pipeline).
+      // Ensure composite pipeline exists
+      if (!this.compositePipeline) {
+        this.initCompositePipeline(currentTexture.format);
+      }
+
+      // Create bind group for this layer's texture
+      const bindGroup = this.device.createBindGroup({
+        layout: this.bindGroupLayout!,
+        entries: [
+          { binding: 0, resource: this.sampler! },
+          { binding: 1, resource: handle.texture.createView() },
+        ],
+      });
+
+      renderPass.setPipeline(this.compositePipeline!);
+      renderPass.setBindGroup(0, bindGroup);
+      renderPass.draw(6); // fullscreen quad (2 triangles)
     }
 
     // End render pass and submit
@@ -197,6 +211,77 @@ export class GPU {
    */
   getDevice(): GPUDevice | undefined {
     return this.device;
+  }
+
+  /**
+   * Initialize the composite render pipeline for layer blitting
+   */
+  private initCompositePipeline(format: GPUTextureFormat): void {
+    if (!this.device) return;
+
+    const shaderCode = `
+      @group(0) @binding(0) var texSampler: sampler;
+      @group(0) @binding(1) var texLayer: texture_2d<f32>;
+
+      struct VSOut {
+        @builtin(position) pos: vec4f,
+        @location(0) uv: vec2f,
+      };
+
+      @vertex fn vs(@builtin(vertex_index) vi: u32) -> VSOut {
+        var positions = array<vec2f, 6>(
+          vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+          vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
+        );
+        var uvs = array<vec2f, 6>(
+          vec2f(0.0, 1.0), vec2f(1.0, 1.0), vec2f(0.0, 0.0),
+          vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(1.0, 0.0),
+        );
+        var out: VSOut;
+        out.pos = vec4f(positions[vi], 0.0, 1.0);
+        out.uv = uvs[vi];
+        return out;
+      }
+
+      @fragment fn fs(input: VSOut) -> @location(0) vec4f {
+        return textureSample(texLayer, texSampler, input.uv);
+      }
+    `;
+
+    const shaderModule = this.device.createShaderModule({ code: shaderCode });
+
+    this.sampler = this.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+    });
+
+    this.bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      ],
+    });
+
+    const pipelineLayout = this.device.createPipelineLayout({
+      bindGroupLayouts: [this.bindGroupLayout],
+    });
+
+    this.compositePipeline = this.device.createRenderPipeline({
+      layout: pipelineLayout,
+      vertex: { module: shaderModule, entryPoint: "vs" },
+      fragment: {
+        module: shaderModule,
+        entryPoint: "fs",
+        targets: [{
+          format,
+          blend: {
+            color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+            alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
+          },
+        }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
   }
 
   /**

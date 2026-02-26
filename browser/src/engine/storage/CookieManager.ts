@@ -117,7 +117,7 @@ export class CookieManager {
   /**
    * Get cookies for URL and SameSite context
    */
-  getCookiesForRequest(url: string, requestUrl: string, method: string = "GET"): Cookie[] {
+  getCookiesForRequest(url: string, requestUrl: string, method: string = "GET", requestType: "navigation" | "subresource" = "subresource"): Cookie[] {
     const cookies = this.getCookies(url);
     const isSameSite = this.isSameSiteRequest(url, requestUrl);
     const isSafeMethod = ["GET", "HEAD", "OPTIONS", "TRACE"].includes(method.toUpperCase());
@@ -130,7 +130,7 @@ export class CookieManager {
 
       // SameSite=Lax: Same-site or top-level navigation with safe method
       if (cookie.sameSite === "Lax") {
-        if (!isSameSite && !(isSafeMethod && this.isTopLevelNavigation(requestUrl))) {
+        if (!isSameSite && !(isSafeMethod && this.isTopLevelNavigation(requestType))) {
           return false;
         }
       }
@@ -300,10 +300,8 @@ export class CookieManager {
   /**
    * Check if navigation is top-level
    */
-  private isTopLevelNavigation(url: string): boolean {
-    // Simplified: assume navigation if URL is provided
-    // In real implementation, would check if this is a main frame navigation
-    return true;
+  private isTopLevelNavigation(requestType: "navigation" | "subresource"): boolean {
+    return requestType === "navigation";
   }
 
   /**
@@ -312,8 +310,14 @@ export class CookieManager {
   private getRegistrableDomain(hostname: string): string {
     const parts = hostname.split(".");
 
-    // Simplified: return last two parts for .com, .org, etc.
-    // Real implementation would use Public Suffix List
+    if (parts.length >= 3) {
+      // Check if last two parts form a known second-level public suffix
+      const lastTwo = parts.slice(-2).join(".");
+      if (this.isPublicSuffix(lastTwo)) {
+        return parts.slice(-3).join(".");
+      }
+    }
+
     if (parts.length >= 2) {
       return parts.slice(-2).join(".");
     }
@@ -325,9 +329,29 @@ export class CookieManager {
    * Check if domain is public suffix
    */
   private isPublicSuffix(domain: string): boolean {
-    // Simplified check for common TLDs
-    const publicSuffixes = ["com", "org", "net", "edu", "gov", "mil", "co.uk", "co.jp"];
-    return publicSuffixes.includes(domain.toLowerCase());
+    const d = domain.toLowerCase().replace(/^\./, "");
+
+    // Single-label domain (no dots) is a TLD — block it
+    if (!d.includes(".")) {
+      const tlds = new Set([
+        "com", "org", "net", "edu", "gov", "mil", "int", "info", "biz", "name",
+        "pro", "aero", "coop", "museum",
+        // ccTLDs
+        "uk", "de", "fr", "it", "es", "nl", "be", "at", "ch", "au", "nz", "ca",
+        "jp", "cn", "kr", "in", "br", "ru", "za", "mx", "ar", "cl", "co", "io",
+        "ai", "me", "tv", "cc", "us",
+      ]);
+      return tlds.has(d);
+    }
+
+    // Multi-label public suffixes (second-level domains that act as TLDs)
+    const secondLevelSuffixes = new Set([
+      "co.uk", "co.jp", "co.nz", "co.za", "co.kr", "co.in",
+      "com.au", "com.br", "com.cn", "com.mx", "com.ar",
+      "org.uk", "net.au", "ac.uk", "gov.uk", "edu.au",
+      "or.jp", "ne.jp", "ac.jp",
+    ]);
+    return secondLevelSuffixes.has(d);
   }
 
   /**
@@ -342,10 +366,10 @@ export class CookieManager {
         pathname: parsed.pathname,
       };
     } catch {
-      // Fallback for invalid URLs
+      // Fallback for invalid URLs — return empty hostname to safely fail matching
       return {
         protocol: "http:",
-        hostname: url,
+        hostname: "",
         pathname: "/",
       };
     }
@@ -392,5 +416,9 @@ export class CookieManager {
       this.cleanupInterval = null;
     }
     this.cookies.clear();
+  }
+
+  [Symbol.dispose as symbol](): void {
+    this.dispose();
   }
 }

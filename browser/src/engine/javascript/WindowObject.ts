@@ -132,13 +132,14 @@ export class WindowObject {
     const documentValue = this.domBindings.wrapNodeAsJSValue(this.document);
     setProperty(this.context.global, "document", documentValue);
 
-    // Install console
+    // Install console — backed by createConsole()
+    const backingConsole = this.createConsole();
     const consoleObj = createObject();
     setProperty(
       consoleObj,
       "log",
       createNativeFunction("log", (...args) => {
-        console.log("[JS]", args);
+        backingConsole.log(...args);
         return createUndefined();
       }),
     );
@@ -146,7 +147,7 @@ export class WindowObject {
       consoleObj,
       "info",
       createNativeFunction("info", (...args) => {
-        console.info("[JS]", args);
+        backingConsole.info(...args);
         return createUndefined();
       }),
     );
@@ -154,7 +155,7 @@ export class WindowObject {
       consoleObj,
       "warn",
       createNativeFunction("warn", (...args) => {
-        console.warn("[JS]", args);
+        backingConsole.warn(...args);
         return createUndefined();
       }),
     );
@@ -162,29 +163,49 @@ export class WindowObject {
       consoleObj,
       "error",
       createNativeFunction("error", (...args) => {
-        console.error("[JS]", args);
+        backingConsole.error(...args);
+        return createUndefined();
+      }),
+    );
+    setProperty(
+      consoleObj,
+      "debug",
+      createNativeFunction("debug", (...args) => {
+        backingConsole.debug(...args);
+        return createUndefined();
+      }),
+    );
+    setProperty(
+      consoleObj,
+      "trace",
+      createNativeFunction("trace", (...args) => {
+        backingConsole.trace(...args);
+        return createUndefined();
+      }),
+    );
+    setProperty(
+      consoleObj,
+      "clear",
+      createNativeFunction("clear", () => {
+        backingConsole.clear();
         return createUndefined();
       }),
     );
     setProperty(this.context.global, "console", consoleObj);
 
-    // Install timers
+    // Install timers — delegate native operations to createSetTimeout/etc. factories
+    const nativeSetTimeout = this.createSetTimeout();
+    const nativeClearTimeout = this.createClearTimeout();
+    const nativeSetInterval = this.createSetInterval();
+    const nativeClearInterval = this.createClearInterval();
+
     setProperty(
       this.context.global,
       "setTimeout",
       createNativeFunction("setTimeout", (...args) => {
-        const callback = args[0];
+        const invokeCallback = this.createCallbackInvoker(args[0]);
         const delay = args[1] ? (args[1] as { type: "number"; value: number }).value : 0;
-        const handle = this.nextTimerId++;
-        const invokeCallback = this.createCallbackInvoker(callback);
-        const timeoutId = setTimeout(() => {
-          this.timers.delete(handle);
-          invokeCallback();
-        }, delay);
-        this.timers.set(handle, {
-          callback: invokeCallback,
-          timeout: timeoutId as unknown as number,
-        });
+        const handle = nativeSetTimeout(invokeCallback, delay);
         return createNumber(handle);
       }, 2),
     );
@@ -193,11 +214,7 @@ export class WindowObject {
       "clearTimeout",
       createNativeFunction("clearTimeout", (...args) => {
         const handle = args[0] ? (args[0] as { type: "number"; value: number }).value : 0;
-        const timer = this.timers.get(handle);
-        if (timer) {
-          clearTimeout(timer.timeout);
-          this.timers.delete(handle);
-        }
+        nativeClearTimeout(handle);
         return createUndefined();
       }, 1),
     );
@@ -205,17 +222,9 @@ export class WindowObject {
       this.context.global,
       "setInterval",
       createNativeFunction("setInterval", (...args) => {
-        const callback = args[0];
+        const invokeCallback = this.createCallbackInvoker(args[0]);
         const delay = args[1] ? (args[1] as { type: "number"; value: number }).value : 0;
-        const handle = this.nextTimerId++;
-        const invokeIntervalCallback = this.createCallbackInvoker(callback);
-        const intervalId = setInterval(() => {
-          invokeIntervalCallback();
-        }, delay);
-        this.timers.set(handle, {
-          callback: invokeIntervalCallback,
-          timeout: intervalId as unknown as number,
-        });
+        const handle = nativeSetInterval(invokeCallback, delay);
         return createNumber(handle);
       }, 2),
     );
@@ -224,34 +233,52 @@ export class WindowObject {
       "clearInterval",
       createNativeFunction("clearInterval", (...args) => {
         const handle = args[0] ? (args[0] as { type: "number"; value: number }).value : 0;
-        const timer = this.timers.get(handle);
-        if (timer) {
-          clearInterval(timer.timeout);
-          this.timers.delete(handle);
-        }
+        nativeClearInterval(handle);
         return createUndefined();
       }, 1),
     );
 
-    // Install location
-    const parsedUrl = new URL(this.url);
+    // Install location — backed by createLocation()
+    const loc = this.createLocation();
     const locationObj = createObject();
-    setProperty(locationObj, "href", createString(parsedUrl.href));
-    setProperty(locationObj, "protocol", createString(parsedUrl.protocol));
-    setProperty(locationObj, "host", createString(parsedUrl.host));
-    setProperty(locationObj, "hostname", createString(parsedUrl.hostname));
-    setProperty(locationObj, "port", createString(parsedUrl.port));
-    setProperty(locationObj, "pathname", createString(parsedUrl.pathname));
-    setProperty(locationObj, "search", createString(parsedUrl.search));
-    setProperty(locationObj, "hash", createString(parsedUrl.hash));
-    setProperty(locationObj, "origin", createString(parsedUrl.origin));
+    setProperty(locationObj, "href", createString(loc.href));
+    setProperty(locationObj, "protocol", createString(loc.protocol));
+    setProperty(locationObj, "host", createString(loc.host));
+    setProperty(locationObj, "hostname", createString(loc.hostname));
+    setProperty(locationObj, "port", createString(loc.port));
+    setProperty(locationObj, "pathname", createString(loc.pathname));
+    setProperty(locationObj, "search", createString(loc.search));
+    setProperty(locationObj, "hash", createString(loc.hash));
+    setProperty(locationObj, "origin", createString(loc.origin));
+    setProperty(
+      locationObj,
+      "reload",
+      createNativeFunction("reload", () => {
+        loc.reload();
+        return createUndefined();
+      }),
+    );
+    setProperty(
+      locationObj,
+      "replace",
+      createNativeFunction("replace", (...args) => {
+        const url = args[0] && args[0].type === "string"
+          ? (args[0] as { type: "string"; value: string }).value
+          : "";
+        loc.replace(url);
+        return createUndefined();
+      }, 1),
+    );
     setProperty(this.context.global, "location", locationObj);
 
-    // Install navigator
+    // Install navigator — backed by createNavigator()
+    const nav = this.createNavigator();
     const navigatorObj = createObject();
-    setProperty(navigatorObj, "userAgent", createString("GeoProx-Browser/1.0"));
-    setProperty(navigatorObj, "language", createString("en-US"));
-    setProperty(navigatorObj, "platform", createString("GeoProx"));
+    setProperty(navigatorObj, "userAgent", createString(nav.userAgent));
+    setProperty(navigatorObj, "language", createString(nav.language));
+    setProperty(navigatorObj, "platform", createString(nav.platform));
+    setProperty(navigatorObj, "cookieEnabled", createBoolean(nav.cookieEnabled));
+    setProperty(navigatorObj, "onLine", createBoolean(nav.onLine));
     setProperty(this.context.global, "navigator", navigatorObj);
 
     // Install fetch — delegates to createFetch() which uses RequestPipeline
@@ -818,9 +845,11 @@ export class WindowObject {
       "requestAnimationFrame",
       createNativeFunction("requestAnimationFrame", (...args) => {
         const id = ++rafId;
+        const invokeCallback = this.createCallbackInvoker(args[0]);
         // Schedule callback via setTimeout(cb, ~16ms) for ~60fps simulation
         const timerId = setTimeout(() => {
           rafCallbacks.delete(id);
+          invokeCallback();
         }, 16) as unknown as number;
         rafCallbacks.set(id, timerId);
         return createNumber(id);
@@ -918,24 +947,53 @@ export class WindowObject {
       windowObj,
       "getComputedStyle",
       createNativeFunction("getComputedStyle", (...args) => {
+        const element = args[0];
         const styleObj = createObject();
+
+        // Default computed style values
+        const defaults: Record<string, string> = {
+          display: "block",
+          visibility: "visible",
+          position: "static",
+          width: "auto",
+          height: "auto",
+          margin: "0px",
+          padding: "0px",
+          fontSize: "16px",
+          color: "rgb(0, 0, 0)",
+          backgroundColor: "rgba(0, 0, 0, 0)",
+        };
+
+        // If the element has a style property, read inline styles to override defaults
+        if (element && element.type === "object") {
+          const styleProp = getProperty(element, "style");
+          if (styleProp && styleProp.type === "object") {
+            for (const prop of Object.keys(defaults)) {
+              const val = getProperty(styleProp, prop);
+              if (val && val.type === "string") {
+                defaults[prop] = (val as { type: "string"; value: string }).value;
+              }
+            }
+          }
+        }
+
         setProperty(
           styleObj,
           "getPropertyValue",
-          createNativeFunction("getPropertyValue", () => {
-            return createString("");
+          createNativeFunction("getPropertyValue", (...gpvArgs) => {
+            const propName = gpvArgs[0] && gpvArgs[0].type === "string"
+              ? (gpvArgs[0] as { type: "string"; value: string }).value
+              : "";
+            // Convert CSS property name (kebab-case) to camelCase for lookup
+            const camelCase = propName.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+            return createString(defaults[camelCase] ?? defaults[propName] ?? "");
           }, 1),
         );
-        setProperty(styleObj, "display", createString("block"));
-        setProperty(styleObj, "visibility", createString("visible"));
-        setProperty(styleObj, "position", createString("static"));
-        setProperty(styleObj, "width", createString("auto"));
-        setProperty(styleObj, "height", createString("auto"));
-        setProperty(styleObj, "margin", createString("0px"));
-        setProperty(styleObj, "padding", createString("0px"));
-        setProperty(styleObj, "fontSize", createString("16px"));
-        setProperty(styleObj, "color", createString("rgb(0, 0, 0)"));
-        setProperty(styleObj, "backgroundColor", createString("rgba(0, 0, 0, 0)"));
+
+        for (const [prop, val] of Object.entries(defaults)) {
+          setProperty(styleObj, prop, createString(val));
+        }
+
         return styleObj;
       }, 1),
     );
@@ -1169,9 +1227,9 @@ export class WindowObject {
    */
   private createNavigator(): Navigator {
     return {
-      userAgent: "GeoProx-Browser/1.0",
+      userAgent: "BrowserX/1.0",
       language: "en-US",
-      platform: "GeoProx",
+      platform: "BrowserX",
       cookieEnabled: true,
       onLine: true,
     };

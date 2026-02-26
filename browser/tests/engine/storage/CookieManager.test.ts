@@ -401,6 +401,7 @@ Deno.test("CookieManager - SameSite=Lax allows top-level safe navigation", () =>
     "https://example.com/",
     "https://other.com/",
     "GET",
+    "navigation",
   );
   assertEquals(crossSiteGet.length, 1);
 

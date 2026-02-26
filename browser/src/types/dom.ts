@@ -736,6 +736,8 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
 
           strokeRect: function (x: number, y: number, width: number, height: number) {
             const lineWidth = Math.max(1, Math.floor(this.lineWidth));
+            // Save fillStyle before stroking
+            const savedFillStyle = this.fillStyle;
             // Draw stroke as four filled rectangles
             this.fillStyle = this.strokeStyle;
             // Top
@@ -746,6 +748,8 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
             this.fillRect(x, y, lineWidth, height);
             // Right
             this.fillRect(x + width - lineWidth, y, lineWidth, height);
+            // Restore fillStyle
+            this.fillStyle = savedFillStyle;
           },
 
           clearRect: function (x: number, y: number, width: number, height: number) {
@@ -772,10 +776,27 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
 
           getImageData: function (x: number, y: number, width: number, height: number) {
             const pixels = ensurePixelBuffer();
+            const canvasWidth = element.width;
+            const canvasHeight = element.height;
+
+            // Clamp region to canvas bounds
+            const sx = Math.max(0, Math.floor(x));
+            const sy = Math.max(0, Math.floor(y));
+            const sw = Math.min(width, canvasWidth - sx);
+            const sh = Math.min(height, canvasHeight - sy);
+
+            // Extract sub-region
+            const regionData = new Uint8ClampedArray(sw * sh * 4);
+            for (let row = 0; row < sh; row++) {
+              const srcOffset = ((sy + row) * canvasWidth + sx) * 4;
+              const dstOffset = row * sw * 4;
+              regionData.set(pixels.subarray(srcOffset, srcOffset + sw * 4), dstOffset);
+            }
+
             return {
-              width: element.width,
-              height: element.height,
-              data: pixels,
+              width: sw,
+              height: sh,
+              data: regionData,
             };
           },
 
@@ -820,10 +841,110 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
 }
 
 /**
+ * Registry of created elements for getElementById lookups
+ */
+const createdElements: DOMElement[] = [];
+
+/**
+ * Wrapped createElement that tracks created elements
+ */
+function trackedCreateElement(tagName: string): DOMElement {
+  const el = createElementFn(tagName);
+  createdElements.push(el);
+  return el;
+}
+
+/**
+ * Match an element against a simple CSS selector (tag, #id, .class)
+ */
+function matchesSelector(el: DOMElement, selector: string): boolean {
+  if (selector.startsWith("#")) {
+    return el.id === selector.slice(1);
+  }
+  if (selector.startsWith(".")) {
+    const cls = selector.slice(1);
+    return el.className.split(/\s+/).includes(cls);
+  }
+  return el.tagName.toLowerCase() === selector.toLowerCase();
+}
+
+/**
+ * Find elements matching a selector from a list
+ */
+function querySelectorFromList(selector: string): DOMElement[] {
+  return createdElements.filter((el) => matchesSelector(el, selector));
+}
+
+// Create default body, head, and documentElement
+const bodyElement = createElementFn("body");
+const headElement = createElementFn("head");
+const documentElement = createElementFn("html");
+
+/**
  * Global document object
  */
 export const document = {
-  createElement: createElementFn,
+  createElement: trackedCreateElement,
+
+  getElementById(id: string): DOMElement | null {
+    return createdElements.find((el) => el.id === id) ?? null;
+  },
+
+  querySelector(selector: string): DOMElement | null {
+    const results = querySelectorFromList(selector);
+    return results.length > 0 ? results[0] : null;
+  },
+
+  querySelectorAll(selector: string): DOMElement[] {
+    return querySelectorFromList(selector);
+  },
+
+  createTextNode(text: string): DOMNode {
+    return {
+      nodeType: DOMNodeType.TEXT,
+      nodeName: "#text",
+      textContent: text,
+      childNodes: [],
+      parentNode: null,
+      ownerDocument: null,
+      appendChild() { return this; },
+      removeChild() { return this; },
+      insertBefore() { return this; },
+      replaceChild() { return this; },
+      cloneNode() { return { ...this }; },
+      hasChildNodes() { return false; },
+      contains() { return false; },
+      normalize() {},
+    } as unknown as DOMNode;
+  },
+
+  createDocumentFragment(): DOMNode {
+    const children: DOMNode[] = [];
+    return {
+      nodeType: DOMNodeType.DOCUMENT_FRAGMENT,
+      nodeName: "#document-fragment",
+      textContent: "",
+      childNodes: children,
+      parentNode: null,
+      ownerDocument: null,
+      appendChild(child: DOMNode) { children.push(child); return child; },
+      removeChild(child: DOMNode) {
+        const idx = children.indexOf(child);
+        if (idx >= 0) children.splice(idx, 1);
+        return child;
+      },
+      insertBefore() { return this; },
+      replaceChild() { return this; },
+      cloneNode() { return { ...this }; },
+      hasChildNodes() { return children.length > 0; },
+      contains() { return false; },
+      normalize() {},
+    } as unknown as DOMNode;
+  },
+
+  body: bodyElement,
+  head: headElement,
+  documentElement: documentElement,
 };
 
 /**

@@ -85,11 +85,14 @@ export class V8Isolate {
       ...config,
     };
 
-    // Create isolated heap
-    this.heap = new V8Heap(
-      this.config.heapSize!.youngGeneration,
-      this.config.heapSize!.oldGeneration,
-    );
+    // Create isolated heap using factory
+    this.heap = this.config.heapSize!.youngGeneration === 16 * 1024 * 1024 &&
+        this.config.heapSize!.oldGeneration === 128 * 1024 * 1024
+      ? HeapFactory.createDefault()
+      : new V8Heap(
+        this.config.heapSize!.youngGeneration,
+        this.config.heapSize!.oldGeneration,
+      );
 
     // Start background GC if enabled
     if (this.config.enableBackgroundGC) {
@@ -109,11 +112,13 @@ export class V8Isolate {
       throw new Error(`Maximum context limit reached: ${this.config.maxContexts}`);
     }
 
-    // Create context with shared heap
-    const context = new V8Context({
-      heapSize: this.config.heapSize,
-      ...contextConfig,
-    });
+    // Create context with shared heap, using factory for defaults
+    const context = !contextConfig
+      ? ContextFactory.createDefault()
+      : new V8Context({
+        heapSize: this.config.heapSize,
+        ...contextConfig,
+      });
 
     // Store context
     const contextId = this.generateContextId();
@@ -253,6 +258,14 @@ export class V8Isolate {
    */
   getUptime(): number {
     return performance.now() - this.createdAt;
+  }
+
+  /**
+   * Execute code and return the result value
+   */
+  executeAndGetValue(code: string): JSValue | undefined {
+    const result = this.executeInNewContext(code);
+    return result.value;
   }
 
   /**
@@ -447,6 +460,17 @@ export class IsolateManager {
       isolate.dispose();
     }
     this.isolates.clear();
+  }
+
+  /**
+   * Reset singleton instance
+   * Disposes all isolates and clears the singleton so a fresh instance is created next time.
+   */
+  static resetInstance(): void {
+    if (IsolateManager.instance) {
+      IsolateManager.instance.disposeAll();
+      IsolateManager.instance = null;
+    }
   }
 
   /**
