@@ -181,9 +181,9 @@ export interface PluginContext {
   registerHealthCheck(id: string, handler: HealthCheckHandler): Disposable;
 
   /** Register custom initialization step */
-  registerInitStep(step: InitializationStep): void;
+  registerInitStep(step: InitializationStep): Disposable;
   /** Register custom shutdown step */
-  registerShutdownStep(step: ShutdownStep): void;
+  registerShutdownStep(step: ShutdownStep): Disposable;
 
   // ── Runtime access (scoped) ──
 

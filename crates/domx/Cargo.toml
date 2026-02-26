@@ -1,0 +1,10 @@
+[package]
+name = "domx"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal DOM FFI library for BrowserX"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]

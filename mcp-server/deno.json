@@ -5,6 +5,7 @@
     ".": "./mod.ts"
   },
   "imports": {
+    "@browserx/graphx": "../graphx/mod.ts",
     "@modelcontextprotocol/sdk/server/mcp.js": "npm:@modelcontextprotocol/sdk@1.12.0/server/mcp.js",
     "@modelcontextprotocol/sdk/server/stdio.js": "npm:@modelcontextprotocol/sdk@1.12.0/server/stdio.js",
     "@modelcontextprotocol/sdk/types.js": "npm:@modelcontextprotocol/sdk@1.12.0/types.js",

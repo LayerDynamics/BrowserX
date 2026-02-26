@@ -20,13 +20,11 @@ function readPointer(v: any): Uint8Array {
   return buf
 }
 
-// ── Lazy FFI loader ──────────────────────────────────────────────────────────
-
+// ── Lazy FFI loader ─────────────────────────────────────────────────────────
 let _lib: Deno.DynamicLibrary<Record<string, Deno.ForeignFunction>> | null = null;
 
 function _loadLib() {
   if (_lib !== null) return _lib;
-
   const url = new URL("../../target/release", import.meta.url)
 
   let uri = url.pathname
@@ -42,17 +40,16 @@ function _loadLib() {
   }
 
   const libPaths: Record<string, string> = {
-    darwin: uri + "libwebgpu_x.dylib",
-    windows: uri + "webgpu_x.dll",
-    linux: uri + "libwebgpu_x.so",
-    freebsd: uri + "libwebgpu_x.so",
-    netbsd: uri + "libwebgpu_x.so",
-    aix: uri + "libwebgpu_x.so",
-    solaris: uri + "libwebgpu_x.so",
-    illumos: uri + "libwebgpu_x.so",
-    android: uri + "libwebgpu_x.so",
+      darwin: uri + "libwebgpu_x.dylib",
+      windows: uri + "webgpu_x.dll",
+      linux: uri + "libwebgpu_x.so",
+      freebsd: uri + "libwebgpu_x.so",
+      netbsd: uri + "libwebgpu_x.so",
+      aix: uri + "libwebgpu_x.so",
+      solaris: uri + "libwebgpu_x.so",
+      illumos: uri + "libwebgpu_x.so",
+      android: uri + "libwebgpu_x.so",
   };
-
   _lib = Deno.dlopen(
     libPaths[Deno.build.os] ?? libPaths.linux,
     {
@@ -178,11 +175,71 @@ function _loadLib() {
         result: "u32",
         nonblocking: false,
       },
+      gpu_begin_render_pass: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_calculate_aligned_bytes_per_row: {
+        parameters: ["u32", "u32"],
+        result: "u32",
+        nonblocking: false,
+      },
+      gpu_calculate_readback_buffer_size: {
+        parameters: ["u32", "u32", "u32"],
+        result: "u64",
+        nonblocking: false,
+      },
       gpu_cleanup_all: { parameters: [], result: "void", nonblocking: false },
+      gpu_cleanup_bind_groups: {
+        parameters: [],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_cleanup_command_resources: {
+        parameters: [],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_cleanup_pipelines: {
+        parameters: [],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_copy_texture_to_buffer: {
+        parameters: ["u64", "u64", "u64", "u32", "u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      gpu_create_bind_group: {
+        parameters: ["u64", "u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
       gpu_create_bind_group_layout: {
         parameters: ["u64", "buffer", "usize", "buffer", "usize"],
         result: "u64",
         nonblocking: false,
+      },
+      gpu_create_buffer: {
+        parameters: ["u64", "u64", "u32", "u8"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_command_encoder: {
+        parameters: ["u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_compute_pipeline: {
+        parameters: ["u64", "buffer", "usize", "u64", "buffer", "usize", "u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_compute_pipeline_async: {
+        parameters: ["u64", "buffer", "usize", "u64", "buffer", "usize", "u64"],
+        result: "u64",
+        nonblocking: true,
       },
       gpu_create_empty_bind_group_layout: {
         parameters: ["u64", "buffer", "usize"],
@@ -195,6 +252,63 @@ function _loadLib() {
         nonblocking: false,
       },
       gpu_create_pipeline_layout: {
+        parameters: ["u64", "buffer", "usize", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_readback_buffer: {
+        parameters: ["u64", "u64"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_render_pipeline: {
+        parameters: [
+          "u64",
+          "buffer",
+          "usize",
+          "u64",
+          "buffer",
+          "usize",
+          "u64",
+          "buffer",
+          "usize",
+          "u32",
+          "buffer",
+          "usize",
+          "u32",
+          "u32",
+          "u64",
+        ],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_render_pipeline_async: {
+        parameters: [
+          "u64",
+          "buffer",
+          "usize",
+          "u64",
+          "buffer",
+          "usize",
+          "u64",
+          "buffer",
+          "usize",
+          "u32",
+          "buffer",
+          "usize",
+          "u32",
+          "u32",
+          "u64",
+        ],
+        result: "u64",
+        nonblocking: true,
+      },
+      gpu_create_sampler: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
+      gpu_create_shader_module: {
         parameters: ["u64", "buffer", "usize", "buffer", "usize"],
         result: "u64",
         nonblocking: false,
@@ -218,12 +332,37 @@ function _loadLib() {
         result: "u64",
         nonblocking: false,
       },
+      gpu_create_texture_view: {
+        parameters: ["u64", "buffer", "usize"],
+        result: "u64",
+        nonblocking: false,
+      },
       gpu_destroy_adapter: {
         parameters: ["u64"],
         result: "void",
         nonblocking: false,
       },
+      gpu_destroy_bind_group: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
       gpu_destroy_bind_group_layout: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_buffer: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_command_buffer: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_compute_pipeline: {
         parameters: ["u64"],
         result: "void",
         nonblocking: false,
@@ -238,12 +377,87 @@ function _loadLib() {
         result: "void",
         nonblocking: false,
       },
+      gpu_destroy_readback_buffer: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_render_pipeline: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_render_pipeline_ffi: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_sampler: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_destroy_shader_module: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
       gpu_destroy_texture: {
         parameters: ["u64"],
         result: "void",
         nonblocking: false,
       },
+      gpu_destroy_texture_view: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_end_render_pass: {
+        parameters: ["u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_execute_render_pass: {
+        parameters: ["u64", "buffer", "usize", "u64", "u64", "u32", "u32"],
+        result: "u8",
+        nonblocking: false,
+      },
+      gpu_finish_command_encoder: {
+        parameters: ["u64"],
+        result: "u64",
+        nonblocking: false,
+      },
       gpu_init: { parameters: [], result: "u8", nonblocking: false },
+      gpu_map_and_read_buffer: {
+        parameters: ["u64", "u64"],
+        result: "buffer",
+        nonblocking: false,
+      },
+      gpu_queue_submit: {
+        parameters: ["u64", "u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_render_pass_draw: {
+        parameters: ["u64", "u32", "u32", "u32", "u32"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_render_pass_set_bind_group: {
+        parameters: ["u64", "u32", "u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_render_pass_set_pipeline: {
+        parameters: ["u64", "u64"],
+        result: "void",
+        nonblocking: false,
+      },
+      gpu_render_pass_set_vertex_buffer: {
+        parameters: ["u64", "u32", "u64"],
+        result: "void",
+        nonblocking: false,
+      },
       gpu_request_adapter: {
         parameters: ["u32"],
         result: "u64",
@@ -656,151 +870,11 @@ function _loadLib() {
         result: "buffer",
         nonblocking: false,
       },
-      // GPU Texture Readback
-      gpu_create_readback_buffer: {
-        parameters: ["u64", "u64"],
-        result: "u64",
-        nonblocking: false,
-      },
-      gpu_copy_texture_to_buffer: {
-        parameters: ["u64", "u64", "u64", "u32", "u32", "u32"],
-        result: "u8",
-        nonblocking: false,
-      },
-      gpu_map_and_read_buffer: {
-        parameters: ["u64", "u64"],
-        result: "buffer",
-        nonblocking: false,
-      },
-      gpu_destroy_readback_buffer: {
-        parameters: ["u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_calculate_aligned_bytes_per_row: {
-        parameters: ["u32", "u32"],
-        result: "u32",
-        nonblocking: false,
-      },
-      gpu_calculate_readback_buffer_size: {
-        parameters: ["u32", "u32", "u32"],
-        result: "u64",
-        nonblocking: false,
-      },
-      // GPU Bind Groups
-      gpu_create_buffer: {
-        parameters: ["u64", "u64", "u32", "u8"],
-        result: "u64",
-        nonblocking: false,
-      },
-      gpu_destroy_buffer: {
-        parameters: ["u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_create_texture_view: {
-        parameters: ["u64", "buffer", "usize"],
-        result: "u64",
-        nonblocking: false,
-      },
-      gpu_destroy_texture_view: {
-        parameters: ["u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_create_sampler: {
-        parameters: ["u64", "buffer", "usize"],
-        result: "u64",
-        nonblocking: false,
-      },
-      gpu_destroy_sampler: {
-        parameters: ["u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_create_bind_group: {
-        parameters: ["u64", "u64", "buffer", "usize"],
-        result: "u64",
-        nonblocking: false,
-      },
-      gpu_destroy_bind_group: {
-        parameters: ["u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_cleanup_bind_groups: {
-        parameters: [],
-        result: "void",
-        nonblocking: false,
-      },
-      // GPU Command Encoding
-      gpu_create_command_encoder: {
-        parameters: ["u64"],
-        result: "u64",
-        nonblocking: false,
-      },
-      gpu_begin_render_pass: {
-        parameters: ["u64", "buffer", "usize"],
-        result: "u64",
-        nonblocking: false,
-      },
-      gpu_render_pass_set_pipeline: {
-        parameters: ["u64", "u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_render_pass_set_bind_group: {
-        parameters: ["u64", "u32", "u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_render_pass_set_vertex_buffer: {
-        parameters: ["u64", "u32", "u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_render_pass_draw: {
-        parameters: ["u64", "u32", "u32", "u32", "u32"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_end_render_pass: {
-        parameters: ["u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_finish_command_encoder: {
-        parameters: ["u64"],
-        result: "u64",
-        nonblocking: false,
-      },
-      gpu_queue_submit: {
-        parameters: ["u64", "u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_destroy_command_buffer: {
-        parameters: ["u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_execute_render_pass: {
-        parameters: ["u64", "buffer", "usize", "u64", "u64", "u32", "u32"],
-        result: "u8",
-        nonblocking: false,
-      },
-      gpu_destroy_render_pipeline: {
-        parameters: ["u64"],
-        result: "void",
-        nonblocking: false,
-      },
-      gpu_cleanup_command_resources: {
-        parameters: [],
-        result: "void",
-        nonblocking: false,
-      },
     },
   );
+  /**
+   * macOS system information
+   */
   return _lib;
 }
 
@@ -810,12 +884,6 @@ const symbols = new Proxy({} as ReturnType<typeof _loadLib>["symbols"], {
     return Reflect.get(_loadLib().symbols, prop);
   },
 });
-
-// ── Type exports ─────────────────────────────────────────────────────────────
-
-/**
- * macOS system information
- */
 export type DarwinSystemInfo = {
   os_version: string
   kernel_version: string
@@ -1142,8 +1210,68 @@ export function get_optimal_workgroup_size(a0: number, a1: number, a2: number) {
   const result = rawResult
   return result
 }
+export function gpu_begin_render_pass(a0: bigint, a1: string) {
+  const a1_buf = encode(a1)
+
+  const rawResult = symbols.gpu_begin_render_pass(a0, a1_buf, a1_buf.byteLength)
+  const result = rawResult
+  return result
+}
+export function gpu_calculate_aligned_bytes_per_row(a0: number, a1: number) {
+  const rawResult = symbols.gpu_calculate_aligned_bytes_per_row(a0, a1)
+  const result = rawResult
+  return result
+}
+export function gpu_calculate_readback_buffer_size(
+  a0: number,
+  a1: number,
+  a2: number,
+) {
+  const rawResult = symbols.gpu_calculate_readback_buffer_size(a0, a1, a2)
+  const result = rawResult
+  return result
+}
 export function gpu_cleanup_all() {
   const rawResult = symbols.gpu_cleanup_all()
+  const result = rawResult
+  return result
+}
+export function gpu_cleanup_bind_groups() {
+  const rawResult = symbols.gpu_cleanup_bind_groups()
+  const result = rawResult
+  return result
+}
+export function gpu_cleanup_command_resources() {
+  const rawResult = symbols.gpu_cleanup_command_resources()
+  const result = rawResult
+  return result
+}
+export function gpu_cleanup_pipelines() {
+  const rawResult = symbols.gpu_cleanup_pipelines()
+  const result = rawResult
+  return result
+}
+export function gpu_copy_texture_to_buffer(
+  a0: bigint,
+  a1: bigint,
+  a2: bigint,
+  a3: number,
+  a4: number,
+  a5: number,
+) {
+  const rawResult = symbols.gpu_copy_texture_to_buffer(a0, a1, a2, a3, a4, a5)
+  const result = rawResult
+  return result
+}
+export function gpu_create_bind_group(a0: bigint, a1: bigint, a2: string) {
+  const a2_buf = encode(a2)
+
+  const rawResult = symbols.gpu_create_bind_group(
+    a0,
+    a1,
+    a2_buf,
+    a2_buf.byteLength,
+  )
   const result = rawResult
   return result
 }
@@ -1161,6 +1289,65 @@ export function gpu_create_bind_group_layout(
     a1_buf.byteLength,
     a2_buf,
     a2_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_buffer(
+  a0: bigint,
+  a1: bigint,
+  a2: number,
+  a3: number,
+) {
+  const rawResult = symbols.gpu_create_buffer(a0, a1, a2, a3)
+  const result = rawResult
+  return result
+}
+export function gpu_create_command_encoder(a0: bigint) {
+  const rawResult = symbols.gpu_create_command_encoder(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_create_compute_pipeline(
+  a0: bigint,
+  a1: string,
+  a2: bigint,
+  a3: string,
+  a4: bigint,
+) {
+  const a1_buf = encode(a1)
+  const a3_buf = encode(a3)
+
+  const rawResult = symbols.gpu_create_compute_pipeline(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2,
+    a3_buf,
+    a3_buf.byteLength,
+    a4,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_compute_pipeline_async(
+  a0: bigint,
+  a1: string,
+  a2: bigint,
+  a3: string,
+  a4: bigint,
+) {
+  const a1_buf = encode(a1)
+  const a3_buf = encode(a3)
+
+  const rawResult = symbols.gpu_create_compute_pipeline_async(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2,
+    a3_buf,
+    a3_buf.byteLength,
+    a4,
   )
   const result = rawResult
   return result
@@ -1192,6 +1379,108 @@ export function gpu_create_pipeline_layout(a0: bigint, a1: string, a2: string) {
   const a2_buf = encode(a2)
 
   const rawResult = symbols.gpu_create_pipeline_layout(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_readback_buffer(a0: bigint, a1: bigint) {
+  const rawResult = symbols.gpu_create_readback_buffer(a0, a1)
+  const result = rawResult
+  return result
+}
+export function gpu_create_render_pipeline(
+  a0: bigint,
+  a1: string,
+  a2: bigint,
+  a3: string,
+  a4: bigint,
+  a5: string,
+  a6: number,
+  a7: string,
+  a8: number,
+  a9: number,
+  a10: bigint,
+) {
+  const a1_buf = encode(a1)
+  const a3_buf = encode(a3)
+  const a5_buf = encode(a5)
+  const a7_buf = encode(a7)
+
+  const rawResult = symbols.gpu_create_render_pipeline(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2,
+    a3_buf,
+    a3_buf.byteLength,
+    a4,
+    a5_buf,
+    a5_buf.byteLength,
+    a6,
+    a7_buf,
+    a7_buf.byteLength,
+    a8,
+    a9,
+    a10,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_render_pipeline_async(
+  a0: bigint,
+  a1: string,
+  a2: bigint,
+  a3: string,
+  a4: bigint,
+  a5: string,
+  a6: number,
+  a7: string,
+  a8: number,
+  a9: number,
+  a10: bigint,
+) {
+  const a1_buf = encode(a1)
+  const a3_buf = encode(a3)
+  const a5_buf = encode(a5)
+  const a7_buf = encode(a7)
+
+  const rawResult = symbols.gpu_create_render_pipeline_async(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2,
+    a3_buf,
+    a3_buf.byteLength,
+    a4,
+    a5_buf,
+    a5_buf.byteLength,
+    a6,
+    a7_buf,
+    a7_buf.byteLength,
+    a8,
+    a9,
+    a10,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_create_sampler(a0: bigint, a1: string) {
+  const a1_buf = encode(a1)
+
+  const rawResult = symbols.gpu_create_sampler(a0, a1_buf, a1_buf.byteLength)
+  const result = rawResult
+  return result
+}
+export function gpu_create_shader_module(a0: bigint, a1: string, a2: string) {
+  const a1_buf = encode(a1)
+  const a2_buf = encode(a2)
+
+  const rawResult = symbols.gpu_create_shader_module(
     a0,
     a1_buf,
     a1_buf.byteLength,
@@ -1235,13 +1524,44 @@ export function gpu_create_texture(
   const result = rawResult
   return result
 }
+export function gpu_create_texture_view(a0: bigint, a1: string) {
+  const a1_buf = encode(a1)
+
+  const rawResult = symbols.gpu_create_texture_view(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
 export function gpu_destroy_adapter(a0: bigint) {
   const rawResult = symbols.gpu_destroy_adapter(a0)
   const result = rawResult
   return result
 }
+export function gpu_destroy_bind_group(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_bind_group(a0)
+  const result = rawResult
+  return result
+}
 export function gpu_destroy_bind_group_layout(a0: bigint) {
   const rawResult = symbols.gpu_destroy_bind_group_layout(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_buffer(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_buffer(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_command_buffer(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_command_buffer(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_compute_pipeline(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_compute_pipeline(a0)
   const result = rawResult
   return result
 }
@@ -1255,13 +1575,119 @@ export function gpu_destroy_pipeline_layout(a0: bigint) {
   const result = rawResult
   return result
 }
+export function gpu_destroy_readback_buffer(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_readback_buffer(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_render_pipeline(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_render_pipeline(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_render_pipeline_ffi(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_render_pipeline_ffi(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_sampler(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_sampler(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_destroy_shader_module(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_shader_module(a0)
+  const result = rawResult
+  return result
+}
 export function gpu_destroy_texture(a0: bigint) {
   const rawResult = symbols.gpu_destroy_texture(a0)
   const result = rawResult
   return result
 }
+export function gpu_destroy_texture_view(a0: bigint) {
+  const rawResult = symbols.gpu_destroy_texture_view(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_end_render_pass(a0: bigint) {
+  const rawResult = symbols.gpu_end_render_pass(a0)
+  const result = rawResult
+  return result
+}
+export function gpu_execute_render_pass(
+  a0: bigint,
+  a1: string,
+  a2: bigint,
+  a3: bigint,
+  a4: number,
+  a5: number,
+) {
+  const a1_buf = encode(a1)
+
+  const rawResult = symbols.gpu_execute_render_pass(
+    a0,
+    a1_buf,
+    a1_buf.byteLength,
+    a2,
+    a3,
+    a4,
+    a5,
+  )
+  const result = rawResult
+  return result
+}
+export function gpu_finish_command_encoder(a0: bigint) {
+  const rawResult = symbols.gpu_finish_command_encoder(a0)
+  const result = rawResult
+  return result
+}
 export function gpu_init() {
   const rawResult = symbols.gpu_init()
+  const result = rawResult
+  return result
+}
+export function gpu_map_and_read_buffer(a0: bigint, a1: bigint) {
+  const rawResult = symbols.gpu_map_and_read_buffer(a0, a1)
+  const result = readPointer(rawResult)
+  return decode(result)
+}
+export function gpu_queue_submit(a0: bigint, a1: bigint) {
+  const rawResult = symbols.gpu_queue_submit(a0, a1)
+  const result = rawResult
+  return result
+}
+export function gpu_render_pass_draw(
+  a0: bigint,
+  a1: number,
+  a2: number,
+  a3: number,
+  a4: number,
+) {
+  const rawResult = symbols.gpu_render_pass_draw(a0, a1, a2, a3, a4)
+  const result = rawResult
+  return result
+}
+export function gpu_render_pass_set_bind_group(
+  a0: bigint,
+  a1: number,
+  a2: bigint,
+) {
+  const rawResult = symbols.gpu_render_pass_set_bind_group(a0, a1, a2)
+  const result = rawResult
+  return result
+}
+export function gpu_render_pass_set_pipeline(a0: bigint, a1: bigint) {
+  const rawResult = symbols.gpu_render_pass_set_pipeline(a0, a1)
+  const result = rawResult
+  return result
+}
+export function gpu_render_pass_set_vertex_buffer(
+  a0: bigint,
+  a1: number,
+  a2: bigint,
+) {
+  const rawResult = symbols.gpu_render_pass_set_vertex_buffer(a0, a1, a2)
   const result = rawResult
   return result
 }
@@ -1916,237 +2342,20 @@ export function windows_recommended_memory_strategy() {
   return decode(result)
 }
 
-// ============================================================================
-// GPU Texture Readback Functions
-// ============================================================================
-
-export function gpu_create_readback_buffer(a0: bigint, a1: bigint) {
-  const rawResult = symbols.gpu_create_readback_buffer(a0, a1)
-  const result = rawResult
-  return result
+/**
+ * Pre-load the FFI library. Call this early to avoid lazy-load latency
+ * on the first FFI call.
+ */
+export function preloadLib(): void {
+  _loadLib();
 }
 
-export function gpu_copy_texture_to_buffer(
-  a0: bigint,
-  a1: bigint,
-  a2: bigint,
-  a3: number,
-  a4: number,
-  a5: number,
-) {
-  const rawResult = symbols.gpu_copy_texture_to_buffer(a0, a1, a2, a3, a4, a5)
-  const result = rawResult
-  return result
-}
-
-export function gpu_map_and_read_buffer(a0: bigint, a1: bigint) {
-  const rawResult = symbols.gpu_map_and_read_buffer(a0, a1)
-  const result = readPointer(rawResult)
-  return decode(result)
-}
-
-export function gpu_destroy_readback_buffer(a0: bigint) {
-  const rawResult = symbols.gpu_destroy_readback_buffer(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_calculate_aligned_bytes_per_row(a0: number, a1: number) {
-  const rawResult = symbols.gpu_calculate_aligned_bytes_per_row(a0, a1)
-  const result = rawResult
-  return result
-}
-
-export function gpu_calculate_readback_buffer_size(
-  a0: number,
-  a1: number,
-  a2: number,
-) {
-  const rawResult = symbols.gpu_calculate_readback_buffer_size(a0, a1, a2)
-  const result = rawResult
-  return result
-}
-
-// ============================================================================
-// GPU Bind Group Functions
-// ============================================================================
-
-export function gpu_create_buffer(
-  a0: bigint,
-  a1: bigint,
-  a2: number,
-  a3: number,
-) {
-  const rawResult = symbols.gpu_create_buffer(a0, a1, a2, a3)
-  const result = rawResult
-  return result
-}
-
-export function gpu_destroy_buffer(a0: bigint) {
-  const rawResult = symbols.gpu_destroy_buffer(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_create_texture_view(a0: bigint, a1: string) {
-  const a1_buf = encode(a1)
-
-  const rawResult = symbols.gpu_create_texture_view(a0, a1_buf, a1_buf.byteLength)
-  const result = rawResult
-  return result
-}
-
-export function gpu_destroy_texture_view(a0: bigint) {
-  const rawResult = symbols.gpu_destroy_texture_view(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_create_sampler(a0: bigint, a1: string) {
-  const a1_buf = encode(a1)
-
-  const rawResult = symbols.gpu_create_sampler(a0, a1_buf, a1_buf.byteLength)
-  const result = rawResult
-  return result
-}
-
-export function gpu_destroy_sampler(a0: bigint) {
-  const rawResult = symbols.gpu_destroy_sampler(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_create_bind_group(a0: bigint, a1: bigint, a2: string) {
-  const a2_buf = encode(a2)
-
-  const rawResult = symbols.gpu_create_bind_group(a0, a1, a2_buf, a2_buf.byteLength)
-  const result = rawResult
-  return result
-}
-
-export function gpu_destroy_bind_group(a0: bigint) {
-  const rawResult = symbols.gpu_destroy_bind_group(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_cleanup_bind_groups() {
-  const rawResult = symbols.gpu_cleanup_bind_groups()
-  const result = rawResult
-  return result
-}
-
-// ============================================================================
-// GPU Command Encoding Functions
-// ============================================================================
-
-export function gpu_create_command_encoder(a0: bigint) {
-  const rawResult = symbols.gpu_create_command_encoder(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_begin_render_pass(a0: bigint, a1: string) {
-  const a1_buf = encode(a1)
-
-  const rawResult = symbols.gpu_begin_render_pass(a0, a1_buf, a1_buf.byteLength)
-  const result = rawResult
-  return result
-}
-
-export function gpu_render_pass_set_pipeline(a0: bigint, a1: bigint) {
-  const rawResult = symbols.gpu_render_pass_set_pipeline(a0, a1)
-  const result = rawResult
-  return result
-}
-
-export function gpu_render_pass_set_bind_group(
-  a0: bigint,
-  a1: number,
-  a2: bigint,
-) {
-  const rawResult = symbols.gpu_render_pass_set_bind_group(a0, a1, a2)
-  const result = rawResult
-  return result
-}
-
-export function gpu_render_pass_set_vertex_buffer(
-  a0: bigint,
-  a1: number,
-  a2: bigint,
-) {
-  const rawResult = symbols.gpu_render_pass_set_vertex_buffer(a0, a1, a2)
-  const result = rawResult
-  return result
-}
-
-export function gpu_render_pass_draw(
-  a0: bigint,
-  a1: number,
-  a2: number,
-  a3: number,
-  a4: number,
-) {
-  const rawResult = symbols.gpu_render_pass_draw(a0, a1, a2, a3, a4)
-  const result = rawResult
-  return result
-}
-
-export function gpu_end_render_pass(a0: bigint) {
-  const rawResult = symbols.gpu_end_render_pass(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_finish_command_encoder(a0: bigint) {
-  const rawResult = symbols.gpu_finish_command_encoder(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_queue_submit(a0: bigint, a1: bigint) {
-  const rawResult = symbols.gpu_queue_submit(a0, a1)
-  const result = rawResult
-  return result
-}
-
-export function gpu_destroy_command_buffer(a0: bigint) {
-  const rawResult = symbols.gpu_destroy_command_buffer(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_execute_render_pass(
-  a0: bigint,
-  a1: string,
-  a2: bigint,
-  a3: bigint,
-  a4: number,
-  a5: number,
-) {
-  const a1_buf = encode(a1)
-
-  const rawResult = symbols.gpu_execute_render_pass(
-    a0,
-    a1_buf,
-    a1_buf.byteLength,
-    a2,
-    a3,
-    a4,
-    a5,
-  )
-  const result = rawResult
-  return result
-}
-
-export function gpu_destroy_render_pipeline(a0: bigint) {
-  const rawResult = symbols.gpu_destroy_render_pipeline(a0)
-  const result = rawResult
-  return result
-}
-
-export function gpu_cleanup_command_resources() {
-  const rawResult = symbols.gpu_cleanup_command_resources()
-  const result = rawResult
-  return result
+/**
+ * Close the FFI library and release native resources.
+ */
+export function closeLib(): void {
+  if (_lib !== null) {
+    _lib.close();
+    _lib = null;
+  }
 }

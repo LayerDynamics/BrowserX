@@ -89,6 +89,10 @@ export const ASTTree: React.FC = () => {
     return <div className="visualizer-empty">Validating…</div>;
   }
 
+  if (typeof astData !== 'object' || astData === null) {
+    return <div className="visualizer-empty">Invalid AST data received.</div>;
+  }
+
   return (
     <div className="ast-tree">
       <ASTNode label="root" value={astData} depth={0} />

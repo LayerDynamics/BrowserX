@@ -2,6 +2,8 @@ use parking_lot::Mutex;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use crate::gpu::device::DEVICES;
+use crate::gpu::bind_group::GPU_BUFFERS;
 
 /// Chunk size for staging belt (1KB to 64KB typical)
 pub struct StagingBelt {
@@ -11,6 +13,7 @@ pub struct StagingBelt {
     sender: Sender<Chunk>,
     receiver: Receiver<Chunk>,
     next_buffer_id: u64,
+    device_handle: u64,
 }
 
 struct Chunk {
@@ -30,6 +33,20 @@ impl StagingBelt {
             sender,
             receiver,
             next_buffer_id: 1,
+            device_handle: 1,
+        }
+    }
+
+    pub fn new_with_device(chunk_size: u64, device_handle: u64) -> Self {
+        let (sender, receiver) = channel();
+        Self {
+            chunk_size,
+            active_chunks: Vec::new(),
+            free_chunks: Vec::new(),
+            sender,
+            receiver,
+            next_buffer_id: 1,
+            device_handle,
         }
     }
 
@@ -80,6 +97,20 @@ impl StagingBelt {
         } else {
             let buffer_id = self.next_buffer_id;
             self.next_buffer_id += 1;
+
+            // Create a real wgpu buffer with MAP_WRITE | COPY_SRC usage for staging
+            let devices = DEVICES.read();
+            if let Some((device, _queue)) = devices.get(&self.device_handle) {
+                let usage = wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC;
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("staging_belt_chunk"),
+                    size: self.chunk_size,
+                    usage,
+                    mapped_at_creation: false,
+                });
+                GPU_BUFFERS.write().insert(buffer_id, buffer);
+            }
+            drop(devices);
 
             Chunk {
                 buffer_handle: buffer_id,

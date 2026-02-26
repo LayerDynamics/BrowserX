@@ -9,9 +9,8 @@ RUN npm ci
 # Copy all doc-site source files
 COPY doc-site/ .
 
-# BROWSERX_API_URL is used by the SSR server for API proxy calls
+# BROWSERX_API_URL is used by the SSR server for API proxy calls (build-time only)
 ARG BROWSERX_API_URL=http://browserx-api:8080
-ENV BROWSERX_API_URL=${BROWSERX_API_URL}
 
 RUN npm run build
 
@@ -21,11 +20,17 @@ WORKDIR /app
 
 # Only copy what the standalone server needs
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json /app/package-lock.json ./
+RUN npm ci --omit=dev
+
+RUN addgroup -S app && adduser -S app -G app
+RUN chown -R app:app /app
+USER app
 
 ENV HOST=0.0.0.0
 ENV PORT=3000
 ENV NODE_ENV=production
+ENV BROWSERX_API_URL=
 
 EXPOSE 3000
 

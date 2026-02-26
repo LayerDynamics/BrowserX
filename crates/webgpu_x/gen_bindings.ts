@@ -86,12 +86,14 @@ const { symbols } = Deno.dlopen(
   const typeExportsMatch = source.match(/\n\/\/\s*──\s*Type exports/);
   let ffiSectionEnd = typeExportsMatch?.index ?? -1;
   if (ffiSectionEnd === -1) {
-    const exportFunctionMatch = source.match(/\nexport\s+function\s+/);
-    ffiSectionEnd = exportFunctionMatch?.index ?? -1;
-  }
-  if (ffiSectionEnd === -1) {
+    // Check for export type BEFORE export function — types come first
+    // in codegen output and must stay outside the lazy loader function.
     const exportTypeMatch = source.match(/\nexport\s+type\s+/);
     ffiSectionEnd = exportTypeMatch?.index ?? -1;
+  }
+  if (ffiSectionEnd === -1) {
+    const exportFunctionMatch = source.match(/\nexport\s+function\s+/);
+    ffiSectionEnd = exportFunctionMatch?.index ?? -1;
   }
 
   if (ffiSectionStart === -1 || ffiSectionEnd === -1 || ffiSectionStart >= ffiSectionEnd) {
@@ -146,6 +148,27 @@ const { symbols } = Deno.dlopen(
     source = source.slice(0, ffiSectionStart) + lazyBlock + source.slice(ffiSectionEnd);
     console.log("  Applied lazy FFI loader transformation");
   }
+
+  // Add preloadLib and closeLib utility functions for the lazy loader
+  source += `
+/**
+ * Pre-load the FFI library. Call this early to avoid lazy-load latency
+ * on the first FFI call.
+ */
+export function preloadLib(): void {
+  _loadLib();
+}
+
+/**
+ * Close the FFI library and release native resources.
+ */
+export function closeLib(): void {
+  if (_lib !== null) {
+    _lib.close();
+    _lib = null;
+  }
+}
+`;
 
   console.log("Writing bindings/bindings.ts...");
   await ensureDir("bindings");

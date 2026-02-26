@@ -10,6 +10,7 @@ import type { DOMDocument, DOMElement, DOMNode } from "../../types/dom.ts";
 import { DOMNodeType } from "../../types/dom.ts";
 import type { NodeID } from "../../types/identifiers.ts";
 import { V8Context } from "./V8Context.ts";
+import { BytecodeGenerator, type ProgramNode } from "./V8Compiler.ts";
 import {
   createBoolean,
   createNativeFunction,
@@ -22,12 +23,40 @@ import {
   defineSetter,
   getProperty,
   isBoolean,
+  isFunction,
   isObject,
   isString,
   type JSValue,
   setProperty,
   toString,
 } from "./JSValue.ts";
+
+/** Escape HTML attribute values to prevent XSS in serialized HTML */
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Void HTML elements that have no closing tag */
+const VOID_ELEMENTS = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
+]);
 
 /**
  * JavaScript-exposed DOM Node
@@ -343,9 +372,10 @@ export class DOMBindings {
     setProperty(
       obj,
       "textContent",
-      this.computeTextContent(nativeNode) !== null
-        ? createString(this.computeTextContent(nativeNode)!)
-        : createNull(),
+      (() => {
+        const tc = this.computeTextContent(nativeNode);
+        return tc !== null ? createString(tc) : createNull();
+      })(),
     );
 
     // Tree navigation (as getters would require Proxy, install current values)
@@ -508,14 +538,50 @@ export class DOMBindings {
       id: "",
       className: "",
       classList: {
-        length: 0,
-        value: "",
-        item: () => null,
-        add: () => {},
-        remove: () => {},
-        contains: () => false,
-        toggle: () => false,
-        replace: () => false,
+        get length() {
+          const cn = element.className?.trim();
+          return cn ? cn.split(/\s+/).length : 0;
+        },
+        get value() {
+          return element.className ?? "";
+        },
+        item(index: number) {
+          const classes = (element.className ?? "").trim().split(/\s+/).filter(Boolean);
+          return classes[index] ?? null;
+        },
+        add(cls: string) {
+          const classes = (element.className ?? "").trim().split(/\s+/).filter(Boolean);
+          if (!classes.includes(cls)) {
+            classes.push(cls);
+            element.className = classes.join(" ");
+            element.attributes!.set("class", element.className!);
+          }
+        },
+        remove(cls: string) {
+          const classes = (element.className ?? "").trim().split(/\s+/).filter(Boolean);
+          const filtered = classes.filter((c: string) => c !== cls);
+          element.className = filtered.join(" ");
+          element.attributes!.set("class", element.className!);
+        },
+        contains(cls: string) {
+          const classes = (element.className ?? "").trim().split(/\s+/).filter(Boolean);
+          return classes.includes(cls);
+        },
+        toggle(cls: string) {
+          if (this.contains(cls)) {
+            this.remove(cls);
+            return false;
+          } else {
+            this.add(cls);
+            return true;
+          }
+        },
+        replace(oldCls: string, newCls: string) {
+          if (!this.contains(oldCls)) return false;
+          this.remove(oldCls);
+          this.add(newCls);
+          return true;
+        },
       },
       getAttribute(name: string) {
         return this.attributes!.get(name) ?? null;
@@ -591,46 +657,40 @@ export class DOMBindings {
    * Install tree navigation properties on a JSValue
    */
   private installTreeNavigation(obj: JSValue, nativeNode: DOMNode): void {
-    // parentNode
-    setProperty(
-      obj,
-      "parentNode",
-      nativeNode.parentNode ? this.wrapNodeAsJSValue(nativeNode.parentNode) : createNull(),
+    // Use defineGetter for dynamic/live tree navigation that reflects current DOM state
+
+    // parentNode — live getter
+    defineGetter(obj, "parentNode", () =>
+      nativeNode.parentNode ? this.wrapNodeAsJSValue(nativeNode.parentNode) : createNull()
     );
 
-    // childNodes - wrap as JSValue array-like object
-    const childNodesObj = createObject();
-    const children = nativeNode.childNodes ?? [];
-    for (let i = 0; i < children.length; i++) {
-      setProperty(childNodesObj, String(i), this.wrapNodeAsJSValue(children[i]));
-    }
-    setProperty(childNodesObj, "length", createNumber(children.length));
-    setProperty(obj, "childNodes", childNodesObj);
+    // childNodes — live getter returning array-like object
+    defineGetter(obj, "childNodes", () => {
+      const childNodesObj = createObject();
+      const children = nativeNode.childNodes ?? [];
+      for (let i = 0; i < children.length; i++) {
+        setProperty(childNodesObj, String(i), this.wrapNodeAsJSValue(children[i]));
+      }
+      setProperty(childNodesObj, "length", createNumber(children.length));
+      return childNodesObj;
+    });
 
-    // firstChild / lastChild
-    setProperty(
-      obj,
-      "firstChild",
-      nativeNode.firstChild ? this.wrapNodeAsJSValue(nativeNode.firstChild) : createNull(),
+    // firstChild / lastChild — live getters
+    defineGetter(obj, "firstChild", () =>
+      nativeNode.firstChild ? this.wrapNodeAsJSValue(nativeNode.firstChild) : createNull()
     );
-    setProperty(
-      obj,
-      "lastChild",
-      nativeNode.lastChild ? this.wrapNodeAsJSValue(nativeNode.lastChild) : createNull(),
+    defineGetter(obj, "lastChild", () =>
+      nativeNode.lastChild ? this.wrapNodeAsJSValue(nativeNode.lastChild) : createNull()
     );
 
-    // siblings
-    setProperty(
-      obj,
-      "previousSibling",
+    // siblings — live getters
+    defineGetter(obj, "previousSibling", () =>
       nativeNode.previousSibling
         ? this.wrapNodeAsJSValue(nativeNode.previousSibling)
-        : createNull(),
+        : createNull()
     );
-    setProperty(
-      obj,
-      "nextSibling",
-      nativeNode.nextSibling ? this.wrapNodeAsJSValue(nativeNode.nextSibling) : createNull(),
+    defineGetter(obj, "nextSibling", () =>
+      nativeNode.nextSibling ? this.wrapNodeAsJSValue(nativeNode.nextSibling) : createNull()
     );
   }
 
@@ -941,21 +1001,35 @@ export class DOMBindings {
         : createNull(),
     );
 
-    // innerHTML (getter - serializes child nodes to HTML string)
-    setProperty(obj, "innerHTML", createString(this.serializeChildren(element)));
+    // innerHTML (getter/setter - serializes child nodes to HTML string, setter replaces children)
+    defineGetter(obj, "innerHTML", () => createString(this.serializeChildren(element)));
+    defineSetter(obj, "innerHTML", (v: JSValue) => {
+      const html = isString(v) ? v.value : toString(v);
+      // Remove all existing children
+      while (element.childNodes && element.childNodes.length > 0) {
+        this.removeChildNative(element, element.childNodes[0]);
+      }
+      // Parse HTML string into proper DOM nodes
+      if (html.length > 0) {
+        this.parseHTMLFragment(html, element);
+      }
+    });
 
     // outerHTML (getter - serializes element itself to HTML string)
-    setProperty(obj, "outerHTML", createString(this.serializeNode(element)));
+    defineGetter(obj, "outerHTML", () => createString(this.serializeNode(element)));
 
-    // Event handling stubs (functional - store listeners on the element)
-    const listeners: Map<string, Array<(...args: unknown[]) => void>> = new Map();
+    // Event handling (functional - store listeners on the element)
+    const listeners: Map<string, Array<JSValue>> = new Map();
     setProperty(
       obj,
       "addEventListener",
       createNativeFunction("addEventListener", (...args: JSValue[]) => {
         const type = isString(args[0]) ? args[0].value : toString(args[0]);
         if (!listeners.has(type)) listeners.set(type, []);
-        // Store reference for removeEventListener
+        const callback = args[1];
+        if (callback) {
+          listeners.get(type)!.push(callback);
+        }
         return createUndefined();
       }, 2),
     );
@@ -963,13 +1037,51 @@ export class DOMBindings {
     setProperty(
       obj,
       "removeEventListener",
-      createNativeFunction("removeEventListener", () => createUndefined(), 2),
+      createNativeFunction("removeEventListener", (...args: JSValue[]) => {
+        const type = isString(args[0]) ? args[0].value : toString(args[0]);
+        const callback = args[1];
+        const typeListeners = listeners.get(type);
+        if (typeListeners && callback) {
+          const idx = typeListeners.indexOf(callback);
+          if (idx !== -1) typeListeners.splice(idx, 1);
+        }
+        return createUndefined();
+      }, 2),
     );
 
     setProperty(
       obj,
       "dispatchEvent",
-      createNativeFunction("dispatchEvent", () => createBoolean(true), 1),
+      createNativeFunction("dispatchEvent", (...args: JSValue[]) => {
+        const event = args[0];
+        const type = event && isObject(event) ? toString(getProperty(event, "type")) : "";
+        const typeListeners = listeners.get(type);
+        if (typeListeners) {
+          for (const listener of typeListeners) {
+            if (isFunction(listener)) {
+              if (listener.value.isNative && listener.value.nativeImpl) {
+                listener.value.nativeImpl(event);
+              } else if (listener.value.code && typeof listener.value.code === "object") {
+                // Non-native JS function: compile and execute via interpreter
+                try {
+                  const funcNode = listener.value.code as { body?: { body: unknown[] } };
+                  if (funcNode.body) {
+                    const generator = new BytecodeGenerator();
+                    const compiled = generator.generate({
+                      type: "Program",
+                      body: funcNode.body.body,
+                    } as unknown as ProgramNode);
+                    this.context.getInterpreter().executeFunction(compiled, [event ?? createUndefined()]);
+                  }
+                } catch {
+                  // Best-effort execution
+                }
+              }
+            }
+          }
+        }
+        return createBoolean(true);
+      }, 1),
     );
   }
 
@@ -1045,12 +1157,26 @@ export class DOMBindings {
         const eventType = isObject(eventObj)
           ? toString(getProperty(eventObj, "type"))
           : toString(eventObj);
-        const listeners = docEventListeners.get(eventType) ?? [];
-        for (const listener of listeners) {
-          if (
-            listener.type === "function" && listener.value.isNative && listener.value.nativeImpl
-          ) {
-            listener.value.nativeImpl(eventObj ?? createUndefined());
+        const docListeners = docEventListeners.get(eventType) ?? [];
+        for (const listener of docListeners) {
+          if (listener.type === "function") {
+            if (listener.value.isNative && listener.value.nativeImpl) {
+              listener.value.nativeImpl(eventObj ?? createUndefined());
+            } else if (listener.value.code && typeof listener.value.code === "object") {
+              try {
+                const funcNode = listener.value.code as { body?: { body: unknown[] } };
+                if (funcNode.body) {
+                  const generator = new BytecodeGenerator();
+                  const compiled = generator.generate({
+                    type: "Program",
+                    body: funcNode.body.body,
+                  } as unknown as ProgramNode);
+                  this.context.getInterpreter().executeFunction(compiled, [eventObj ?? createUndefined()]);
+                }
+              } catch {
+                // Best-effort execution
+              }
+            }
           }
         }
         return createBoolean(true);
@@ -1196,17 +1322,7 @@ export class DOMBindings {
       }, 0),
     );
 
-    // Event handling on document
-    setProperty(
-      obj,
-      "addEventListener",
-      createNativeFunction("addEventListener", () => createUndefined(), 2),
-    );
-    setProperty(
-      obj,
-      "removeEventListener",
-      createNativeFunction("removeEventListener", () => createUndefined(), 2),
-    );
+    // Event handling on document — functional implementation at lines 1052-1075 is authoritative
   }
 
   // =========================================================================
@@ -1470,49 +1586,278 @@ export class DOMBindings {
    * Query selector (supports #id, .class, tagName selectors)
    */
   querySelector(node: DOMNode, selector: string): DOMNode | null {
-    if (selector === "*") {
-      return this.getFirstByTagName(node, "*");
-    }
-
-    if (selector.startsWith("#")) {
-      return this.getElementById(node, selector.substring(1));
-    }
-
-    if (selector.startsWith(".")) {
-      const className = selector.substring(1);
-      const results = this.getElementsByClassName(node, className);
-      return results.length > 0 ? results[0] : null;
-    }
-
-    if (selector.match(/^[a-zA-Z][a-zA-Z0-9]*$/)) {
-      return this.getFirstByTagName(node, selector.toLowerCase());
-    }
-
-    return null;
+    const results = this.querySelectorAll(node, selector);
+    return results.length > 0 ? results[0] : null;
   }
 
   /**
-   * Query all matching elements
+   * Query all matching elements — supports:
+   * - Simple selectors: tagName, #id, .class, *
+   * - Compound selectors: div.foo, input#name.active
+   * - Attribute selectors: [attr], [attr="value"], [attr^="prefix"], [attr$="suffix"], [attr*="substr"]
+   * - Descendant combinator: div p, .parent .child
+   * - Child combinator: div > p
+   * - Comma-separated lists: div, span
    */
   querySelectorAll(node: DOMNode, selector: string): DOMNode[] {
-    if (selector === "*") {
-      return this.getElementsByTagName(node, "*");
+    // Handle comma-separated selectors
+    if (selector.includes(",")) {
+      const parts = selector.split(",").map((s) => s.trim()).filter(Boolean);
+      const seen = new Set<DOMNode>();
+      const results: DOMNode[] = [];
+      for (const part of parts) {
+        for (const match of this.querySelectorAll(node, part)) {
+          if (!seen.has(match)) {
+            seen.add(match);
+            results.push(match);
+          }
+        }
+      }
+      return results;
     }
 
-    if (selector.startsWith("#")) {
-      const result = this.getElementById(node, selector.substring(1));
-      return result ? [result] : [];
+    // Split on descendant/child combinators
+    const tokens = this.tokenizeSelectorCombinators(selector.trim());
+
+    if (tokens.length === 1) {
+      // Single compound selector — no combinators, search entire subtree (including root)
+      const results: DOMNode[] = [];
+      this.collectMatchingCompound(node, tokens[0].selector, results);
+      return results;
     }
 
-    if (selector.startsWith(".")) {
-      return this.getElementsByClassName(node, selector.substring(1));
+    // Multi-part selector with combinators
+    let candidates: DOMNode[] = [];
+    this.collectMatchingCompound(node, tokens[0].selector, candidates);
+
+    for (let i = 1; i < tokens.length; i++) {
+      const combinator = tokens[i].combinator;
+      const compoundSel = tokens[i].selector;
+      const nextCandidates: DOMNode[] = [];
+
+      for (const parent of candidates) {
+        if (combinator === ">") {
+          // Child combinator — only direct children
+          for (const child of parent.childNodes ?? []) {
+            if (child.nodeType === DOMNodeType.ELEMENT && this.matchesCompound(child as DOMElement, compoundSel)) {
+              nextCandidates.push(child);
+            }
+          }
+        } else {
+          // Descendant combinator (space)
+          const matches: DOMNode[] = [];
+          this.collectMatchingDescendants(parent, compoundSel, matches);
+          nextCandidates.push(...matches);
+        }
+      }
+      candidates = nextCandidates;
     }
 
-    if (selector.match(/^[a-zA-Z][a-zA-Z0-9]*$/)) {
-      return this.getElementsByTagName(node, selector.toLowerCase());
+    return candidates;
+  }
+
+  /**
+   * Tokenize a selector string into compound selectors and combinators
+   */
+  private tokenizeSelectorCombinators(selector: string): Array<{ combinator: string; selector: string }> {
+    const tokens: Array<{ combinator: string; selector: string }> = [];
+    let current = "";
+    let i = 0;
+    const len = selector.length;
+
+    while (i < len) {
+      // Check for child combinator '>'
+      if (selector[i] === ">" && current.trim()) {
+        tokens.push({ combinator: tokens.length === 0 ? "" : " ", selector: current.trim() });
+        current = "";
+        i++; // skip '>'
+        // The next token has '>' combinator
+        // Skip whitespace
+        while (i < len && selector[i] === " ") i++;
+        // Collect next compound
+        let next = "";
+        while (i < len && selector[i] !== " " && selector[i] !== ">") {
+          // Include attribute selectors (brackets)
+          if (selector[i] === "[") {
+            while (i < len && selector[i] !== "]") next += selector[i++];
+            if (i < len) next += selector[i++]; // include ']'
+          } else {
+            next += selector[i++];
+          }
+        }
+        tokens.push({ combinator: ">", selector: next.trim() });
+        continue;
+      }
+
+      // Check for whitespace (descendant combinator)
+      if (selector[i] === " " && current.trim()) {
+        // Look ahead to check if it's a child combinator
+        let j = i;
+        while (j < len && selector[j] === " ") j++;
+        if (j < len && selector[j] === ">") {
+          i = j;
+          continue;
+        }
+        tokens.push({ combinator: tokens.length === 0 ? "" : " ", selector: current.trim() });
+        current = "";
+        i = j;
+        continue;
+      }
+
+      // Include brackets as part of compound
+      if (selector[i] === "[") {
+        while (i < len && selector[i] !== "]") current += selector[i++];
+        if (i < len) current += selector[i++]; // include ']'
+        continue;
+      }
+
+      current += selector[i++];
+    }
+    if (current.trim()) {
+      tokens.push({ combinator: tokens.length === 0 ? "" : " ", selector: current.trim() });
+    }
+    return tokens;
+  }
+
+  /**
+   * Collect matching descendants only (exclude the root node itself)
+   */
+  private collectMatchingDescendants(node: DOMNode, compoundSelector: string, results: DOMNode[]): void {
+    if (node.childNodes) {
+      for (const child of node.childNodes) {
+        this.collectMatchingCompound(child, compoundSelector, results);
+      }
+    }
+  }
+
+  /**
+   * Collect all descendant elements matching a compound selector (includes node itself)
+   */
+  private collectMatchingCompound(node: DOMNode, compoundSelector: string, results: DOMNode[]): void {
+    if (node.nodeType === DOMNodeType.ELEMENT) {
+      if (this.matchesCompound(node as DOMElement, compoundSelector)) {
+        results.push(node);
+      }
+    }
+    if (node.childNodes) {
+      for (const child of node.childNodes) {
+        this.collectMatchingCompound(child, compoundSelector, results);
+      }
+    }
+  }
+
+  /**
+   * Test if an element matches a compound selector (e.g., "div.foo#bar[type='text']")
+   */
+  private matchesCompound(element: DOMElement, compoundSelector: string): boolean {
+    if (compoundSelector === "*") return true;
+
+    // Parse compound selector into parts: tag, ids, classes, attributes
+    const parts = this.parseCompoundSelector(compoundSelector);
+
+    // Check tag
+    if (parts.tag && parts.tag !== "*" && element.tagName?.toLowerCase() !== parts.tag.toLowerCase()) {
+      return false;
     }
 
-    return [];
+    // Check id
+    if (parts.id) {
+      const elId = element.id || element.attributes?.get("id") || "";
+      if (elId !== parts.id) return false;
+    }
+
+    // Check classes
+    const elClasses = (element.className || element.attributes?.get("class") || "").split(/\s+/);
+    for (const cls of parts.classes) {
+      if (!elClasses.includes(cls)) return false;
+    }
+
+    // Check attribute selectors
+    for (const attr of parts.attributes) {
+      const attrVal = element.attributes?.get(attr.name) ?? null;
+      if (attr.op === null) {
+        // [attr] — just check existence
+        if (attrVal === null) return false;
+      } else if (attr.op === "=") {
+        if (attrVal !== attr.value) return false;
+      } else if (attr.op === "^=") {
+        if (attrVal === null || !attrVal.startsWith(attr.value)) return false;
+      } else if (attr.op === "$=") {
+        if (attrVal === null || !attrVal.endsWith(attr.value)) return false;
+      } else if (attr.op === "*=") {
+        if (attrVal === null || !attrVal.includes(attr.value)) return false;
+      } else if (attr.op === "~=") {
+        if (attrVal === null || !attrVal.split(/\s+/).includes(attr.value)) return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Parse a compound selector into its constituent parts
+   */
+  private parseCompoundSelector(selector: string): {
+    tag: string | null;
+    id: string | null;
+    classes: string[];
+    attributes: Array<{ name: string; op: string | null; value: string }>;
+  } {
+    let tag: string | null = null;
+    let id: string | null = null;
+    const classes: string[] = [];
+    const attributes: Array<{ name: string; op: string | null; value: string }> = [];
+
+    let i = 0;
+    const len = selector.length;
+
+    // Parse leading tag name
+    if (i < len && /[a-zA-Z*]/.test(selector[i])) {
+      let t = "";
+      while (i < len && /[a-zA-Z0-9\-]/.test(selector[i])) t += selector[i++];
+      tag = t;
+    }
+
+    while (i < len) {
+      if (selector[i] === "#") {
+        i++;
+        let idStr = "";
+        while (i < len && /[a-zA-Z0-9\-_]/.test(selector[i])) idStr += selector[i++];
+        id = idStr;
+      } else if (selector[i] === ".") {
+        i++;
+        let cls = "";
+        while (i < len && /[a-zA-Z0-9\-_]/.test(selector[i])) cls += selector[i++];
+        classes.push(cls);
+      } else if (selector[i] === "[") {
+        i++; // skip '['
+        let attrName = "";
+        while (i < len && /[a-zA-Z0-9\-_]/.test(selector[i])) attrName += selector[i++];
+        if (i < len && selector[i] === "]") {
+          i++; // just [attr]
+          attributes.push({ name: attrName, op: null, value: "" });
+        } else {
+          // Parse operator
+          let op = "";
+          while (i < len && /[=^$*~|!]/.test(selector[i])) op += selector[i++];
+          // Parse value
+          let val = "";
+          if (i < len && (selector[i] === '"' || selector[i] === "'")) {
+            const q = selector[i++];
+            while (i < len && selector[i] !== q) val += selector[i++];
+            if (i < len) i++; // skip closing quote
+          } else {
+            while (i < len && selector[i] !== "]") val += selector[i++];
+          }
+          if (i < len && selector[i] === "]") i++; // skip ']'
+          attributes.push({ name: attrName, op: op || "=", value: val });
+        }
+      } else {
+        i++;
+      }
+    }
+
+    return { tag, id, classes, attributes };
   }
 
   /**
@@ -1656,20 +2001,7 @@ export class DOMBindings {
    * Test if an element matches a simple CSS selector
    */
   private matchesSelector(element: DOMElement, selector: string): boolean {
-    if (selector === "*") return true;
-    if (selector.startsWith("#")) {
-      const id = selector.substring(1);
-      return (element.id === id) || (element.attributes?.get("id") === id);
-    }
-    if (selector.startsWith(".")) {
-      const cls = selector.substring(1);
-      const classes = (element.className ?? element.attributes?.get("class") ?? "").split(/\s+/);
-      return classes.includes(cls);
-    }
-    if (selector.match(/^[a-zA-Z][a-zA-Z0-9]*$/)) {
-      return element.tagName?.toLowerCase() === selector.toLowerCase();
-    }
-    return false;
+    return this.matchesCompound(element, selector);
   }
 
   /**
@@ -1712,32 +2044,145 @@ export class DOMBindings {
       let attrs = "";
       if (el.attributes) {
         for (const [name, value] of el.attributes) {
-          attrs += ` ${name}="${value}"`;
+          attrs += ` ${name}="${escapeHtmlAttribute(value)}"`;
         }
       }
-      const voidElements = new Set([
-        "area",
-        "base",
-        "br",
-        "col",
-        "embed",
-        "hr",
-        "img",
-        "input",
-        "link",
-        "meta",
-        "param",
-        "source",
-        "track",
-        "wbr",
-      ]);
-      if (voidElements.has(tag)) {
+      if (VOID_ELEMENTS.has(tag)) {
         return `<${tag}${attrs}>`;
       }
       const inner = this.serializeChildren(node);
       return `<${tag}${attrs}>${inner}</${tag}>`;
     }
     return "";
+  }
+
+  // =========================================================================
+  // HTML Fragment Parser
+  // =========================================================================
+
+  /**
+   * Parse an HTML string into DOM nodes and append them to a parent element.
+   * Supports basic HTML tags, attributes, nested elements, and text nodes.
+   */
+  private parseHTMLFragment(html: string, parent: DOMNode): void {
+    let pos = 0;
+    const len = html.length;
+
+    const parseNodes = (parentNode: DOMNode): void => {
+      while (pos < len) {
+        if (html[pos] === "<") {
+          // Check for closing tag
+          if (html[pos + 1] === "/") {
+            // Closing tag — return to parent
+            const closeEnd = html.indexOf(">", pos);
+            if (closeEnd !== -1) {
+              pos = closeEnd + 1;
+            } else {
+              pos = len;
+            }
+            return;
+          }
+
+          // Check for comment
+          if (html.substring(pos, pos + 4) === "<!--") {
+            const commentEnd = html.indexOf("-->", pos + 4);
+            if (commentEnd !== -1) {
+              const commentData = html.substring(pos + 4, commentEnd);
+              const commentNode = this.createCommentNative(commentData);
+              this.appendChildNative(parentNode, commentNode);
+              pos = commentEnd + 3;
+            } else {
+              pos = len;
+            }
+            continue;
+          }
+
+          // Opening tag
+          pos++; // skip '<'
+          // Parse tag name
+          let tagName = "";
+          while (pos < len && /[a-zA-Z0-9\-]/.test(html[pos])) {
+            tagName += html[pos++];
+          }
+          if (!tagName) {
+            // Malformed: treat '<' as text
+            const textNode = this.createTextNodeNative("<");
+            this.appendChildNative(parentNode, textNode);
+            continue;
+          }
+
+          const el = this.createElementNative(tagName);
+          const syntheticEl = el as unknown as SyntheticDOMNode;
+
+          // Parse attributes
+          while (pos < len && html[pos] !== ">" && !(html[pos] === "/" && html[pos + 1] === ">")) {
+            // Skip whitespace
+            while (pos < len && /\s/.test(html[pos])) pos++;
+            if (pos >= len || html[pos] === ">" || (html[pos] === "/" && html[pos + 1] === ">")) break;
+
+            // Parse attribute name
+            let attrName = "";
+            while (pos < len && /[a-zA-Z0-9\-_]/.test(html[pos])) {
+              attrName += html[pos++];
+            }
+            if (!attrName) { pos++; continue; }
+
+            let attrValue = "";
+            // Skip whitespace around '='
+            while (pos < len && /\s/.test(html[pos])) pos++;
+            if (pos < len && html[pos] === "=") {
+              pos++; // skip '='
+              while (pos < len && /\s/.test(html[pos])) pos++;
+              if (pos < len && (html[pos] === '"' || html[pos] === "'")) {
+                const quote = html[pos++];
+                while (pos < len && html[pos] !== quote) {
+                  attrValue += html[pos++];
+                }
+                if (pos < len) pos++; // skip closing quote
+              } else {
+                // Unquoted attribute value
+                while (pos < len && !/[\s>]/.test(html[pos])) {
+                  attrValue += html[pos++];
+                }
+              }
+            }
+
+            if (syntheticEl.setAttribute) {
+              syntheticEl.setAttribute(attrName, attrValue);
+            } else if (syntheticEl.attributes) {
+              syntheticEl.attributes.set(attrName, attrValue);
+            }
+          }
+
+          // Self-closing tag or void element
+          const isSelfClosing = pos < len && html[pos] === "/" && html[pos + 1] === ">";
+          if (isSelfClosing) {
+            pos += 2; // skip '/>'
+          } else if (pos < len) {
+            pos++; // skip '>'
+          }
+
+          this.appendChildNative(parentNode, el);
+
+          // If not void/self-closing, parse children
+          if (!isSelfClosing && !VOID_ELEMENTS.has(tagName.toLowerCase())) {
+            parseNodes(el);
+          }
+        } else {
+          // Text content
+          let text = "";
+          while (pos < len && html[pos] !== "<") {
+            text += html[pos++];
+          }
+          if (text) {
+            const textNode = this.createTextNodeNative(text);
+            this.appendChildNative(parentNode, textNode);
+          }
+        }
+      }
+    };
+
+    parseNodes(parent);
   }
 
   // =========================================================================

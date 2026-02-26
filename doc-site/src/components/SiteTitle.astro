@@ -1,5 +1,5 @@
 ---
-const { siteTitleHref } = Astro.locals.starlightRoute;
+const { siteTitleHref = '/' } = Astro.locals.starlightRoute ?? {};
 ---
 
 <a href={siteTitleHref} class="bx-logo-wrap">

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "exports": "./src/mod.ts",
   "imports": {
+    "@browserx/graphx": "../graphx/mod.ts",
     "@browserx/browser": "../browser/src/mod.ts",
     "@browserx/browser/": "../browser/",
     "@browserx/proxy-engine": "../proxy-engine/mod.ts",

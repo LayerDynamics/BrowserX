@@ -41,6 +41,8 @@ export class ConnectionPool {
   // Cached system CA certificates for TLS validation
   private systemCAs: Certificate[] | null = null;
   private systemCAsLoading: Promise<Certificate[]> | null = null;
+  // Promise-based waiter queue for connection availability (replaces polling)
+  private waiters: Map<string, Array<{ resolve: () => void; reject: (err: Error) => void; timer: number }>> = new Map();
 
   constructor() {
     // Start automatic cleanup of idle connections
@@ -119,85 +121,89 @@ export class ConnectionPool {
   ): Promise<PooledConnection> {
     // Use hostname for pool key to correctly group connections by origin
     const sniHostname = hostname || host;
-    const pool = this.connections.get(key) || [];
 
-    // Try to reuse an idle connection - mark IN_USE immediately to prevent race
-    for (let i = 0; i < pool.length; i++) {
-      const conn = pool[i];
-      if (conn.state === ConnectionState.IDLE) {
-        // Immediately mark as IN_USE to prevent race conditions
-        conn.state = ConnectionState.IN_USE;
+    // Loop instead of recursing to avoid stack overflow when many callers
+    // are waiting for a connection to become available.
+    while (true) {
+      const pool = this.connections.get(key) || [];
 
-        // Check if connection is still alive
-        const age = Date.now() - conn.lastUsedAt;
-        if (age < this.maxIdleTime) {
-          conn.lastUsedAt = Date.now();
-          conn.useCount++;
-          this.stats.reuseCount++;
-          this.updateStats();
-          return conn;
-        } else {
-          // Connection is too old, close and remove it
-          await conn.socket.close();
-          pool.splice(i, 1);
-          i--;
-          this.stats.totalConnections--;
+      // Try to reuse an idle connection - mark IN_USE immediately to prevent race
+      for (let i = 0; i < pool.length; i++) {
+        const conn = pool[i];
+        if (conn.state === ConnectionState.IDLE) {
+          // Immediately mark as IN_USE to prevent race conditions
+          conn.state = ConnectionState.IN_USE;
+
+          // Check if connection is still alive
+          const age = Date.now() - conn.lastUsedAt;
+          if (age < this.maxIdleTime) {
+            conn.lastUsedAt = Date.now();
+            conn.useCount++;
+            this.stats.reuseCount++;
+            this.updateStats();
+            return conn;
+          } else {
+            // Connection is too old, close and remove it
+            await conn.socket.close();
+            pool.splice(i, 1);
+            i--;
+            this.stats.totalConnections--;
+          }
         }
       }
-    }
 
-    // Check if we can create a new connection (including pending acquisitions)
-    const activeCount = pool.filter((c) => c.state === ConnectionState.IN_USE).length;
-    const pendingCount = this.pendingAcquisitions.get(key) || 0;
-    if (activeCount + pendingCount >= this.maxConnectionsPerOrigin) {
-      // Wait for an available connection
+      // Check if we can create a new connection (including pending acquisitions)
+      const activeCount = pool.filter((c) => c.state === ConnectionState.IN_USE).length;
+      const pendingCount = this.pendingAcquisitions.get(key) || 0;
+      if (activeCount + pendingCount >= this.maxConnectionsPerOrigin) {
+        // Wait for an available connection, then loop back to retry
+        this.stats.missCount++;
+        const waitStart = Date.now();
+        await this.waitForAvailableConnection(key);
+        const waitTime = Date.now() - waitStart;
+        this.updateAverageWaitTime(waitTime);
+        continue;
+      }
+
+      // Track this pending acquisition to prevent over-allocation
+      this.pendingAcquisitions.set(key, pendingCount + 1);
+
+      // Create new connection
+      // Increment miss count since we're not reusing an existing connection
       this.stats.missCount++;
-      const waitStart = Date.now();
-      await this.waitForAvailableConnection(key);
-      const waitTime = Date.now() - waitStart;
-      this.updateAverageWaitTime(waitTime);
-      // Retry acquisition after waiting
-      return this.acquireInternal(host, port, useTLS, hostname, key);
-    }
 
-    // Track this pending acquisition to prevent over-allocation
-    this.pendingAcquisitions.set(key, pendingCount + 1);
+      try {
+        const socket = await this.createConnection(host, port, useTLS, sniHostname);
+        const connection: PooledConnection = {
+          id: String(this.nextConnectionId++) as ConnectionID,
+          socket,
+          host,
+          port,
+          secure: useTLS,
+          state: ConnectionState.IN_USE,
+          createdAt: Date.now(),
+          lastUsedAt: Date.now(),
+          useCount: 1,
+        };
 
-    // Create new connection
-    // Increment miss count since we're not reusing an existing connection
-    this.stats.missCount++;
+        pool.push(connection);
+        this.connections.set(key, pool);
+        this.stats.totalConnections++;
+        this.updateStats();
 
-    try {
-      const socket = await this.createConnection(host, port, useTLS, sniHostname);
-      const connection: PooledConnection = {
-        id: String(this.nextConnectionId++) as ConnectionID,
-        socket,
-        host,
-        port,
-        secure: useTLS,
-        state: ConnectionState.IN_USE,
-        createdAt: Date.now(),
-        lastUsedAt: Date.now(),
-        useCount: 1,
-      };
-
-      pool.push(connection);
-      this.connections.set(key, pool);
-      this.stats.totalConnections++;
-      this.updateStats();
-
-      return connection;
-    } catch (error) {
-      this.stats.errorCount++;
-      this.updateStats();
-      throw error;
-    } finally {
-      // Always decrement pending count after connection attempt completes
-      const currentPending = this.pendingAcquisitions.get(key) || 0;
-      if (currentPending > 1) {
-        this.pendingAcquisitions.set(key, currentPending - 1);
-      } else {
-        this.pendingAcquisitions.delete(key);
+        return connection;
+      } catch (error) {
+        this.stats.errorCount++;
+        this.updateStats();
+        throw error;
+      } finally {
+        // Always decrement pending count after connection attempt completes
+        const currentPending = this.pendingAcquisitions.get(key) || 0;
+        if (currentPending > 1) {
+          this.pendingAcquisitions.set(key, currentPending - 1);
+        } else {
+          this.pendingAcquisitions.delete(key);
+        }
       }
     }
   }
@@ -212,6 +218,33 @@ export class ConnectionPool {
       connection.state = ConnectionState.IDLE;
       connection.lastUsedAt = Date.now();
       this.updateStats();
+
+      // Notify the first waiter for any key that this connection belongs to
+      for (const [key, keyWaiters] of this.waiters.entries()) {
+        if (keyWaiters.length > 0) {
+          const pool = this.connections.get(key);
+          if (pool) {
+            const hasIdle = pool.some((c) => c.state === ConnectionState.IDLE);
+            const activeCount = pool.filter((c) => c.state === ConnectionState.IN_USE).length;
+            if (hasIdle || activeCount < this.maxConnectionsPerOrigin) {
+              const waiter = keyWaiters.shift()!;
+              clearTimeout(waiter.timer);
+              waiter.resolve();
+              if (keyWaiters.length === 0) {
+                this.waiters.delete(key);
+              }
+            }
+          } else {
+            // Pool gone, wake waiter
+            const waiter = keyWaiters.shift()!;
+            clearTimeout(waiter.timer);
+            waiter.resolve();
+            if (keyWaiters.length === 0) {
+              this.waiters.delete(key);
+            }
+          }
+        }
+      }
     }
   }
 
@@ -272,6 +305,24 @@ export class ConnectionPool {
    */
   getStats(): ConnectionPoolStats {
     return { ...this.stats };
+  }
+
+  /**
+   * Destroy the connection pool, stopping cleanup and closing all connections
+   */
+  async destroy(): Promise<void> {
+    this.stopAutoCleanup();
+
+    // Reject all pending waiters
+    for (const [, keyWaiters] of this.waiters) {
+      for (const waiter of keyWaiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error("Connection pool destroyed"));
+      }
+    }
+    this.waiters.clear();
+
+    await this.closeAll();
   }
 
   /**
@@ -364,31 +415,23 @@ export class ConnectionPool {
    * Wait for an available connection with timeout
    */
   private async waitForAvailableConnection(key: string, timeoutMs: number = 30000): Promise<void> {
-    const startTime = Date.now();
-
     return new Promise((resolve, reject) => {
-      const checkInterval = setInterval(() => {
-        // Check for timeout
-        if (Date.now() - startTime > timeoutMs) {
-          clearInterval(checkInterval);
-          reject(new Error(`Connection pool timeout waiting for available connection to ${key}`));
-          return;
+      const timer = setTimeout(() => {
+        // Remove this waiter from the queue on timeout
+        const keyWaiters = this.waiters.get(key);
+        if (keyWaiters) {
+          const idx = keyWaiters.findIndex((w) => w.timer === timer);
+          if (idx !== -1) keyWaiters.splice(idx, 1);
+          if (keyWaiters.length === 0) this.waiters.delete(key);
         }
+        reject(new Error(`Connection pool timeout waiting for available connection to ${key}`));
+      }, timeoutMs);
 
-        const pool = this.connections.get(key);
-        if (pool) {
-          const hasIdle = pool.some((c) => c.state === ConnectionState.IDLE);
-          const activeCount = pool.filter((c) => c.state === ConnectionState.IN_USE).length;
-          if (hasIdle || activeCount < this.maxConnectionsPerOrigin) {
-            clearInterval(checkInterval);
-            resolve();
-          }
-        } else {
-          // No pool exists, can create new connection
-          clearInterval(checkInterval);
-          resolve();
-        }
-      }, 10); // Check every 10ms
+      const waiter = { resolve, reject, timer };
+      if (!this.waiters.has(key)) {
+        this.waiters.set(key, []);
+      }
+      this.waiters.get(key)!.push(waiter);
     });
   }
 

@@ -91,6 +91,7 @@ export class ReverseProxy {
     this.connectionManager = new UpstreamConnectionManager(DEFAULT_CONNECTION_POOL_CONFIG);
 
     // Create upstream client with circuit breaker and retry logic
+    // UpstreamClient accepts pooled connections via requestOptions.pooledConn
     this.upstreamClient = new UpstreamClient();
 
     // Create health monitor if health check config provided
@@ -135,39 +136,27 @@ export class ReverseProxy {
       return this.createErrorResponse(503, "Failed to select upstream server");
     }
 
-    // Forward request with retries
-    const maxRetries = this.config.maxRetries ?? this.route.upstream.retryPolicy?.maxRetries ?? 0;
-    let lastError: Error | null = null;
+    // Forward request directly — UpstreamClient already handles retries
+    // via its built-in retry logic, so no outer retry loop needed.
+    try {
+      const response = await this.forwardRequest(request, server, context);
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await this.forwardRequest(request, server, context);
+      // Record success
+      const responseTime = Date.now() - startTime;
+      this.loadBalancer.recordSuccess(server.id, responseTime);
 
-        // Record success
-        const responseTime = Date.now() - startTime;
-        this.loadBalancer.recordSuccess(server.id, responseTime);
+      return response;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
 
-        return response;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+      // Record failure
+      this.loadBalancer.recordFailure(server.id);
 
-        // Record failure
-        this.loadBalancer.recordFailure(server.id);
-
-        // Don't retry on last attempt
-        if (attempt < maxRetries) {
-          const retryDelay = this.config.retryDelay ??
-            this.route.upstream.retryPolicy?.retryDelay ?? 100;
-          await new Promise((resolve) => setTimeout(resolve, retryDelay));
-        }
-      }
+      return this.createErrorResponse(
+        502,
+        `Bad Gateway: ${err.message}`,
+      );
     }
-
-    // All retries failed
-    return this.createErrorResponse(
-      502,
-      `Bad Gateway: ${lastError?.message || "Unknown error"}`,
-    );
   }
 
   /**
@@ -181,38 +170,46 @@ export class ReverseProxy {
     // Prepare upstream request
     const upstreamRequest = this.prepareUpstreamRequest(request, server, context);
 
-    // Build URL for upstream server
-    const protocol = server.protocol === "https" ? "https" : "http";
-    const url = `${protocol}://${server.host}:${server.port}${upstreamRequest.uri}`;
+    // Acquire a pooled connection from the connection manager
+    const conn = await this.connectionManager.getConnection(server, this.config.timeout);
+    try {
+      // Build URL for upstream server
+      const protocol = server.protocol === "https" ? "https" : "http";
+      const url = `${protocol}://${server.host}:${server.port}${upstreamRequest.uri}`;
 
-    // Convert HTTPHeaders Record to plain object
-    const headers: Record<string, string> = {};
-    for (const [key, value] of Object.entries(upstreamRequest.headers)) {
-      headers[key] = value;
+      // Convert HTTPHeaders Record to plain object
+      const headers: Record<string, string> = {};
+      for (const [key, value] of Object.entries(upstreamRequest.headers)) {
+        headers[key] = value;
+      }
+
+      // Use UpstreamClient with the pooled connection for retry and circuit breaker
+      const response = await this.upstreamClient.request({
+        method: upstreamRequest.method,
+        url,
+        headers,
+        body: upstreamRequest.body,
+        timeout: this.config.timeout ?? this.route.upstream.timeout,
+        retries: this.config.maxRetries ?? this.route.upstream.retryPolicy?.maxRetries,
+        retryDelay: this.config.retryDelay ?? this.route.upstream.retryPolicy?.retryDelay,
+        pooledConn: conn.conn,
+      });
+
+      // Convert response to HTTPResponse format
+      const httpResponse: HTTPResponse = {
+        version: "1.1",
+        statusCode: response.statusCode,
+        statusText: response.statusText,
+        headers: response.headers,
+        body: response.body,
+      };
+
+      // Process response
+      return this.processUpstreamResponse(httpResponse, server);
+    } finally {
+      // Release connection back to the pool
+      this.connectionManager.releaseConnection(conn);
     }
-
-    // Use UpstreamClient to make the request with built-in retry and circuit breaker
-    const response = await this.upstreamClient.request({
-      method: upstreamRequest.method,
-      url,
-      headers,
-      body: upstreamRequest.body,
-      timeout: this.config.timeout ?? this.route.upstream.timeout,
-      retries: this.config.maxRetries ?? this.route.upstream.retryPolicy?.maxRetries,
-      retryDelay: this.config.retryDelay ?? this.route.upstream.retryPolicy?.retryDelay,
-    });
-
-    // Convert response to HTTPResponse format
-    const httpResponse: HTTPResponse = {
-      version: "1.1",
-      statusCode: response.statusCode,
-      statusText: response.statusText,
-      headers: response.headers,
-      body: response.body,
-    };
-
-    // Process response
-    return this.processUpstreamResponse(httpResponse, server);
   }
 
   /**
@@ -232,11 +229,8 @@ export class ReverseProxy {
 
     // Add X-Forwarded-* headers
     if (this.config.addForwardedHeaders !== false) {
-      // X-Forwarded-For
-      const existingXFF = headers["x-forwarded-for"];
-      headers["x-forwarded-for"] = existingXFF
-        ? `${existingXFF}, ${context.clientIP}`
-        : context.clientIP;
+      // Don't trust incoming X-Forwarded-For from untrusted clients
+      headers["x-forwarded-for"] = context.clientIP;
 
       // X-Forwarded-Proto
       headers["x-forwarded-proto"] = context.protocol;
@@ -349,6 +343,7 @@ export class ReverseProxy {
     return {
       loadBalancer: this.loadBalancer.getAllStats(),
       connections: this.connectionManager.getStats(),
+      upstreamClient: this.upstreamClient.getStats(),
       health: this.healthMonitor?.getStats(),
     };
   }

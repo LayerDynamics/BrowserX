@@ -63,16 +63,16 @@ export async function validateCertificate(
 
   // 5. Verify root CA is trusted
   const root = chain[chain.length - 1];
-  const trustedRoot = trustedCAs.find((ca) => ca.subject === root.subject);
+  const trustedRoot = trustedCAs.find((ca) => ca.subject === root.subject && ca.serialNumber === root.serialNumber);
   if (!trustedRoot) {
     return { valid: false, reason: "Untrusted root CA" };
   }
 
   // 6. Check revocation status (optional, expensive)
-  // const revoked = await checkRevocationStatus(cert);
-  // if (revoked) {
-  //   return { valid: false, reason: 'Certificate revoked' };
-  // }
+  const revoked = await checkRevocationStatus(cert);
+  if (revoked) {
+    return { valid: false, reason: "Certificate revoked" };
+  }
 
   return { valid: true, chain };
 }
@@ -183,12 +183,203 @@ async function verifySignature(cert: Certificate, issuer: Certificate): Promise<
  * Check certificate revocation status
  */
 export async function checkRevocationStatus(cert: Certificate): Promise<boolean> {
-  // Check CRL (Certificate Revocation List)
-  // or OCSP (Online Certificate Status Protocol)
+  // Extract AIA OCSP responder URL from the certificate's parsed extensions
+  // The parseDERCertificate function stores it on the cert object if found
+  const ocspUrl = (cert as Certificate & { ocspResponderUrl?: string }).ocspResponderUrl;
 
-  // Implementation would fetch from CRL/OCSP endpoint
-  // For now, return false (not revoked)
-  return false;
+  if (!ocspUrl) {
+    // No AIA extension with OCSP URL — soft-fail as not revoked
+    return false;
+  }
+
+  try {
+    // Build a minimal OCSP request
+    // Serial number bytes from hex string
+    const serialHex = cert.serialNumber.replace(/:/g, "");
+    const serialBytes = new Uint8Array(serialHex.length / 2);
+    for (let i = 0; i < serialBytes.length; i++) {
+      serialBytes[i] = parseInt(serialHex.substring(i * 2, i * 2 + 2), 16);
+    }
+
+    // SHA-1 OID: 1.3.14.3.2.26
+    const sha1OID = new Uint8Array([0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a]);
+    const nullParam = new Uint8Array([0x05, 0x00]);
+
+    // hashAlgorithm SEQUENCE
+    const hashAlgContent = new Uint8Array([...sha1OID, ...nullParam]);
+    const hashAlg = derWrap(0x30, hashAlgContent);
+
+    // Placeholder issuer hashes (20 zero bytes each)
+    const issuerNameHash = new Uint8Array([0x04, 20, ...new Uint8Array(20)]);
+    const issuerKeyHash = new Uint8Array([0x04, 20, ...new Uint8Array(20)]);
+    const serialInt = new Uint8Array([0x02, serialBytes.length, ...serialBytes]);
+
+    const certID = derWrap(0x30, new Uint8Array([...hashAlg, ...issuerNameHash, ...issuerKeyHash, ...serialInt]));
+    const request = derWrap(0x30, certID);
+    const requestList = derWrap(0x30, request);
+    const tbsRequest = derWrap(0x30, requestList);
+    const ocspRequest = derWrap(0x30, tbsRequest);
+
+    const response = await fetch(ocspUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/ocsp-request" },
+      body: new Uint8Array(ocspRequest),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!response.ok) {
+      // Network/server error — soft-fail
+      return false;
+    }
+
+    const responseData = new Uint8Array(await response.arrayBuffer());
+
+    // Parse OCSP response ASN.1 structure to find certStatus
+    // OCSPResponse ::= SEQUENCE { responseStatus ENUMERATED, responseBytes [0] EXPLICIT ... }
+    if (responseData.length < 3 || responseData[0] !== 0x30) return false;
+
+    const certStatus = parseOCSPCertStatus(responseData as ByteBuffer);
+    if (certStatus === "good") return false;
+    if (certStatus === "revoked") return true;
+
+    return false;
+  } catch {
+    // Network error — soft-fail as not revoked
+    return false;
+  }
+}
+
+/**
+ * Parse OCSP response ASN.1 structure to extract certStatus.
+ * Walks: OCSPResponse SEQUENCE → responseBytes [0] → BasicOCSPResponse → responses → SingleResponse → certStatus
+ * Returns "good", "revoked", or "unknown".
+ */
+function parseOCSPCertStatus(data: ByteBuffer): "good" | "revoked" | "unknown" {
+  try {
+    let offset = 0;
+
+    // OCSPResponse ::= SEQUENCE
+    if (data[offset] !== 0x30) return "unknown";
+    offset++;
+    const { length: _outerLen, bytesRead: outerBR } = parseDERLength(data, offset);
+    offset += outerBR;
+
+    // responseStatus ENUMERATED
+    if (data[offset] !== 0x0a) return "unknown";
+    offset++;
+    const statusLen = data[offset++];
+    const responseStatus = data[offset];
+    offset += statusLen;
+    if (responseStatus !== 0) return "unknown"; // not "successful"
+
+    // responseBytes [0] EXPLICIT
+    if (data[offset] !== 0xa0) return "unknown";
+    offset++;
+    const { bytesRead: rbBR } = parseDERLength(data, offset);
+    offset += rbBR;
+
+    // ResponseBytes ::= SEQUENCE
+    if (data[offset] !== 0x30) return "unknown";
+    offset++;
+    const { bytesRead: rbSeqBR } = parseDERLength(data, offset);
+    offset += rbSeqBR;
+
+    // responseType OID — skip it
+    if (data[offset] !== 0x06) return "unknown";
+    offset++;
+    const oidLen = data[offset++];
+    offset += oidLen;
+
+    // response OCTET STRING containing BasicOCSPResponse
+    if (data[offset] !== 0x04) return "unknown";
+    offset++;
+    const { bytesRead: octetBR } = parseDERLength(data, offset);
+    offset += octetBR;
+
+    // BasicOCSPResponse ::= SEQUENCE
+    if (data[offset] !== 0x30) return "unknown";
+    offset++;
+    const { bytesRead: basicBR } = parseDERLength(data, offset);
+    offset += basicBR;
+
+    // tbsResponseData ::= SEQUENCE
+    if (data[offset] !== 0x30) return "unknown";
+    offset++;
+    const { bytesRead: tbsBR } = parseDERLength(data, offset);
+    offset += tbsBR;
+
+    // Skip optional version [0] if present
+    if (data[offset] === 0xa0) {
+      offset++;
+      const { length: vLen, bytesRead: vBR } = parseDERLength(data, offset);
+      offset += vBR + vLen;
+    }
+
+    // responderID — either [1] (byName) or [2] (byKey)
+    if (data[offset] === 0xa1 || data[offset] === 0xa2) {
+      offset++;
+      const { length: ridLen, bytesRead: ridBR } = parseDERLength(data, offset);
+      offset += ridBR + ridLen;
+    } else {
+      return "unknown";
+    }
+
+    // producedAt GeneralizedTime
+    if (data[offset] === 0x18 || data[offset] === 0x17) {
+      offset++;
+      const { length: tLen, bytesRead: tBR } = parseDERLength(data, offset);
+      offset += tBR + tLen;
+    } else {
+      return "unknown";
+    }
+
+    // responses SEQUENCE OF SingleResponse
+    if (data[offset] !== 0x30) return "unknown";
+    offset++;
+    const { bytesRead: rspsBR } = parseDERLength(data, offset);
+    offset += rspsBR;
+
+    // First SingleResponse SEQUENCE
+    if (data[offset] !== 0x30) return "unknown";
+    offset++;
+    const { bytesRead: srBR } = parseDERLength(data, offset);
+    offset += srBR;
+
+    // certID SEQUENCE — skip
+    if (data[offset] !== 0x30) return "unknown";
+    offset++;
+    const { length: cidLen, bytesRead: cidBR } = parseDERLength(data, offset);
+    offset += cidBR + cidLen;
+
+    // certStatus: good [0] IMPLICIT NULL, revoked [1] CONSTRUCTED, unknown [2] IMPLICIT NULL
+    const statusTag = data[offset];
+    if (statusTag === 0x80) return "good";
+    if (statusTag === 0xa1) return "revoked";
+    if (statusTag === 0x82) return "unknown";
+
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * Wrap content with a DER tag and length
+ */
+function derWrap(tag: number, content: Uint8Array): Uint8Array {
+  let lengthBytes: Uint8Array;
+  if (content.length < 0x80) {
+    lengthBytes = new Uint8Array([content.length]);
+  } else if (content.length < 0x100) {
+    lengthBytes = new Uint8Array([0x81, content.length]);
+  } else {
+    lengthBytes = new Uint8Array([0x82, (content.length >> 8) & 0xff, content.length & 0xff]);
+  }
+  const result = new Uint8Array(1 + lengthBytes.length + content.length);
+  result[0] = tag;
+  result.set(lengthBytes, 1);
+  result.set(content, 1 + lengthBytes.length);
+  return result;
 }
 
 /**
@@ -338,8 +529,7 @@ function parseSignatureAlgorithm(algorithm: string): [string, string] {
     if (upper.includes("SHA512")) return ["ECDSA", "SHA-512"];
   }
 
-  // Default to RSA-SHA256
-  return ["RSASSA-PKCS1-v1_5", "SHA-256"];
+  throw new Error("Unsupported signature algorithm: " + algorithm);
 }
 
 /**
@@ -390,7 +580,7 @@ export async function loadSystemCAs(): Promise<Certificate[]> {
       certificates.push(...certs);
 
       if (certificates.length > 0) {
-        console.log(`Loaded ${certificates.length} system CA certificates from ${path}`);
+        console.error(`Loaded ${certificates.length} system CA certificates from ${path}`);
         break; // Found valid CAs, stop searching
       }
     } catch {
@@ -408,7 +598,7 @@ export async function loadSystemCAs(): Promise<Certificate[]> {
       const content = await Deno.readTextFile(denoCerts);
       const certs = parsePEMCertificates(content);
       certificates.push(...certs);
-      console.log(`Loaded ${certificates.length} CA certificates from Deno cache`);
+      console.error(`Loaded ${certificates.length} CA certificates from Deno cache`);
     } catch {
       console.warn("No system CA certificates found - TLS certificate validation may fail");
     }
@@ -463,6 +653,10 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   // Parse outer SEQUENCE
   let offset = 0;
 
+  if (der.length < 2) {
+    throw new Error("DER data truncated: certificate too short");
+  }
+
   // Check for SEQUENCE tag (0x30)
   if (der[offset] !== 0x30) {
     throw new Error("Invalid certificate: expected SEQUENCE");
@@ -472,6 +666,9 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   // Parse length
   const { length: certLength, bytesRead } = parseDERLength(der, offset);
   offset += bytesRead;
+  if (offset + certLength > der.length) {
+    throw new Error("DER: unexpected end of data at certificate SEQUENCE");
+  }
 
   // Parse TBSCertificate SEQUENCE
   if (der[offset] !== 0x30) {
@@ -482,6 +679,9 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   const { length: tbsLength, bytesRead: tbsBytesRead } = parseDERLength(der, offset);
   offset += tbsBytesRead;
   const tbsEnd = offset + tbsLength;
+  if (tbsEnd > der.length) {
+    throw new Error("DER: unexpected end of data at TBSCertificate");
+  }
   // Raw TBS certificate data (tag + length + content) for signature verification
   const rawTbsCertificate = der.slice(tbsStartOffset, tbsEnd) as ByteBuffer;
 
@@ -491,11 +691,17 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
     offset++;
     const { length: verLen, bytesRead: verBytesRead } = parseDERLength(der, offset);
     offset += verBytesRead;
+    if (offset + verLen > der.length) {
+      throw new Error("DER: unexpected end of data at version");
+    }
     // Version is an INTEGER inside the explicit tag
     if (der[offset] === 0x02) {
       offset++;
       const versionLen = der[offset];
       offset++;
+      if (offset + versionLen > der.length) {
+        throw new Error("DER: unexpected end of data at version INTEGER");
+      }
       version = der[offset] + 1; // X.509 v1=0, v2=1, v3=2, so add 1
       offset += versionLen;
     } else {
@@ -510,6 +716,9 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   offset++;
   const { length: serialLen, bytesRead: serialBytesRead } = parseDERLength(der, offset);
   offset += serialBytesRead;
+  if (offset + serialLen > der.length) {
+    throw new Error("DER data truncated: expected " + serialLen + " bytes at offset " + offset);
+  }
   const serialBytes = der.slice(offset, offset + serialLen);
   const serialNumber = Array.from(serialBytes).map((b) => b.toString(16).padStart(2, "0")).join(
     ":",
@@ -523,6 +732,9 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   offset++;
   const { length: sigAlgLen, bytesRead: sigAlgBytesRead } = parseDERLength(der, offset);
   offset += sigAlgBytesRead;
+  if (offset + sigAlgLen > der.length) {
+    throw new Error("DER: unexpected end of data at signature algorithm");
+  }
   const signatureAlgorithm = parseOID(der, offset);
   offset += sigAlgLen;
 
@@ -537,6 +749,9 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   offset++;
   const { length: validityLen, bytesRead: validityBytesRead } = parseDERLength(der, offset);
   offset += validityBytesRead;
+  if (offset + validityLen > der.length) {
+    throw new Error("DER: unexpected end of data at validity");
+  }
   const notBefore = parseTime(der, offset);
   offset += getTimeLength(der, offset);
   const notAfter = parseTime(der, offset);
@@ -555,17 +770,143 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   const { length: spkiLen, bytesRead: spkiBytesRead } = parseDERLength(der, offset);
   offset += spkiBytesRead;
   offset += spkiLen;
+  if (offset > der.length) {
+    throw new Error("DER data truncated: expected SPKI data up to offset " + offset);
+  }
   const publicKey = der.slice(spkiStart, offset) as ByteBuffer;
 
   // Parse extensions if present (context tag [3])
   const subjectAltNames: string[] = [];
+  let aiaOcspUrl: string | undefined;
   while (offset < tbsEnd) {
     if (der[offset] === 0xa3) {
       offset++;
-      const { length: extLen, bytesRead: extBytesRead } = parseDERLength(der, offset);
-      offset += extBytesRead;
-      // Parse extensions for SAN - simplified
-      // Full implementation would parse extension OIDs
+      const { length: extContainerLen, bytesRead: extContainerBytesRead } = parseDERLength(der, offset);
+      offset += extContainerBytesRead;
+      const extContainerEnd = offset + extContainerLen;
+      if (extContainerEnd > der.length) {
+        throw new Error("DER: unexpected end of data at extensions container");
+      }
+
+      // Extensions is a SEQUENCE OF Extension
+      if (offset < extContainerEnd && der[offset] === 0x30) {
+        offset++;
+        const { length: extSeqLen, bytesRead: extSeqBytesRead } = parseDERLength(der, offset);
+        offset += extSeqBytesRead;
+        const extSeqEnd = offset + extSeqLen;
+        if (extSeqEnd > der.length) {
+          throw new Error("DER: unexpected end of data at extensions SEQUENCE");
+        }
+
+        // Parse each Extension SEQUENCE
+        while (offset < extSeqEnd) {
+          if (der[offset] !== 0x30) break;
+          offset++;
+          const { length: singleExtLen, bytesRead: singleExtBytesRead } = parseDERLength(der, offset);
+          offset += singleExtBytesRead;
+          const singleExtEnd = offset + singleExtLen;
+          if (singleExtEnd > der.length) {
+            throw new Error("DER: unexpected end of data at extension");
+          }
+
+          // Parse extension OID
+          if (offset < singleExtEnd && der[offset] === 0x06) {
+            const oidLen = der[offset + 1];
+            if (offset + 2 + oidLen > der.length) { offset = singleExtEnd; continue; }
+            const oidBytes = der.slice(offset + 2, offset + 2 + oidLen);
+            offset += 2 + oidLen;
+
+            // Skip optional critical BOOLEAN
+            if (offset < singleExtEnd && der[offset] === 0x01) {
+              if (offset + 1 >= der.length) {
+                throw new Error("DER: unexpected end of data at critical BOOLEAN");
+              }
+              offset += 2 + der[offset + 1];
+            }
+
+            // Extension value is an OCTET STRING
+            if (offset < singleExtEnd && der[offset] === 0x04) {
+              offset++;
+              const { length: valLen, bytesRead: valBytesRead } = parseDERLength(der, offset);
+              offset += valBytesRead;
+              const valEnd = offset + valLen;
+              if (valEnd > der.length) {
+                throw new Error("DER: unexpected end of data at extension value");
+              }
+
+              // SAN OID: 2.5.29.17 = [55 1d 11]
+              if (oidBytes.length === 3 && oidBytes[0] === 0x55 && oidBytes[1] === 0x1d && oidBytes[2] === 0x11) {
+                // SAN value is a SEQUENCE OF GeneralName
+                if (offset < valEnd && der[offset] === 0x30) {
+                  offset++;
+                  const { length: sanSeqLen, bytesRead: sanSeqBytesRead } = parseDERLength(der, offset);
+                  offset += sanSeqBytesRead;
+                  const sanSeqEnd = offset + sanSeqLen;
+                  if (sanSeqEnd > der.length) {
+                    throw new Error("DER: unexpected end of data at SAN SEQUENCE");
+                  }
+
+                  while (offset < sanSeqEnd) {
+                    const gnTag = der[offset];
+                    offset++;
+                    const { length: gnLen, bytesRead: gnBytesRead } = parseDERLength(der, offset);
+                    offset += gnBytesRead;
+                    if (offset + gnLen > der.length) break;
+
+                    if (gnTag === 0x82) {
+                      // dNSName [2] — IA5String
+                      const dnsName = new TextDecoder().decode(der.slice(offset, offset + gnLen));
+                      subjectAltNames.push(dnsName);
+                    } else if (gnTag === 0x87) {
+                      // iPAddress [7]
+                      if (gnLen === 4) {
+                        // IPv4
+                        subjectAltNames.push(`${der[offset]}.${der[offset + 1]}.${der[offset + 2]}.${der[offset + 3]}`);
+                      } else if (gnLen === 16) {
+                        // IPv6
+                        const parts: string[] = [];
+                        for (let i = 0; i < 16; i += 2) {
+                          parts.push(((der[offset + i] << 8) | der[offset + i + 1]).toString(16));
+                        }
+                        subjectAltNames.push(parts.join(":"));
+                      }
+                    }
+                    offset += gnLen;
+                  }
+                }
+              }
+
+              // AIA OID: 1.3.6.1.5.5.7.1.1 = [2b 06 01 05 05 07 01 01]
+              if (oidBytes.length === 8 &&
+                  oidBytes[0] === 0x2b && oidBytes[1] === 0x06 && oidBytes[2] === 0x01 &&
+                  oidBytes[3] === 0x05 && oidBytes[4] === 0x05 && oidBytes[5] === 0x07 &&
+                  oidBytes[6] === 0x01 && oidBytes[7] === 0x01) {
+                // Scan for context tag [6] (URI) within AIA value
+                for (let i = offset; i < valEnd - 2; i++) {
+                  if (der[i] === 0x86) {
+                    const { length: urlLen, bytesRead: urlBytesRead } = parseDERLength(der, i + 1);
+                    const urlStart = i + 1 + urlBytesRead;
+                    if (urlStart + urlLen <= valEnd) {
+                      const url = new TextDecoder().decode(der.slice(urlStart, urlStart + urlLen));
+                      if (url.startsWith("http")) {
+                        aiaOcspUrl = url;
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+
+              offset = valEnd;
+            } else {
+              offset = singleExtEnd;
+            }
+          } else {
+            offset = singleExtEnd;
+          }
+        }
+      }
+      offset = extContainerEnd;
     } else {
       break;
     }
@@ -580,7 +921,11 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   }
   offset++;
   const { length: outerSigAlgLen, bytesRead: outerSigAlgBytesRead } = parseDERLength(der, offset);
-  offset += outerSigAlgBytesRead + outerSigAlgLen;
+  offset += outerSigAlgBytesRead;
+  if (offset + outerSigAlgLen > der.length) {
+    throw new Error("DER: unexpected end of data at outer signature algorithm");
+  }
+  offset += outerSigAlgLen;
 
   // Parse signature (BIT STRING)
   if (der[offset] !== 0x03) {
@@ -591,9 +936,12 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   offset += sigBytesRead;
   // Skip unused bits byte
   offset++;
+  if (offset + sigLen - 1 > der.length) {
+    throw new Error("DER data truncated: expected " + (sigLen - 1) + " signature bytes at offset " + offset);
+  }
   const signature = der.slice(offset, offset + sigLen - 1) as ByteBuffer;
 
-  return {
+  const cert: Certificate & { ocspResponderUrl?: string } = {
     version,
     serialNumber,
     issuer,
@@ -606,18 +954,31 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
     subjectAltNames,
     tbsCertificate: rawTbsCertificate,
   };
+  if (aiaOcspUrl) {
+    cert.ocspResponderUrl = aiaOcspUrl;
+  }
+  return cert;
 }
 
 /**
  * Parse DER length encoding
  */
 function parseDERLength(data: ByteBuffer, offset: number): { length: number; bytesRead: number } {
+  if (offset >= data.length) {
+    throw new Error("DER data truncated: expected length byte at offset " + offset);
+  }
   const firstByte = data[offset];
   if (firstByte < 0x80) {
     return { length: firstByte, bytesRead: 1 };
   }
 
   const numBytes = firstByte & 0x7f;
+  if (numBytes > 4) {
+    throw new Error("DER length field too large");
+  }
+  if (offset + 1 + numBytes > data.length) {
+    throw new Error("DER data truncated: expected " + numBytes + " length bytes at offset " + (offset + 1));
+  }
   let length = 0;
   for (let i = 0; i < numBytes; i++) {
     length = (length << 8) | data[offset + 1 + i];
@@ -630,9 +991,14 @@ function parseDERLength(data: ByteBuffer, offset: number): { length: number; byt
  */
 function parseOID(data: ByteBuffer, offset: number): string {
   // Simplified OID parsing - return common algorithm names
-  // Full implementation would decode the OID bytes
+  if (offset + 1 >= data.length) {
+    throw new Error("DER data truncated: expected OID at offset " + offset);
+  }
   if (data[offset] === 0x06) {
     const len = data[offset + 1];
+    if (offset + 2 + len > data.length) {
+      throw new Error("DER data truncated: expected " + len + " OID bytes at offset " + (offset + 2));
+    }
     const oidBytes = data.slice(offset + 2, offset + 2 + len);
 
     // Common signature algorithm OIDs
@@ -696,15 +1062,18 @@ function parseDN(data: ByteBuffer, offset: number): string {
 
       // Parse OID
       if (data[pos] === 0x06) {
+        if (pos + 1 >= data.length) break;
         const oidLen = data[pos + 1];
+        if (pos + 2 + oidLen > data.length) break;
         const attrType = getRDNType(data.slice(pos + 2, pos + 2 + oidLen) as ByteBuffer);
         pos += 2 + oidLen;
 
         // Parse value (PrintableString, UTF8String, etc.)
-        if (data[pos] === 0x13 || data[pos] === 0x0c || data[pos] === 0x16) {
+        if (pos < data.length && (data[pos] === 0x13 || data[pos] === 0x0c || data[pos] === 0x16)) {
           pos++;
           const { length: valLen, bytesRead: valBytesRead } = parseDERLength(data, pos);
           pos += valBytesRead;
+          if (pos + valLen > data.length) break;
           const value = new TextDecoder().decode(data.slice(pos, pos + valLen));
           parts.push(`${attrType}=${value}`);
           pos += valLen;
@@ -745,18 +1114,29 @@ function getRDNType(oid: ByteBuffer): string {
  * Get length of DN structure
  */
 function getDNLength(data: ByteBuffer, offset: number): number {
-  if (data[offset] !== 0x30) return 0;
+  if (offset >= data.length || data[offset] !== 0x30) return 0;
   const { length, bytesRead } = parseDERLength(data, offset + 1);
-  return 1 + bytesRead + length;
+  const total = 1 + bytesRead + length;
+  if (offset + total > data.length) {
+    throw new Error("DER: unexpected end of data at DN");
+  }
+  return total;
 }
 
 /**
  * Parse time value (UTCTime or GeneralizedTime)
  */
 function parseTime(data: ByteBuffer, offset: number): Date {
+  if (offset + 1 >= data.length) {
+    throw new Error("DER: unexpected end of data at time tag");
+  }
   const tag = data[offset];
-  const len = data[offset + 1];
-  const timeStr = new TextDecoder().decode(data.slice(offset + 2, offset + 2 + len));
+  const { length: len, bytesRead: timeBytesRead } = parseDERLength(data, offset + 1);
+  const timeDataStart = offset + 1 + timeBytesRead;
+  if (timeDataStart + len > data.length) {
+    throw new Error("DER: unexpected end of data at time value");
+  }
+  const timeStr = new TextDecoder().decode(data.slice(timeDataStart, timeDataStart + len));
 
   if (tag === 0x17) {
     // UTCTime (YYMMDDHHMMSSZ)
@@ -786,7 +1166,11 @@ function parseTime(data: ByteBuffer, offset: number): Date {
  * Get length of time structure
  */
 function getTimeLength(data: ByteBuffer, offset: number): number {
-  return 2 + data[offset + 1];
+  if (offset + 1 >= data.length) {
+    throw new Error("DER: unexpected end of data at time length");
+  }
+  const { length, bytesRead } = parseDERLength(data, offset + 1);
+  return 1 + bytesRead + length;
 }
 
 /**

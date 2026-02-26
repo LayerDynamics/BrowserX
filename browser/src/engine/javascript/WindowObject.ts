@@ -23,6 +23,7 @@ import {
 import type { RequestPipeline } from "../RequestPipeline.ts";
 import type { StorageManager } from "../storage/StorageManager.ts";
 import { SSRFError, URLValidator } from "../security/URLValidator.ts";
+import { BytecodeGenerator, type ProgramNode } from "./V8Compiler.ts";
 import type { ContentSecurityPolicy } from "../security/ContentSecurityPolicy.ts";
 
 /**
@@ -175,12 +176,13 @@ export class WindowObject {
         const callback = args[0];
         const delay = args[1] ? (args[1] as { type: "number"; value: number }).value : 0;
         const handle = this.nextTimerId++;
+        const invokeCallback = this.createCallbackInvoker(callback);
         const timeoutId = setTimeout(() => {
           this.timers.delete(handle);
-          // Execute callback
+          invokeCallback();
         }, delay);
         this.timers.set(handle, {
-          callback: () => {},
+          callback: invokeCallback,
           timeout: timeoutId as unknown as number,
         });
         return createNumber(handle);
@@ -206,11 +208,12 @@ export class WindowObject {
         const callback = args[0];
         const delay = args[1] ? (args[1] as { type: "number"; value: number }).value : 0;
         const handle = this.nextTimerId++;
+        const invokeIntervalCallback = this.createCallbackInvoker(callback);
         const intervalId = setInterval(() => {
-          // Execute callback
+          invokeIntervalCallback();
         }, delay);
         this.timers.set(handle, {
-          callback: () => {},
+          callback: invokeIntervalCallback,
           timeout: intervalId as unknown as number,
         });
         return createNumber(handle);
@@ -334,28 +337,7 @@ export class WindowObject {
       createNativeFunction("structuredClone", (...args) => {
         const val = args[0];
         if (!val) return createUndefined();
-        if (val.type === "string") {
-          return createString((val as { type: "string"; value: string }).value);
-        }
-        if (val.type === "number") {
-          return createNumber((val as { type: "number"; value: number }).value);
-        }
-        if (val.type === "boolean") {
-          return createBoolean((val as { type: "boolean"; value: boolean }).value);
-        }
-        if (val.type === "null") return createNull();
-        if (val.type === "undefined") return createUndefined();
-        if (val.type === "object") {
-          const clone = createObject();
-          const props = (val.value as { properties?: Map<string, JSValue> })?.properties;
-          if (props) {
-            for (const [k, v] of props) {
-              setProperty(clone, k, v);
-            }
-          }
-          return clone;
-        }
-        return val;
+        return this.deepCloneJSValue(val, new Map());
       }, 1),
     );
 
@@ -514,9 +496,24 @@ export class WindowObject {
       cryptoObj,
       "getRandomValues",
       createNativeFunction("getRandomValues", (...args) => {
-        // Return a JSValue object with random bytes info
+        // Determine the requested length from the input typed array argument
+        const input = args[0];
+        let length = 16;
+        if (input && input.type === "object") {
+          const lengthProp = getProperty(input, "length");
+          if (lengthProp && lengthProp.type === "number") {
+            length = (lengthProp as { type: "number"; value: number }).value;
+          }
+        }
+        // Generate actual random bytes using Deno's native crypto
+        const randomBytes = new Uint8Array(length);
+        crypto.getRandomValues(randomBytes);
+        // Build a JSValue array-like object with the random values
         const result = createObject();
-        setProperty(result, "length", createNumber(16));
+        for (let i = 0; i < length; i++) {
+          setProperty(result, String(i), createNumber(randomBytes[i]));
+        }
+        setProperty(result, "length", createNumber(length));
         return result;
       }, 1),
     );
@@ -1909,6 +1906,78 @@ export class WindowObject {
       return `{${entries.join(",")}}`;
     }
     return "null";
+  }
+
+  /**
+   * Deep clone a JSValue, handling circular references via a visited map
+   */
+  private deepCloneJSValue(val: JSValue, visited: Map<object, JSValue>): JSValue {
+    if (val.type === "string") {
+      return createString((val as { type: "string"; value: string }).value);
+    }
+    if (val.type === "number") {
+      return createNumber((val as { type: "number"; value: number }).value);
+    }
+    if (val.type === "boolean") {
+      return createBoolean((val as { type: "boolean"; value: boolean }).value);
+    }
+    if (val.type === "null") return createNull();
+    if (val.type === "undefined") return createUndefined();
+    if (val.type === "object") {
+      const objValue = val.value as { properties?: Map<string, JSValue> };
+      // Check for circular reference
+      if (visited.has(objValue as object)) {
+        return visited.get(objValue as object)!;
+      }
+      const clone = createObject();
+      visited.set(objValue as object, clone);
+      const props = objValue?.properties;
+      if (props) {
+        for (const [k, v] of props) {
+          setProperty(clone, k as string, this.deepCloneJSValue(v, visited));
+        }
+      }
+      return clone;
+    }
+    // Functions are not cloneable by structuredClone spec — return as-is
+    return val;
+  }
+
+  /**
+   * Create a callback invoker for a JSValue function (used by timers and rAF)
+   * Handles both native functions (nativeImpl) and non-native JS functions (AST-compiled)
+   */
+  private createCallbackInvoker(callback: JSValue | undefined): () => void {
+    if (!callback || callback.type !== "function") {
+      return () => {};
+    }
+    const fn = callback.value as {
+      isNative: boolean;
+      nativeImpl?: (...args: JSValue[]) => JSValue;
+      code?: unknown;
+      name: string;
+      length: number;
+    };
+    return () => {
+      try {
+        if (fn.isNative && fn.nativeImpl) {
+          fn.nativeImpl();
+        } else if (fn.code && typeof fn.code === "object" && fn.code !== null) {
+          // Non-native JS function with AST body — compile and execute
+          const funcNode = fn.code as { body?: { body: unknown[] } };
+          if (funcNode.body) {
+            const generator = new BytecodeGenerator();
+            const compiled = generator.generate({
+              type: "Program",
+              body: funcNode.body.body,
+            } as unknown as ProgramNode);
+            this.context.getInterpreter().executeFunction(compiled, []);
+          }
+        }
+      } catch (error) {
+        console.error("Timer callback error:", error);
+      }
+    };
   }
 
   /**

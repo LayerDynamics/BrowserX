@@ -5,6 +5,7 @@
  * middleware chain and proxy handlers
  */
 
+import type { PipelineObserver, PipelineStageEvent } from "../../../browser/src/engine/PipelineObserver.ts";
 import { Socket } from "../../core/network/transport/socket/socket.ts";
 import { HTTP11Server } from "../../core/network/transport/http/http.ts";
 import type { HTTPRequest, HTTPResponse } from "../../core/network/transport/http/http.ts";
@@ -155,6 +156,7 @@ export class GatewayServer {
   private nextConnectionId = 1;
   private running = false;
   private startTime = 0;
+  private observer?: PipelineObserver;
 
   // Ready promise for coordinating startup
   private readyResolve?: () => void;
@@ -187,6 +189,33 @@ export class GatewayServer {
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
+    });
+  }
+
+  setObserver(observer: PipelineObserver): void {
+    this.observer = observer;
+  }
+
+  private emitStage(
+    stageId: string,
+    stageName: string,
+    status: PipelineStageEvent["status"],
+    startTime: number,
+    endTime?: number,
+    duration?: number,
+    artifact?: unknown,
+    error?: Error,
+  ): void {
+    this.observer?.onStage({
+      stageId,
+      stageName,
+      pipeline: "proxy",
+      status,
+      startTime,
+      endTime,
+      duration,
+      artifact,
+      error,
     });
   }
 
@@ -437,7 +466,10 @@ export class GatewayServer {
       };
 
       // Execute request middleware chain
+      const mwStart = Date.now();
+      this.emitStage("request-middleware", "Request Middleware", "running", mwStart);
       const middlewareResult = await this.middleware.executeRequest(request, context);
+      this.emitStage("request-middleware", "Request Middleware", "completed", mwStart, Date.now(), Date.now() - mwStart, middlewareResult);
 
       if (middlewareResult.type === "respond") {
         // Middleware short-circuited with response
@@ -453,6 +485,8 @@ export class GatewayServer {
       }
 
       // Route request
+      const routeStart = Date.now();
+      this.emitStage("route-match", "Route Match", "running", routeStart);
       const match = this.router.match({
         method: request.method,
         url: new URL(request.uri, `${context.protocol}://localhost`),
@@ -461,6 +495,7 @@ export class GatewayServer {
         clientIP: context.clientIP,
         metadata: context.metadata,
       });
+      this.emitStage("route-match", "Route Match", "completed", routeStart, Date.now(), Date.now() - routeStart, match);
 
       if (!match) {
         // No route matched
@@ -475,19 +510,25 @@ export class GatewayServer {
       }
 
       // Forward to proxy handler
+      const proxyStart = Date.now();
+      this.emitStage("proxy-forward", "Proxy Forward", "running", proxyStart);
       const response = await proxy.handleRequest(request, {
         clientIP: context.clientIP,
         clientPort: context.clientPort,
         protocol: context.protocol,
         startTime: context.startTime,
       });
+      this.emitStage("proxy-forward", "Proxy Forward", "completed", proxyStart, Date.now(), Date.now() - proxyStart, response);
 
       // Execute response middleware chain
+      const respMwStart = Date.now();
+      this.emitStage("response-middleware", "Response Middleware", "running", respMwStart);
       const finalResponse = await this.middleware.executeResponse(
         request,
         response,
         context,
       );
+      this.emitStage("response-middleware", "Response Middleware", "completed", respMwStart, Date.now(), Date.now() - respMwStart, finalResponse);
 
       // Record statistics
       this.stats.totalRequests++;
@@ -499,10 +540,13 @@ export class GatewayServer {
         this.stats.requestDurations.shift();
       }
 
+      this.emitStage("response-send", "Response Send", "completed", Date.now(), Date.now(), 0, finalResponse);
+
       return finalResponse;
     } catch (error) {
       console.error("Request handling error:", error);
       this.stats.totalErrors++;
+      this.emitStage("unknown", "Unknown", "error", requestStartTime, Date.now(), Date.now() - requestStartTime, undefined, error instanceof Error ? error : new Error(String(error)));
 
       const errorResponse = createErrorResponse(
         error instanceof Error ? error : new Error(String(error)),

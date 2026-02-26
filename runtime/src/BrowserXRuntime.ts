@@ -308,7 +308,7 @@ export class BrowserXRuntime {
    */
   private setupSignalHandlers(): void {
     this.signalHandler.onShutdown((signal) => {
-      console.log(`[BrowserXRuntime] Received ${signal}, initiating shutdown...`);
+      console.error(`[BrowserXRuntime] Received ${signal}, initiating shutdown...`);
       this.shutdown(`Signal: ${signal}`).catch((error) => {
         console.error("[BrowserXRuntime] Error during signal shutdown:", error);
         Deno.exit(1);
@@ -490,14 +490,14 @@ export class BrowserXRuntime {
         to: RuntimeState.STARTING,
       });
 
-      console.log("[BrowserXRuntime] Starting BrowserX Runtime...");
+      console.error("[BrowserXRuntime] Starting BrowserX Runtime...");
 
       // Register signal handlers
       this.signalHandler.register();
 
       // Execute initialization sequence
       const results = await this.initSequence.execute((progress) => {
-        console.log(
+        console.error(
           `[BrowserXRuntime] Initializing: ${progress.currentStep} (${progress.percentage}%)`,
         );
       });
@@ -525,7 +525,7 @@ export class BrowserXRuntime {
         to: RuntimeState.RUNNING,
       });
 
-      console.log("[BrowserXRuntime] BrowserX Runtime started successfully");
+      console.error("[BrowserXRuntime] BrowserX Runtime started successfully");
 
       // Update metrics
       this.metricsCollector.updateRuntimeState(RuntimeState.RUNNING);
@@ -558,7 +558,7 @@ export class BrowserXRuntime {
         to: RuntimeState.STOPPING,
       });
 
-      console.log(`[BrowserXRuntime] Shutting down: ${reason}`);
+      console.error(`[BrowserXRuntime] Shutting down: ${reason}`);
 
       // Update metrics
       this.metricsCollector.updateRuntimeState(RuntimeState.STOPPING);
@@ -568,7 +568,7 @@ export class BrowserXRuntime {
 
       // Execute shutdown sequence
       const results = await this.shutdownSequence.execute(reason, (progress) => {
-        console.log(
+        console.error(
           `[BrowserXRuntime] Shutting down: ${progress.currentStep} (${progress.percentage}%)`,
         );
       });
@@ -593,7 +593,7 @@ export class BrowserXRuntime {
         to: RuntimeState.STOPPED,
       });
 
-      console.log("[BrowserXRuntime] BrowserX Runtime stopped");
+      console.error("[BrowserXRuntime] BrowserX Runtime stopped");
     } catch (error) {
       // Transition to ERROR
       try {
@@ -613,19 +613,25 @@ export class BrowserXRuntime {
   async run(): Promise<void> {
     await this.start();
 
-    // Keep running until shutdown
+    // Keep running until shutdown (event-driven, no polling)
     await new Promise<void>((resolve) => {
-      const checkShutdown = () => {
+      const currentState = this.lifecycleManager.getState();
+      if (currentState === RuntimeState.STOPPED || currentState === RuntimeState.ERROR) {
+        resolve();
+        return;
+      }
+
+      const listener: RuntimeEventListener = (event) => {
         if (
-          this.lifecycleManager.getState() === RuntimeState.STOPPED ||
-          this.lifecycleManager.getState() === RuntimeState.ERROR
+          event.type === "state_change" &&
+          "to" in event &&
+          (event.to === RuntimeState.STOPPED || event.to === RuntimeState.ERROR)
         ) {
+          this.removeEventListener(listener);
           resolve();
-        } else {
-          setTimeout(checkShutdown, 100);
         }
       };
-      checkShutdown();
+      this.addEventListener(listener);
     });
   }
 

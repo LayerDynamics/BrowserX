@@ -163,51 +163,57 @@ pub fn gpu_copy_texture_to_buffer(
 /// # Returns
 /// JSON-encoded Vec<u8> containing the pixel data, or empty string on failure
 pub fn gpu_map_and_read_buffer(device_handle: u64, buffer_handle: u64) -> String {
-    let devices = DEVICES.read();
-    let (device, _queue) = match devices.get(&device_handle) {
-        Some(d) => d,
-        None => return String::new(),
+    // Scope lock acquisitions so they are dropped before device.poll()
+    let size = {
+        let sizes = BUFFER_SIZES.read();
+        match sizes.get(&buffer_handle) {
+            Some(s) => *s,
+            None => return String::new(),
+        }
     };
 
-    let buffers = READBACK_BUFFERS.read();
-    let buffer = match buffers.get(&buffer_handle) {
-        Some(b) => b,
-        None => return String::new(),
-    };
-
-    let sizes = BUFFER_SIZES.read();
-    let size = match sizes.get(&buffer_handle) {
-        Some(s) => *s,
-        None => return String::new(),
-    };
-
-    // Map the buffer asynchronously
-    let buffer_slice = buffer.slice(..);
-
-    // Use a channel to communicate map completion
     let (sender, receiver) = std::sync::mpsc::channel();
 
-    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-        let _ = sender.send(result);
-    });
+    // Issue the map_async request while holding buffer lock, then drop it
+    {
+        let buffers = READBACK_BUFFERS.read();
+        let buffer = match buffers.get(&buffer_handle) {
+            Some(b) => b,
+            None => return String::new(),
+        };
 
-    // Poll the device until the buffer is mapped
-    device.poll(wgpu::Maintain::Wait);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+    }
+
+    // Poll the device to drive the map operation — no locks held
+    {
+        let devices = DEVICES.read();
+        let (device, _queue) = match devices.get(&device_handle) {
+            Some(d) => d,
+            None => return String::new(),
+        };
+        device.poll(wgpu::Maintain::Wait);
+    }
 
     // Wait for mapping to complete
     match receiver.recv() {
         Ok(Ok(())) => {
-            // Read the data
-            let data = buffer_slice.get_mapped_range();
+            let buffers = READBACK_BUFFERS.read();
+            let buffer = match buffers.get(&buffer_handle) {
+                Some(b) => b,
+                None => return String::new(),
+            };
+
+            let data = buffer.slice(..).get_mapped_range();
             let bytes: Vec<u8> = data.to_vec();
 
-            // Unmap the buffer
             drop(data);
             buffer.unmap();
 
             // Verify we got the expected size
             if bytes.len() as u64 != size {
-                // Truncate or pad to expected size
                 let mut result = bytes;
                 result.truncate(size as usize);
                 while (result.len() as u64) < size {

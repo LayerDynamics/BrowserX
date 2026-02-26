@@ -14,6 +14,8 @@ export interface HttpServerConfig {
   port?: number;
   hostname?: string;
   corsOrigins?: string[];
+  /** Disable bearer token auth (for tests only) */
+  disableAuth?: boolean;
 }
 
 /**
@@ -72,6 +74,31 @@ export async function startHttpServer(
   const hostname = config.hostname ?? "localhost";
   // Default to localhost origins only for security
   const corsOrigins = config.corsOrigins ?? ["http://localhost:*", "http://127.0.0.1:*"];
+
+  // Bearer token authentication
+  const authToken = config.disableAuth ? null : crypto.randomUUID();
+  if (authToken) {
+    // Write token to file instead of logging it to stderr (avoid leaking secrets in logs)
+    const tokenDir = ".browserx";
+    const tokenPath = `${tokenDir}/auth-token`;
+    try {
+      await Deno.mkdir(tokenDir, { recursive: true });
+      await Deno.writeTextFile(tokenPath, authToken);
+    } catch {
+      // Fall back to stderr if file write fails (e.g., read-only filesystem)
+      console.error(`[MCP HTTP] Auth token: ${authToken}`);
+    }
+    console.error(`[MCP HTTP] Auth token written to ${tokenPath}`);
+  }
+
+  // Warn if CORS wildcard is used with auth enabled (browsers won't send credentials with wildcard origin)
+  if (!config.disableAuth && corsOrigins.includes("*")) {
+    console.error(
+      "[MCP HTTP] WARNING: CORS origin '*' is incompatible with Bearer auth from browser-based clients. " +
+      "Browsers will not send credentials (Authorization header) when Access-Control-Allow-Origin is '*'. " +
+      "Specify explicit origins instead, or use disableAuth for testing."
+    );
+  }
 
   // Session storage for stateful connections with proper MCP routing
   const sessions = new Map<string, HttpSession>();
@@ -141,6 +168,17 @@ export async function startHttpServer(
       );
     }
 
+    // Bearer token authentication (skip health check)
+    if (authToken && url.pathname !== "/health") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader || authHeader !== `Bearer ${authToken}`) {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized. Provide Authorization: Bearer <token>" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // Health check endpoint
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ status: "ok" }), {
@@ -153,11 +191,25 @@ export async function startHttpServer(
       if (req.method === "POST") {
         try {
           const body = await req.json();
-          const sessionId = req.headers.get("X-Session-ID") || crypto.randomUUID();
+          const clientSessionId = req.headers.get("X-Session-ID");
 
-          // Get or create session with linked transports
-          let session = sessions.get(sessionId);
-          if (!session) {
+          let sessionId: string;
+          let session: HttpSession | undefined;
+
+          if (clientSessionId) {
+            // Client supplied a session ID — only use it for LOOKUP, never create with client-supplied ID
+            session = sessions.get(clientSessionId);
+            if (!session) {
+              return new Response(
+                JSON.stringify({ error: "Session not found", sessionId: clientSessionId }),
+                { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+            sessionId = clientSessionId;
+          } else {
+            // No session ID provided — create a new session with server-generated ID
+            sessionId = crypto.randomUUID();
+
             // Create linked in-memory transports for MCP communication
             const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -294,7 +346,7 @@ export async function startHttpServer(
   console.error(`BrowserX MCP Server running on http://${hostname}:${port}/mcp`);
 
   // Cleanup old sessions periodically
-  setInterval(() => {
+  const sessionCleanupInterval = setInterval(() => {
     const now = Date.now();
     const timeout = 30 * 60 * 1000; // 30 minutes
 
@@ -318,6 +370,11 @@ export async function startHttpServer(
       }
     }
   }, 60 * 1000);
+
+  // Clear session cleanup interval when server shuts down
+  httpServer.finished.then(() => {
+    clearInterval(sessionCleanupInterval);
+  });
 
   return httpServer;
 }

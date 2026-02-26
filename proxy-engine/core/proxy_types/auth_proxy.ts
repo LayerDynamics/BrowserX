@@ -143,6 +143,11 @@ export interface AuthProxyConfig {
    * Retry delay (ms)
    */
   retryDelay?: number;
+
+  /**
+   * JWT secret for HMAC signature verification
+   */
+  jwtSecret?: string;
 }
 
 /**
@@ -211,9 +216,10 @@ export class AuthProxy {
   private loadBalancer: LoadBalancer;
   private healthMonitor?: HealthMonitor;
   private connectionManager: UpstreamConnectionManager;
-  private config: Required<Omit<AuthProxyConfig, "userValidator" | "accessRules">> & {
+  private config: Required<Omit<AuthProxyConfig, "userValidator" | "accessRules" | "jwtSecret">> & {
     userValidator: UserValidator;
     accessRules: AccessRule[];
+    jwtSecret?: string;
   };
   private auditLog: AuditLogEntry[] = [];
 
@@ -240,12 +246,16 @@ export class AuthProxy {
       timeout: config.timeout ?? 30000,
       maxRetries: config.maxRetries ?? 3,
       retryDelay: config.retryDelay ?? 1000,
+      jwtSecret: config.jwtSecret,
     };
 
     // Create load balancer
     this.loadBalancer = createLoadBalancer(route.upstream.loadBalancingStrategy);
 
     // Create connection manager
+    // TODO: connectionManager is created but forwardToUpstream() bypasses it by creating
+    // raw HTTP11Client connections. Full pool wiring requires refactoring to use
+    // acquire()/release() from the pool instead of direct HTTP11Client instantiation.
     this.connectionManager = new UpstreamConnectionManager(DEFAULT_CONNECTION_POOL_CONFIG);
 
     // Create health monitor if health check config provided
@@ -367,7 +377,10 @@ export class AuthProxy {
 
     try {
       const credentials = atob(authHeader.substring(6));
-      const [username, password] = credentials.split(":");
+      const colonIndex = credentials.indexOf(":");
+      if (colonIndex === -1) return null;
+      const username = credentials.substring(0, colonIndex);
+      const password = credentials.substring(colonIndex + 1);
 
       return await this.config.userValidator.validateBasicAuth(username, password);
     } catch (error) {
@@ -479,6 +492,16 @@ export class AuthProxy {
         const response = await client.sendRequest(upstreamRequest);
         await client.close();
 
+        // Only retry on 5xx server errors; return 4xx and other responses immediately
+        if (response.statusCode >= 500) {
+          lastError = new Error(`Upstream returned ${response.statusCode}`);
+          console.error(`[Auth Proxy] Forward attempt ${attempt + 1} got ${response.statusCode}`);
+          if (attempt < this.config.maxRetries - 1) {
+            await new Promise((resolve) => setTimeout(resolve, this.config.retryDelay));
+          }
+          continue;
+        }
+
         return response;
       } catch (error) {
         lastError = error as Error;
@@ -543,7 +566,8 @@ export class AuthProxy {
     }
 
     // Add forwarded headers
-    headers["x-forwarded-for"] = context.clientIP;
+    const existingXFF = headers["x-forwarded-for"];
+    headers["x-forwarded-for"] = existingXFF ? existingXFF + ", " + context.clientIP : context.clientIP;
     headers["x-forwarded-proto"] = context.protocol;
 
     return {
@@ -633,8 +657,8 @@ export class AuthProxy {
   /**
    * Get proxy statistics
    */
-  getStats(): AuthProxyStats {
-    return { ...this.stats };
+  getStats(): AuthProxyStats & { connectionPool: ReturnType<UpstreamConnectionManager["getStats"]> } {
+    return { ...this.stats, connectionPool: this.connectionManager.getStats() };
   }
 
   /**
@@ -710,6 +734,11 @@ export class InMemoryUserValidator implements UserValidator {
   private apiKeys = new Map<string, string>(); // apiKey -> userId
   private credentials = new Map<string, string>(); // username -> password
   private tokens = new Map<string, string>(); // token -> userId
+  private jwtSecret?: string;
+
+  constructor(options?: { jwtSecret?: string }) {
+    this.jwtSecret = options?.jwtSecret;
+  }
 
   addUser(user: User, apiKey?: string, password?: string, token?: string): void {
     this.users.set(user.id, user);
@@ -735,7 +764,26 @@ export class InMemoryUserValidator implements UserValidator {
 
   async validateBasicAuth(username: string, password: string): Promise<User | null> {
     const storedPassword = this.credentials.get(username);
-    if (!storedPassword || storedPassword !== password) return null;
+    if (!storedPassword) return null;
+
+    // Constant-time comparison via HMAC digest to prevent timing attacks
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode("timing-safe-compare"),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const storedDigest = await crypto.subtle.sign("HMAC", key, encoder.encode(storedPassword));
+    const inputDigest = await crypto.subtle.sign("HMAC", key, encoder.encode(password));
+    const storedArr = new Uint8Array(storedDigest);
+    const inputArr = new Uint8Array(inputDigest);
+    let match = storedArr.length === inputArr.length ? 1 : 0;
+    for (let i = 0; i < storedArr.length; i++) {
+      match &= storedArr[i] === inputArr[i] ? 1 : 0;
+    }
+    if (!match) return null;
 
     // Find user by username
     for (const user of this.users.values()) {
@@ -754,8 +802,61 @@ export class InMemoryUserValidator implements UserValidator {
   }
 
   async validateJWT(token: string): Promise<User | null> {
-    // Simple JWT validation (in production, use a proper JWT library)
-    // For now, treat it like a bearer token
-    return this.validateBearerToken(token);
+    try {
+      const parts = token.split(".");
+      if (parts.length !== 3) return null;
+
+      const [headerB64, payloadB64, signatureB64] = parts;
+
+      // Base64url decode helper
+      const decodeB64Url = (s: string) => {
+        const padded = s.replace(/-/g, "+").replace(/_/g, "/");
+        return JSON.parse(atob(padded));
+      };
+
+      const header = decodeB64Url(headerB64);
+      const payload = decodeB64Url(payloadB64);
+
+      // Reject 'none' algorithm and unsupported algorithms
+      if (!header.alg || !["HS256", "HS384", "HS512"].includes(header.alg)) {
+        return null;
+      }
+
+      // Check expiration and not-before claims
+      const now = Math.floor(Date.now() / 1000);
+      if (payload.exp && payload.exp < now) return null;
+      if (payload.nbf && payload.nbf > now) return null;
+
+      // Verify HMAC signature — reject all JWTs if no secret configured
+      if (!this.jwtSecret) {
+        return null;
+      }
+      {
+        const encoder = new TextEncoder();
+        const hashBits = header.alg.slice(2); // "256", "384", or "512"
+        const key = await crypto.subtle.importKey(
+          "raw",
+          encoder.encode(this.jwtSecret),
+          { name: "HMAC", hash: `SHA-${hashBits}` },
+          false,
+          ["verify"],
+        );
+        const sigBytes = Uint8Array.from(
+          atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")),
+          (c) => c.charCodeAt(0),
+        );
+        const data = encoder.encode(`${headerB64}.${payloadB64}`);
+        const valid = await crypto.subtle.verify("HMAC", key, sigBytes, data);
+        if (!valid) return null;
+      }
+
+      return {
+        id: payload.sub || payload.id || "jwt-user",
+        username: payload.username || payload.sub || "jwt-user",
+        roles: payload.roles || [],
+      };
+    } catch {
+      return null;
+    }
   }
 }

@@ -36,6 +36,9 @@ const RATE_LIMIT = {
   REFILL_RATE: 1 / 6000, // 1 token per 6 seconds = 10 tokens per minute
 } as const;
 
+const MAX_QUERY_LENGTH = 10240;
+const MAX_RATE_LIMIT_BUCKETS = 10000;
+
 /**
  * Check rate limit for a client IP.
  * @param ip Client IP address
@@ -52,6 +55,11 @@ function checkRateLimit(ip: string): boolean {
       lastRefill: now,
     };
     rateLimitBuckets.set(ip, bucket);
+    if (rateLimitBuckets.size > MAX_RATE_LIMIT_BUCKETS) {
+      // Evict oldest entry
+      const oldestKey = rateLimitBuckets.keys().next().value;
+      if (oldestKey !== undefined) rateLimitBuckets.delete(oldestKey);
+    }
     return true;
   }
 
@@ -84,8 +92,8 @@ function getClientIp(request: Request): string {
   // Check x-forwarded-for header first (for proxies/load balancers)
   const forwardedFor = request.headers.get('x-forwarded-for');
   if (forwardedFor) {
-    // x-forwarded-for can contain multiple IPs, use the first one
-    return forwardedFor.split(',')[0].trim();
+    // x-forwarded-for can contain multiple IPs, use the last (rightmost) one added by trusted proxy
+    return forwardedFor.split(',').map(s => s.trim()).pop()!;
   }
 
   // Fallback to x-real-ip
@@ -103,7 +111,7 @@ function getClientIp(request: Request): string {
  * @returns Unique execution ID
  */
 function generateExecutionId(): string {
-  return `exec_${Date.now()}_${crypto.randomUUID().slice(0, 9)}`;
+  return `exec_${Date.now()}_${crypto.randomUUID()}`;
 }
 
 /**
@@ -299,6 +307,8 @@ async function executeMockQuery(query: string, timeout: number): Promise<Execute
  *
  * Executes a BrowserX query and returns the results.
  */
+export const prerender = false;
+
 export const POST: APIRoute = async ({ request }) => {
   const executionId = generateExecutionId();
 
@@ -321,7 +331,15 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    // 2. Parse and validate request body
+    // 2. Check Content-Type
+    const contentType = request.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      return new Response(JSON.stringify({
+        error: { code: 'INVALID_CONTENT_TYPE', message: 'Content-Type must be application/json.' },
+      }), { status: 415, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    // 3. Parse and validate request body
     let body: unknown;
     try {
       body = await request.json();
@@ -352,8 +370,14 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    // 3. Execute query — proxy to real BrowserX API if configured, else mock
-    const timeout = body.options?.timeout ?? 30000;
+    if (body.query.length > MAX_QUERY_LENGTH) {
+      return new Response(JSON.stringify({
+        error: { code: 'QUERY_TOO_LONG', message: `Query exceeds maximum length of ${MAX_QUERY_LENGTH} characters.` },
+      }), { status: 413, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    // 4. Execute query — proxy to real BrowserX API if configured, else mock
+    const timeout = Math.max(1, Math.min(body.options?.timeout ?? 30000, 60000));
     const browserxApiUrl = import.meta.env.BROWSERX_API_URL;
 
     if (browserxApiUrl) {
@@ -369,8 +393,9 @@ export const POST: APIRoute = async ({ request }) => {
           status: upstream.status,
           headers: { 'Content-Type': 'application/json' },
         });
-      } catch {
+      } catch (error) {
         // Fall through to mock if upstream is unreachable
+        console.error('Upstream BrowserX API unreachable:', error);
       }
     }
 
@@ -388,12 +413,11 @@ export const POST: APIRoute = async ({ request }) => {
     });
   } catch (error) {
     // 5. Error handling
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error occurred';
+    console.error('Query execution error:', error);
     const errorResponse: ExecuteErrorResponse = {
       error: {
         code: 'QUERY_EXECUTION_ERROR',
-        message: errorMessage,
+        message: 'Internal server error',
       },
     };
 

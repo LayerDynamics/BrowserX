@@ -150,6 +150,10 @@ import {
   opencl_supports_version,
   opencl_supports_fp64,
 
+  // Library lifecycle
+  preloadLib,
+  closeLib,
+
   // GPU Texture Readback
   gpu_create_readback_buffer,
   gpu_copy_texture_to_buffer,
@@ -183,6 +187,24 @@ import {
   gpu_execute_render_pass,
   gpu_destroy_render_pipeline,
   gpu_cleanup_command_resources,
+
+  // GPU Device Lifecycle
+  gpu_init,
+  gpu_request_adapter,
+  gpu_request_device,
+  gpu_destroy_device,
+  gpu_destroy_adapter,
+
+  // GPU Pipeline Creation (bypasses Deno's broken WebIDL async)
+  gpu_create_shader_module,
+  gpu_destroy_shader_module,
+  gpu_create_render_pipeline,
+  gpu_create_render_pipeline_async,
+  gpu_destroy_render_pipeline_ffi,
+  gpu_create_compute_pipeline,
+  gpu_create_compute_pipeline_async,
+  gpu_destroy_compute_pipeline,
+  gpu_cleanup_pipelines,
 
   // Types
   type DarwinSystemInfo,
@@ -484,6 +506,50 @@ export class WebGPUX {
    */
   getLastError(): string {
     return webgpu_x_get_last_error();
+  }
+
+  // ============================================================================
+  // GPU Device Lifecycle
+  // ============================================================================
+
+  /**
+   * Initialize the FFI GPU subsystem.
+   * @returns true if initialization succeeded
+   */
+  init(): boolean {
+    return gpu_init() === 1;
+  }
+
+  /**
+   * Request a GPU adapter via FFI wgpu.
+   * @param backendType - 0 = default, 1 = vulkan, 2 = metal, 3 = dx12
+   * @returns Adapter handle or 0n on failure
+   */
+  requestAdapter(backendType: number): bigint {
+    return gpu_request_adapter(backendType);
+  }
+
+  /**
+   * Request a GPU device from an adapter via FFI wgpu.
+   * @param adapterHandle - Handle from requestAdapter()
+   * @returns Device handle or 0n on failure
+   */
+  requestDevice(adapterHandle: bigint): bigint {
+    return gpu_request_device(adapterHandle);
+  }
+
+  /**
+   * Destroy a GPU device created via FFI.
+   */
+  destroyDevice(handle: bigint): void {
+    gpu_destroy_device(handle);
+  }
+
+  /**
+   * Destroy a GPU adapter created via FFI.
+   */
+  destroyAdapter(handle: bigint): void {
+    gpu_destroy_adapter(handle);
   }
 
   // ============================================================================
@@ -2121,9 +2187,144 @@ export class WebGPUX {
   cleanupCommandResources(): void {
     gpu_cleanup_command_resources();
   }
+
+  // ==========================================================================
+  // Pipeline Creation (bypasses Deno's broken WebIDL async conversion)
+  // ==========================================================================
+
+  /**
+   * Create a shader module from WGSL source code via FFI.
+   * @returns Shader module handle or 0n on failure
+   */
+  createShaderModule(deviceHandle: bigint, label: string, wgslCode: string): bigint {
+    return gpu_create_shader_module(deviceHandle, label, wgslCode);
+  }
+
+  /**
+   * Destroy a shader module created via FFI.
+   */
+  destroyShaderModule(handle: bigint): void {
+    gpu_destroy_shader_module(handle);
+  }
+
+  /**
+   * Create a render pipeline synchronously via wgpu FFI.
+   * Bypasses Deno's broken createRenderPipelineAsync WebIDL conversion.
+   * @returns Render pipeline handle or 0n on failure
+   */
+  createRenderPipelineSync(
+    deviceHandle: bigint,
+    label: string,
+    vertexModuleHandle: bigint,
+    vertexEntryPoint: string,
+    fragmentModuleHandle: bigint,
+    fragmentEntryPoint: string,
+    format: number,
+    blendJson: string,
+    topology: number,
+    cullMode: number,
+    layoutMode: bigint,
+  ): bigint {
+    return gpu_create_render_pipeline(
+      deviceHandle, label, vertexModuleHandle, vertexEntryPoint,
+      fragmentModuleHandle, fragmentEntryPoint, format, blendJson,
+      topology, cullMode, layoutMode,
+    );
+  }
+
+  /**
+   * Create a render pipeline asynchronously via wgpu FFI on a background thread.
+   *
+   * This provides genuine non-blocking pipeline compilation:
+   * - The FFI call runs on a separate OS thread (non_blocking: true)
+   * - Deno's event loop is not stalled during GPU driver shader compilation
+   * - Bypasses Deno's broken createRenderPipelineAsync WebIDL conversion
+   *
+   * Note: wgpu does not yet have create_render_pipeline_async (gfx-rs/wgpu#3794).
+   * The pipeline is compiled via wgpu's sync API on a background thread, which
+   * achieves the same non-blocking behavior as the WebGPU spec's async variant.
+   *
+   * @returns Promise resolving to render pipeline handle or 0n on failure
+   */
+  createRenderPipelineAsync(
+    deviceHandle: bigint,
+    label: string,
+    vertexModuleHandle: bigint,
+    vertexEntryPoint: string,
+    fragmentModuleHandle: bigint,
+    fragmentEntryPoint: string,
+    format: number,
+    blendJson: string,
+    topology: number,
+    cullMode: number,
+    layoutMode: bigint,
+  ): Promise<bigint> {
+    return gpu_create_render_pipeline_async(
+      deviceHandle, label, vertexModuleHandle, vertexEntryPoint,
+      fragmentModuleHandle, fragmentEntryPoint, format, blendJson,
+      topology, cullMode, layoutMode,
+    ) as Promise<bigint>;
+  }
+
+  /**
+   * Destroy a render pipeline created via the pipeline FFI functions.
+   */
+  destroyRenderPipelineFfi(handle: bigint): void {
+    gpu_destroy_render_pipeline_ffi(handle);
+  }
+
+  /**
+   * Create a compute pipeline synchronously via wgpu FFI.
+   * @returns Compute pipeline handle or 0n on failure
+   */
+  createComputePipelineSync(
+    deviceHandle: bigint,
+    label: string,
+    shaderModuleHandle: bigint,
+    entryPoint: string,
+    layoutMode: bigint,
+  ): bigint {
+    return gpu_create_compute_pipeline(
+      deviceHandle, label, shaderModuleHandle, entryPoint, layoutMode,
+    );
+  }
+
+  /**
+   * Create a compute pipeline asynchronously via wgpu FFI on a background thread.
+   *
+   * Same design as createRenderPipelineAsync — see its documentation.
+   * @returns Promise resolving to compute pipeline handle or 0n on failure
+   */
+  createComputePipelineAsync(
+    deviceHandle: bigint,
+    label: string,
+    shaderModuleHandle: bigint,
+    entryPoint: string,
+    layoutMode: bigint,
+  ): Promise<bigint> {
+    return gpu_create_compute_pipeline_async(
+      deviceHandle, label, shaderModuleHandle, entryPoint, layoutMode,
+    ) as Promise<bigint>;
+  }
+
+  /**
+   * Destroy a compute pipeline created via FFI.
+   */
+  destroyComputePipeline(handle: bigint): void {
+    gpu_destroy_compute_pipeline(handle);
+  }
+
+  /**
+   * Clean up all pipeline resources (shader modules, render & compute pipelines).
+   */
+  cleanupPipelines(): void {
+    gpu_cleanup_pipelines();
+  }
 }
 
 // Re-export types (interfaces are already exported above)
+export { preloadLib, closeLib };
+
 export type {
   DarwinSystemInfo,
   LinuxSystemInfo,

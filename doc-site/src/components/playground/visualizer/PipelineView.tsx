@@ -50,7 +50,7 @@ export const PipelineView: React.FC = () => {
         {activeExecution && (
           <span className="pipeline-running-badge">Live</span>
         )}
-        {allDone && !activeExecution && totalMs > 0 && (
+        {allDone && !activeExecution && totalMs > 0 && !pipelineStages.some((s) => s.status === 'error') && (
           <span className="pipeline-total">{totalMs.toFixed(1)}ms total</span>
         )}
       </div>

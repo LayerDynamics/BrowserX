@@ -40,8 +40,42 @@ export interface DNSResult {
 
 export class DNSResolver {
   private dnsLogger = new BrowserConsole("DNSResolver");
-  private nameservers: string[] = ["8.8.8.8", "8.8.4.4"]; // Google DNS
+  private nameservers: string[] | null = null;
+  private nameserversLoading: Promise<string[]> | null = null;
   private dohEndpoint?: string; // DNS-over-HTTPS endpoint
+
+  private static readonly DEFAULT_NAMESERVERS = ["8.8.8.8", "8.8.4.4"];
+
+  /**
+   * Lazily load system nameservers (async, non-blocking)
+   */
+  private async getNameservers(): Promise<string[]> {
+    if (this.nameservers !== null) {
+      return this.nameservers;
+    }
+    if (this.nameserversLoading !== null) {
+      return this.nameserversLoading;
+    }
+    this.nameserversLoading = this.loadSystemNameservers();
+    const result = await this.nameserversLoading;
+    this.nameservers = result;
+    this.nameserversLoading = null;
+    return result;
+  }
+
+  private async loadSystemNameservers(): Promise<string[]> {
+    try {
+      const text = await Deno.readTextFile("/etc/resolv.conf");
+      const servers = text.split("\n")
+        .filter((line: string) => line.trim().startsWith("nameserver"))
+        .map((line: string) => line.trim().split(/\s+/)[1])
+        .filter(Boolean) as string[];
+      if (servers.length > 0) return servers;
+    } catch {
+      // Fall back to Google DNS if resolv.conf unavailable or permission denied
+    }
+    return DNSResolver.DEFAULT_NAMESERVERS;
+  }
 
   constructor(options?: {
     nameservers?: string[];
@@ -92,8 +126,9 @@ export class DNSResolver {
 
     // Try each nameserver until one succeeds
     let lastError: Error | null = null;
+    const nameservers = await this.getNameservers();
 
-    for (const nameserver of this.nameservers) {
+    for (const nameserver of nameservers) {
       try {
         return await this.queryUDP(hostname, type, nameserver);
       } catch (error) {

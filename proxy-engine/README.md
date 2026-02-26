@@ -166,7 +166,7 @@ See `config.example.json` for a complete example.
 
 - **tcp**: Simple TCP connection test
 - **http**: HTTP GET request to health endpoint
-- **ping**: WebSocket/HTTP2 ping frames (planned)
+- **ping**: WebSocket/HTTP2 ping frames
 
 ## Middleware
 

@@ -1029,6 +1029,150 @@ pub fn gpu_cleanup_all() {
 }
 
 // ============================================================================
+// GPU PIPELINE CREATION
+// ============================================================================
+// Pipeline creation via wgpu, bypassing Deno's broken WebIDL conversion
+// for createRenderPipelineAsync / createComputePipelineAsync
+
+/// Create a shader module from WGSL source code
+/// Returns: shader module handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_shader_module(device_handle: u64, label: &str, wgsl_code: &str) -> u64 {
+    crate::gpu::pipeline::gpu_create_shader_module(device_handle, label, wgsl_code)
+}
+
+/// Destroy a shader module
+#[deno_bindgen]
+pub fn gpu_destroy_shader_module(handle: u64) {
+    crate::gpu::pipeline::gpu_destroy_shader_module(handle);
+}
+
+/// Create a render pipeline (sync)
+/// format: texture format code (0=R8Unorm, 1=Rgba8Unorm, 3=Bgra8Unorm, etc.)
+/// blend_json: JSON blend state or empty string for no blending
+/// topology: 0=PointList, 1=LineList, 2=LineStrip, 3=TriangleList, 4=TriangleStrip
+/// cull_mode: 0=None, 1=Front, 2=Back
+/// layout_mode: 0=auto, otherwise pipeline layout handle
+/// Returns: render pipeline handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_render_pipeline(
+    device_handle: u64,
+    label: &str,
+    vertex_module_handle: u64,
+    vertex_entry_point: &str,
+    fragment_module_handle: u64,
+    fragment_entry_point: &str,
+    format: u32,
+    blend_json: &str,
+    topology: u32,
+    cull_mode: u32,
+    layout_mode: u64,
+) -> u64 {
+    crate::gpu::pipeline::gpu_create_render_pipeline(
+        device_handle,
+        label,
+        vertex_module_handle,
+        vertex_entry_point,
+        fragment_module_handle,
+        fragment_entry_point,
+        format,
+        blend_json,
+        topology,
+        cull_mode,
+        layout_mode,
+    )
+}
+
+/// Create a render pipeline (async via nonblocking FFI)
+/// Same arguments as gpu_create_render_pipeline
+/// Runs on a dedicated blocking thread, returns Promise<bigint> in TypeScript
+/// Returns: render pipeline handle or 0 on failure
+#[deno_bindgen(non_blocking)]
+pub fn gpu_create_render_pipeline_async(
+    device_handle: u64,
+    label: &str,
+    vertex_module_handle: u64,
+    vertex_entry_point: &str,
+    fragment_module_handle: u64,
+    fragment_entry_point: &str,
+    format: u32,
+    blend_json: &str,
+    topology: u32,
+    cull_mode: u32,
+    layout_mode: u64,
+) -> u64 {
+    crate::gpu::pipeline::gpu_create_render_pipeline_async(
+        device_handle,
+        label,
+        vertex_module_handle,
+        vertex_entry_point,
+        fragment_module_handle,
+        fragment_entry_point,
+        format,
+        blend_json,
+        topology,
+        cull_mode,
+        layout_mode,
+    )
+}
+
+/// Destroy a render pipeline
+#[deno_bindgen]
+pub fn gpu_destroy_render_pipeline_ffi(handle: u64) {
+    crate::gpu::pipeline::gpu_destroy_render_pipeline(handle);
+}
+
+/// Create a compute pipeline (sync)
+/// Returns: compute pipeline handle or 0 on failure
+#[deno_bindgen]
+pub fn gpu_create_compute_pipeline(
+    device_handle: u64,
+    label: &str,
+    shader_module_handle: u64,
+    entry_point: &str,
+    layout_mode: u64,
+) -> u64 {
+    crate::gpu::pipeline::gpu_create_compute_pipeline(
+        device_handle,
+        label,
+        shader_module_handle,
+        entry_point,
+        layout_mode,
+    )
+}
+
+/// Create a compute pipeline on a background thread (non-blocking FFI)
+/// Returns: compute pipeline handle or 0 on failure
+#[deno_bindgen(non_blocking)]
+pub fn gpu_create_compute_pipeline_async(
+    device_handle: u64,
+    label: &str,
+    shader_module_handle: u64,
+    entry_point: &str,
+    layout_mode: u64,
+) -> u64 {
+    crate::gpu::pipeline::gpu_create_compute_pipeline_async(
+        device_handle,
+        label,
+        shader_module_handle,
+        entry_point,
+        layout_mode,
+    )
+}
+
+/// Destroy a compute pipeline
+#[deno_bindgen]
+pub fn gpu_destroy_compute_pipeline(handle: u64) {
+    crate::gpu::pipeline::gpu_destroy_compute_pipeline(handle);
+}
+
+/// Clean up all pipeline resources (shader modules, render/compute pipelines)
+#[deno_bindgen]
+pub fn gpu_cleanup_pipelines() {
+    crate::gpu::pipeline::gpu_cleanup_pipelines();
+}
+
+// ============================================================================
 // GPU TEXTURE READBACK
 // ============================================================================
 // Functions for reading GPU texture data back to CPU memory

@@ -43,6 +43,9 @@ export interface LayoutBox {
   src?: string;
   children?: LayoutBox[];
 
+  /** Optional DOM node ID for CDP DOM-layout correlation */
+  nodeId?: number;
+
   /**
    * Get content box dimensions
    */

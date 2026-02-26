@@ -23,6 +23,7 @@ export const PipelineCanvas: React.FC<PipelineCanvasProps> = ({
   isRunning,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const particlesRef = useRef<Particle[]>([]);
   const animFrameRef = useRef<number>(0);
   const activeStageRef = useRef(activeStageIndex);
@@ -48,7 +49,7 @@ export const PipelineCanvas: React.FC<PipelineCanvasProps> = ({
   const animate = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = ctxRef.current;
     if (!ctx) return;
 
     const W = canvas.width;
@@ -136,6 +137,7 @@ export const PipelineCanvas: React.FC<PipelineCanvasProps> = ({
     const resize = () => {
       canvas.width = canvas.offsetWidth;
       canvas.height = canvas.offsetHeight;
+      ctxRef.current = canvas.getContext('2d');
     };
     resize();
 

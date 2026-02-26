@@ -6,6 +6,24 @@
 import { isString } from "./type-guards.ts";
 
 /**
+ * Check if a regex pattern is safe from catastrophic backtracking (ReDoS)
+ */
+export function isSafeRegex(pattern: string): boolean {
+  // Reject excessively long patterns
+  if (pattern.length > 1000) return false;
+  // Reject nested quantifiers: (x+)+, (x*)+, (x+)*, (x*)*, etc.
+  if (/(\(.+[+*]\))[+*?{]/.test(pattern)) return false;
+  if (/(\(\?:[^)]+[+*]\))[+*?{]/.test(pattern)) return false;
+  // Try to compile
+  try {
+    new RegExp(pattern);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Escape special characters in string for use in quotes
  */
 export function escapeString(str: string, quote: '"' | "'" = '"'): string {
@@ -223,6 +241,9 @@ export function matchesPattern(
       return new RegExp(`^${regexPattern}$`).test(text);
 
     case "regex":
+      if (!isSafeRegex(pattern)) {
+        throw new Error(`Unsafe regex pattern rejected: ${pattern}`);
+      }
       return new RegExp(pattern).test(text);
 
     default:

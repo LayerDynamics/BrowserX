@@ -278,7 +278,7 @@ interface QueryEditorInlineProps {
   onChange: (v: string) => void;
 }
 
-const QueryEditorInline: React.FC<QueryEditorInlineProps> = ({ value, onChange }) => {
+const QueryEditorInline = React.memo<QueryEditorInlineProps>(({ value, onChange }) => {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
 
@@ -286,6 +286,7 @@ const QueryEditorInline: React.FC<QueryEditorInlineProps> = ({ value, onChange }
     editorRef.current = editor;
     monacoRef.current = monaco;
 
+    if (!monaco.languages.getLanguages().find((l: { id: string }) => l.id === 'browserx-query')) {
     monaco.languages.register({ id: 'browserx-query' });
     monaco.languages.setMonarchTokensProvider('browserx-query', {
       tokenizer: {
@@ -305,6 +306,7 @@ const QueryEditorInline: React.FC<QueryEditorInlineProps> = ({ value, onChange }
         ],
       },
     });
+    }
 
     monaco.editor.defineTheme('browserx-dark', {
       base: 'vs-dark',
@@ -358,7 +360,7 @@ const QueryEditorInline: React.FC<QueryEditorInlineProps> = ({ value, onChange }
       }}
     />
   );
-};
+});
 
 // ─── Results Panel ─────────────────────────────────────────────
 
@@ -407,9 +409,13 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ data, totalTime }) => {
   );
 };
 
+// ─── Helpers ────────────────────────────────────────────────────
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 // ─── Main Component ────────────────────────────────────────────
 
-type PipelineStatus = 'idle' | 'running' | 'complete' | 'error';
+export type PipelineStatus = 'idle' | 'running' | 'complete' | 'error';
 
 export const PipelineVisualizer: React.FC = () => {
   const [query, setQuery] = useState(PRESETS[0].query);
@@ -424,7 +430,7 @@ export const PipelineVisualizer: React.FC = () => {
 
   // Stage node DOM positions for canvas targeting
   const [stagePositions, setStagePositions] = useState<number[]>([]);
-  const nodeRefs = useRef<(HTMLDivElement | null)[]>(Array(7).fill(null));
+  const nodeRefs = useRef<(HTMLDivElement | null)[]>(Array(STAGES.length).fill(null));
   const diagramRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -446,9 +452,6 @@ export const PipelineVisualizer: React.FC = () => {
     if (diagramRef.current) observer.observe(diagramRef.current);
     return () => observer.disconnect();
   }, [measurePositions]);
-
-  const sleep = (ms: number) =>
-    new Promise<void>((resolve) => setTimeout(resolve, ms));
 
   const runQuery = useCallback(async () => {
     if (status === 'running') return;
@@ -482,11 +485,11 @@ export const PipelineVisualizer: React.FC = () => {
       const events = buildStageEvents(query, apiResult);
 
       // Playback each stage sequentially
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < STAGES.length; i++) {
         setActiveStageIndex(i);
         setStageEvents((prev) => [...prev, events[i]]);
 
-        const rawDuration = Object.values(apiResult.timing)[i] as number ?? 300;
+        const rawDuration = (apiResult.timing[STAGES[i].timingKey] as number) ?? 300;
         const displayDuration = Math.max(rawDuration, 300);
         await sleep(displayDuration);
 

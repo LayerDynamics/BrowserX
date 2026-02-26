@@ -868,20 +868,39 @@ Deno.test({
 });
 
 Deno.test({
-  name: "InMemoryUserValidator - validateJWT uses bearer token validation",
+  name: "InMemoryUserValidator - validateJWT validates signed JWT with jwtSecret",
   async fn() {
-    const validator = new InMemoryUserValidator();
-    const user: User = {
-      id: "user-1",
-      username: "alice",
-      roles: ["user"],
+    const secret = "test-jwt-secret";
+    const validator = new InMemoryUserValidator({ jwtSecret: secret });
+
+    // Build a valid HS256 JWT
+    const encoder = new TextEncoder();
+    const b64url = (data: Uint8Array) => {
+      const b64 = btoa(String.fromCharCode(...data));
+      return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     };
+    const headerB64 = b64url(encoder.encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+    const payloadB64 = b64url(encoder.encode(JSON.stringify({ sub: "user-1", username: "alice", roles: ["user"] })));
+    const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(`${headerB64}.${payloadB64}`));
+    const sigB64 = b64url(new Uint8Array(sig));
+    const token = `${headerB64}.${payloadB64}.${sigB64}`;
 
-    validator.addUser(user, undefined, undefined, "jwt-token");
-
-    const result = await validator.validateJWT("jwt-token");
+    const result = await validator.validateJWT(token);
     assertExists(result);
     assertEquals(result!.username, "alice");
+  },
+});
+
+Deno.test({
+  name: "InMemoryUserValidator - validateJWT rejects all JWTs when no secret configured",
+  async fn() {
+    const validator = new InMemoryUserValidator();
+    // Even a structurally valid JWT should be rejected without a secret
+    const fakeJwt = btoa('{"alg":"HS256"}').replace(/=/g, "") + "." +
+      btoa('{"sub":"user-1"}').replace(/=/g, "") + ".fakesig";
+    const result = await validator.validateJWT(fakeJwt);
+    assertEquals(result, null);
   },
 });
 

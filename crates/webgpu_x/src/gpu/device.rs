@@ -52,7 +52,7 @@ lazy_static::lazy_static! {
     pub static ref DEVICES: RwLock<HashMap<u64, (wgpu::Device, wgpu::Queue)>> = RwLock::new(HashMap::new());
     /// Storage for bind group layouts (accessible to bind_group module)
     pub static ref BIND_GROUP_LAYOUTS: RwLock<HashMap<u64, wgpu::BindGroupLayout>> = RwLock::new(HashMap::new());
-    static ref PIPELINE_LAYOUTS: RwLock<HashMap<u64, wgpu::PipelineLayout>> = RwLock::new(HashMap::new());
+    pub static ref PIPELINE_LAYOUTS: RwLock<HashMap<u64, wgpu::PipelineLayout>> = RwLock::new(HashMap::new());
     /// Storage for GPU textures (accessible to readback and bind_group modules)
     pub static ref TEXTURES: RwLock<HashMap<u64, wgpu::Texture>> = RwLock::new(HashMap::new());
 }
@@ -77,12 +77,6 @@ pub fn gpu_init() -> u8 {
 /// Request a GPU adapter
 /// Returns adapter handle or 0 on failure
 pub fn gpu_request_adapter(power_preference: u32) -> u64 {
-    let instance_guard = INSTANCE.read();
-    let instance = match instance_guard.as_ref() {
-        Some(i) => i,
-        None => return 0,
-    };
-
     let power_pref = match power_preference {
         0 => wgpu::PowerPreference::None,
         1 => wgpu::PowerPreference::LowPower,
@@ -90,11 +84,20 @@ pub fn gpu_request_adapter(power_preference: u32) -> u64 {
         _ => wgpu::PowerPreference::None,
     };
 
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: power_pref,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }));
+    // Acquire read lock, call request_adapter, and drop lock before inserting
+    let adapter = {
+        let guard = INSTANCE.read();
+        let instance = match guard.as_ref() {
+            Some(i) => i,
+            None => return 0,
+        };
+
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: power_pref,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    };
 
     match adapter {
         Some(adapter) => {
@@ -263,8 +266,24 @@ fn convert_entry(desc: &BindGroupLayoutEntryDesc) -> wgpu::BindGroupLayoutEntry 
                 5 => wgpu::TextureViewDimension::D3,
                 _ => wgpu::TextureViewDimension::D2,
             };
-            // Use a default format - can be extended for more formats
-            let format = wgpu::TextureFormat::Rgba8Unorm;
+            let format = match desc.storage_format {
+                0 => wgpu::TextureFormat::Rgba8Unorm,
+                1 => wgpu::TextureFormat::Rgba8Snorm,
+                2 => wgpu::TextureFormat::Rgba8Uint,
+                3 => wgpu::TextureFormat::Rgba8Sint,
+                4 => wgpu::TextureFormat::Rgba16Float,
+                5 => wgpu::TextureFormat::Rgba32Float,
+                6 => wgpu::TextureFormat::Rgba32Uint,
+                7 => wgpu::TextureFormat::Rgba32Sint,
+                8 => wgpu::TextureFormat::R32Float,
+                9 => wgpu::TextureFormat::R32Uint,
+                10 => wgpu::TextureFormat::R32Sint,
+                11 => wgpu::TextureFormat::Rg32Float,
+                12 => wgpu::TextureFormat::Rg32Uint,
+                13 => wgpu::TextureFormat::Rg32Sint,
+                14 => wgpu::TextureFormat::Bgra8Unorm,
+                _ => wgpu::TextureFormat::Rgba8Unorm,
+            };
             wgpu::BindingType::StorageTexture {
                 access,
                 format,
@@ -541,7 +560,7 @@ impl Serialize for BindGroupLayoutEntryDesc {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("BindGroupLayoutEntryDesc", 13)?;
+        let mut state = serializer.serialize_struct("BindGroupLayoutEntryDesc", 12)?;
         state.serialize_field("binding", &self.binding)?;
         state.serialize_field("visibility", &self.visibility)?;
         state.serialize_field("ty", &self.ty)?;

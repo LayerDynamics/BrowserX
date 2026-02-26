@@ -142,10 +142,27 @@ export class PluginLoader {
         const manifest = await this.loadManifest(pluginDir);
 
         if (manifest) {
-          // Load using manifest's main entry
-          const mainPath = pluginDir.endsWith("/")
+          // Load using manifest's main entry — with path containment check
+          const rawMainPath = pluginDir.endsWith("/")
             ? `${pluginDir}${manifest.main}`
             : `${pluginDir}/${manifest.main}`;
+
+          // Resolve to absolute and verify it stays inside pluginDir
+          const mainPath = await Deno.realPath(rawMainPath).catch(() => rawMainPath);
+          const resolvedPluginDir = await Deno.realPath(pluginDir).catch(() => pluginDir);
+          if (!mainPath.startsWith(resolvedPluginDir)) {
+            console.warn(
+              `[PluginLoader] Path traversal blocked: manifest.main "${manifest.main}" resolves outside plugin directory "${pluginDir}"`,
+            );
+            results.push({
+              success: false,
+              error: new Error(
+                `Plugin manifest "main" entry resolves outside the plugin directory (path traversal blocked)`,
+              ),
+              path: rawMainPath,
+            });
+            continue;
+          }
 
           const result = await this.load(mainPath);
           result.manifest = manifest;
@@ -154,10 +171,10 @@ export class PluginLoader {
           // Try common entry points
           const entryPoints = ["mod.ts", "index.ts", "main.ts", "plugin.ts"];
 
-          for (const entry of entryPoints) {
+          for (const entryPoint of entryPoints) {
             const entryPath = pluginDir.endsWith("/")
-              ? `${pluginDir}${entry}`
-              : `${pluginDir}/${entry}`;
+              ? `${pluginDir}${entryPoint}`
+              : `${pluginDir}/${entryPoint}`;
 
             try {
               await Deno.stat(entryPath);
@@ -304,10 +321,22 @@ export class PluginLoader {
 
   /**
    * Resolve a path to an importable URL.
+   * Remote URLs (http/https) are blocked by default for security.
    */
-  private resolveModulePath(path: string): string {
-    // Already a URL
-    if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("file://")) {
+  private resolveModulePath(path: string, allowRemote = false): string {
+    // Remote URLs require explicit opt-in
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      if (!allowRemote) {
+        throw new Error(
+          `Remote plugin URLs are blocked for security. ` +
+            `Set allowRemote: true in plugin config to enable loading from "${path}".`,
+        );
+      }
+      return path;
+    }
+
+    // Already a file:// URL
+    if (path.startsWith("file://")) {
       return path;
     }
 
