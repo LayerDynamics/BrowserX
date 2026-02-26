@@ -293,6 +293,7 @@ export class QueryEngine implements IQueryEngine {
    * Initialize the engine
    */
   async initialize(config: QueryEngineConfig): Promise<void> {
+    await Promise.resolve(); // async per IQueryEngine contract; supports future async init
     this.config = { ...this.config, ...config };
 
     // Reset metrics on (re)initialize
@@ -374,7 +375,7 @@ export class QueryEngine implements IQueryEngine {
       throw new Error("Query Engine not initialized. Call initialize() first.");
     }
 
-    const queryId = this.generateQueryId();
+    const queryId = options.queryId ?? this.generateQueryId();
     const startTime = performance.now();
     const timeout = options.timeout ?? 30000;
 
@@ -506,13 +507,14 @@ export class QueryEngine implements IQueryEngine {
         throw executionResult.error;
       }
 
-      const data = executionResult.data;
+      const {data} = executionResult;
 
       // 7. Formatting - Format results
       this.emitStage("formatting", "Formatting", "running", performance.now());
       const formattingStart = performance.now();
       const formatter = new ResultFormatter();
-      const formatted = formatter.format(data, options.format || "JSON", {
+      const outputFormat: OutputFormat = options.format || "JSON";
+      const formatted = formatter.format(data, outputFormat, {
         pretty: true,
         indent: 2,
         includeHeaders: true,
@@ -578,6 +580,7 @@ export class QueryEngine implements IQueryEngine {
    * Execute a query asynchronously
    */
   async executeAsync(query: string, options: QueryOptions = {}): Promise<QueryID> {
+    await Promise.resolve(); // async per IQueryEngine contract
     const queryId = this.generateQueryId();
 
     // Create initial query status
@@ -589,8 +592,8 @@ export class QueryEngine implements IQueryEngine {
       stepsTotal: 0,
     });
 
-    // Execute in background
-    this.execute(query, options).then(
+    // Execute in background, passing the outer queryId so status tracking is consistent
+    this.execute(query, { ...options, queryId }).then(
       (result) => {
         this.queries.set(queryId, {
           queryId,
@@ -609,6 +612,12 @@ export class QueryEngine implements IQueryEngine {
           stepsTotal: 0,
           error,
         });
+
+        // Emit error so callers can observe async query failures
+        console.error(
+          `[QueryEngine] Async query ${queryId} failed:`,
+          error instanceof Error ? error.message : String(error),
+        );
       },
     );
 
@@ -619,6 +628,7 @@ export class QueryEngine implements IQueryEngine {
    * Get query status
    */
   async getQueryStatus(queryId: QueryID): Promise<QueryStatus> {
+    await Promise.resolve(); // async per IQueryEngine contract
     const status = this.queries.get(queryId);
 
     if (!status) {
@@ -632,6 +642,7 @@ export class QueryEngine implements IQueryEngine {
    * Cancel a running query
    */
   async cancelQuery(queryId: QueryID): Promise<void> {
+    await Promise.resolve(); // async per IQueryEngine contract
     const status = this.queries.get(queryId);
 
     if (!status) {

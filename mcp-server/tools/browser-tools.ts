@@ -24,6 +24,7 @@ import {
 import { ToolRateLimiter } from "./ToolRateLimiter.ts";
 
 const evaluateRateLimiter = new ToolRateLimiter({ maxRequests: 100, windowMs: 60000 });
+const toolRateLimiter = new ToolRateLimiter({ maxRequests: 200, windowMs: 60000 });
 
 /**
  * Register browser automation tools with the MCP server
@@ -58,6 +59,7 @@ export function registerBrowserTools(
       "browser_navigate",
       async ({ url, sessionId, waitUntil, timeout, signal }, ctx) => {
         context.permissionGuard.checkToolPermission("browser_navigate");
+        toolRateLimiter.check(sessionId as string || crypto.randomUUID());
 
         // Track operation
         const opId = context.visibilityService.operationTracker.startOperation(
@@ -159,6 +161,7 @@ export function registerBrowserTools(
       "browser_click",
       async ({ sessionId, selector, selectorType, signal }, _ctx) => {
         context.permissionGuard.checkToolPermission("browser_click");
+        toolRateLimiter.check(sessionId as string);
 
         const opId = context.visibilityService.operationTracker.startOperation(
           "click",
@@ -219,6 +222,7 @@ export function registerBrowserTools(
       "browser_type",
       async ({ sessionId, selector, text, clear, delay, signal }, _ctx) => {
         context.permissionGuard.checkToolPermission("browser_type");
+        toolRateLimiter.check(sessionId as string);
 
         const opId = context.visibilityService.operationTracker.startOperation(
           "type",
@@ -284,6 +288,7 @@ export function registerBrowserTools(
       "browser_screenshot",
       async ({ sessionId, fullPage, selector, format, quality, signal }, ctx) => {
         context.permissionGuard.checkToolPermission("browser_screenshot");
+        toolRateLimiter.check(sessionId as string);
 
         const opId = context.visibilityService.operationTracker.startOperation(
           "screenshot",
@@ -362,6 +367,7 @@ export function registerBrowserTools(
       "browser_pdf",
       async ({ sessionId, format, landscape, signal }, ctx) => {
         context.permissionGuard.checkToolPermission("browser_pdf");
+        toolRateLimiter.check(sessionId as string);
 
         const opId = context.visibilityService.operationTracker.startOperation(
           "pdf",
@@ -430,6 +436,7 @@ export function registerBrowserTools(
       "browser_evaluate",
       async ({ sessionId, script, args, signal }, _ctx) => {
         context.permissionGuard.checkToolPermission("browser_evaluate");
+        toolRateLimiter.check(sessionId as string);
 
         const opId = context.visibilityService.operationTracker.startOperation(
           "evaluate",
@@ -612,6 +619,7 @@ export function registerBrowserTools(
       "browser_wait",
       async ({ sessionId, type, duration, selector, condition, timeout, signal }, ctx) => {
         context.permissionGuard.checkToolPermission("browser_wait");
+        toolRateLimiter.check(sessionId as string);
 
         const opId = context.visibilityService.operationTracker.startOperation(
           "wait",
@@ -674,15 +682,16 @@ export function registerBrowserTools(
       async ({ sessionId }, _ctx) => {
         context.permissionGuard.checkToolPermission("browser_close_session");
 
+        const sid = sessionId as string;
         const opId = context.visibilityService.operationTracker.startOperation(
           "session_close",
           "Close session",
-          sessionId,
+          sid,
         );
 
         try {
           const sessionManager = await context.getSessionManager();
-          await sessionManager.closeSession(sessionId);
+          await sessionManager.closeSession(sid);
           context.visibilityService.operationTracker.completeOperation(opId);
 
           return {

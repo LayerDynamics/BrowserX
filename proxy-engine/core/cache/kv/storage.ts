@@ -39,9 +39,9 @@ export class MemoryStorage implements Storage {
     // Check if we need to evict
     const existingSize = this.store.has(key) ? this.store.get(key)!.length : 0;
     const newSize = value.length;
-    const sizeChange = newSize - existingSize;
+    let sizeChange = newSize - existingSize;
 
-    if (this.byteSize + sizeChange > this.maxBytes) {
+    while (this.byteSize + sizeChange > this.maxBytes && this.store.size > 0) {
       // LRU: remove entry with oldest (minimum) access counter
       let lruKey: string | undefined;
       let lruTime = Infinity;
@@ -53,6 +53,9 @@ export class MemoryStorage implements Storage {
       }
       if (lruKey) {
         await this.delete(lruKey);
+        sizeChange = newSize - (this.store.has(key) ? this.store.get(key)!.length : 0);
+      } else {
+        break; // No more entries to evict
       }
     }
 

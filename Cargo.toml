@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pixpane", "crates/webgpu_x"]
+members = ["crates/pixpane", "crates/webgpu_x", "crates/transportx"]
 exclude = ["crates/target", "target"]
 resolver = "2"
 
@@ -31,3 +31,4 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"

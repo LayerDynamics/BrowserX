@@ -42,7 +42,7 @@ const DOMNode: React.FC<DOMNodeProps> = ({ node, depth }) => {
             <div className="dom-children">
               {hasText && <div className="dom-text-node">"{node.text}"</div>}
               {node.children!.map((child, i) => (
-                <DOMNode key={`${child.tag}-${i}`} node={child} depth={depth + 1} />
+                <DOMNode key={`${child.tag}-${child.id ?? i}`} node={child} depth={depth + 1} />
               ))}
             </div>
           )}

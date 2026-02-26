@@ -467,6 +467,18 @@ export const usePlaygroundStore = create<PlaygroundStore>((set, get) => ({
   },
 
   addNetworkRequest: (request: NetworkRequest) => {
+    // Validate shape
+    if (
+      typeof request !== 'object' || request === null ||
+      typeof request.id !== 'string' ||
+      typeof request.url !== 'string' ||
+      typeof request.method !== 'string' ||
+      typeof request.status !== 'number' ||
+      typeof request.duration !== 'number' ||
+      typeof request.size !== 'number'
+    ) {
+      return; // Skip invalid requests
+    }
     set((state) => {
       const newRequests = [...state.networkRequests, request];
       // Enforce 100-item limit (FIFO)

@@ -27,6 +27,9 @@ export class LayoutBoxImpl implements ILayoutBox {
   borderBottomWidth: Pixels = 0 as Pixels;
   borderLeftWidth: Pixels = 0 as Pixels;
 
+  /** Optional DOM node ID for CDP DOM-layout correlation */
+  nodeId?: number;
+
   /**
    * Get content box dimensions
    */

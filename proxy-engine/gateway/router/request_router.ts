@@ -340,7 +340,18 @@ export class PatternRouter implements Router {
     pattern: RegExp,
     path: string,
   ): { params: Record<string, string> } | null {
-    const match = path.match(pattern);
+    // Ensure the pattern is anchored to prevent partial matches
+    let anchored = pattern;
+    const src = pattern.source;
+    const needsStart = !src.startsWith("^");
+    const needsEnd = !src.endsWith("$");
+    if (needsStart || needsEnd) {
+      anchored = new RegExp(
+        `${needsStart ? "^" : ""}${src}${needsEnd ? "$" : ""}`,
+        pattern.flags,
+      );
+    }
+    const match = path.match(anchored);
 
     if (!match) {
       return null;

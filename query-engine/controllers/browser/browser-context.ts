@@ -1,14 +1,27 @@
 /**
  * Browser Context Management
  *
- * Provides a global context for accessing the current browser controller
- * from within function implementations.
+ * Provides async-local context for accessing the current browser controller
+ * from within function implementations. Uses AsyncLocalStorage to avoid
+ * race conditions when multiple queries execute concurrently.
  */
 
 import { BrowserController } from "./browser-controller.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
- * Global browser context holder
+ * Per-async-context browser controller storage.
+ * Each concurrent query gets its own isolated controller reference,
+ * eliminating race conditions from the previous module-level singleton.
+ */
+const asyncBrowserContext = new AsyncLocalStorage<BrowserController>();
+
+/**
+ * Fallback singleton for environments where AsyncLocalStorage is unavailable
+ * or for legacy code paths that call set/get/clear directly.
+ *
+ * WARNING: The singleton fallback is NOT safe for concurrent queries.
+ * Prefer withBrowserContext() for concurrency-safe execution.
  */
 class BrowserContextHolder {
   private static instance: BrowserContextHolder;
@@ -74,16 +87,26 @@ class BrowserContextHolder {
 }
 
 /**
- * Set the current browser controller for function execution
+ * Set the current browser controller for function execution.
+ *
+ * WARNING: This uses the singleton fallback and is NOT safe for concurrent queries.
+ * Prefer withBrowserContext() for concurrency-safe execution.
  */
 export function setCurrentBrowserController(controller: BrowserController): void {
   BrowserContextHolder.getInstance().setController(controller);
 }
 
 /**
- * Get the current browser controller
+ * Get the current browser controller.
+ * Checks AsyncLocalStorage first, then falls back to singleton.
  */
 export function getCurrentBrowserController(): BrowserController | undefined {
+  // AsyncLocalStorage takes priority (concurrency-safe)
+  const alsController = asyncBrowserContext.getStore();
+  if (alsController) {
+    return alsController;
+  }
+  // Fallback to singleton (legacy, not concurrency-safe)
   return BrowserContextHolder.getInstance().getController();
 }
 
@@ -112,22 +135,22 @@ export function clearBrowserContext(): void {
  * Check if a browser controller is available
  */
 export function hasBrowserContext(): boolean {
+  if (asyncBrowserContext.getStore()) {
+    return true;
+  }
   return BrowserContextHolder.getInstance().hasController();
 }
 
 /**
- * Execute a function with a specific browser controller context
+ * Execute a function with a specific browser controller context.
+ * Uses AsyncLocalStorage for concurrency-safe isolation — each concurrent
+ * call gets its own controller without interfering with others.
  */
 export async function withBrowserContext<T>(
   controller: BrowserController,
   fn: () => Promise<T>,
 ): Promise<T> {
-  pushBrowserController(controller);
-  try {
-    return await fn();
-  } finally {
-    popBrowserController();
-  }
+  return asyncBrowserContext.run(controller, fn);
 }
 
 /**

@@ -316,8 +316,20 @@ function reconstructFunctions(
 ): Record<string, Function> {
   const functions: Record<string, Function> = {};
 
+  // Blocklist check matching sandbox.ts executeUnsandboxed patterns
+  const dangerousPatterns = /\b(eval|Function|import|require|Deno|process|globalThis)\b/;
+
   for (const [name, bodyString] of Object.entries(serializedFns)) {
     try {
+      // Validate function body against dangerous patterns before reconstruction
+      if (dangerousPatterns.test(bodyString)) {
+        // Skip this function — it contains dangerous patterns
+        functions[name] = () => {
+          throw new Error(`Function ${name} blocked: contains dangerous patterns`);
+        };
+        continue;
+      }
+
       // Reconstruct function from its string body
       // The body should be a full function expression or arrow function
       // deno-lint-ignore no-new-func

@@ -1,0 +1,31 @@
+[package]
+name = "bytecodex"
+version = "0.1.0"
+edition = "2021"
+authors = ["layerdynamics"]
+license = "MIT OR Apache-2.0"
+description = "Bytecode optimization, validation, and disassembly library for BrowserX via FFI"
+repository = "https://github.com/layerdynamics/browserx/crates/bytecodex"
+readme = "README.md"
+keywords = ["deno", "ffi", "bytecode", "compiler", "optimizer"]
+categories = ["compilers", "api-bindings"]
+
+[lib]
+name = "bytecodex"
+crate-type = ["cdylib"]
+
+[dependencies]
+deno_bindgen = "0.8.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lazy_static = "1.5.0"
+parking_lot = "0.12"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0

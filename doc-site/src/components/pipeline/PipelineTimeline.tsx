@@ -1,10 +1,11 @@
 import React from 'react';
 import { StageCard } from './StageCard';
 import type { StageEvent } from './StageCard';
+import type { PipelineStatus } from './PipelineVisualizer';
 
 interface PipelineTimelineProps {
   events: StageEvent[];
-  status: 'idle' | 'running' | 'complete' | 'error';
+  status: PipelineStatus;
 }
 
 export const PipelineTimeline: React.FC<PipelineTimelineProps> = ({ events, status }) => {

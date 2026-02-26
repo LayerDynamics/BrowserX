@@ -172,14 +172,22 @@ export class TCPConnection {
     await this.sendSegment(finSegment);
     this.state = TCPState.FIN_WAIT_1;
 
-    // 2. Wait for ACK of FIN
+    // 2. Wait for ACK of FIN (peer may send FIN+ACK combined)
     const ack = await this.receiveSegment();
-    if (ack.flags.ACK) {
+    let fin: TCPSegment;
+    if (ack.flags.ACK && ack.flags.FIN) {
+      // Peer sent FIN+ACK in one segment — skip waiting for separate FIN
       this.state = TCPState.FIN_WAIT_2;
+      fin = ack;
+    } else if (ack.flags.ACK) {
+      this.state = TCPState.FIN_WAIT_2;
+      // 3. Wait for separate FIN from peer
+      fin = await this.receiveSegment();
+    } else {
+      // Unexpected — treat as FIN if present
+      fin = ack;
     }
 
-    // 3. Wait for FIN from peer
-    const fin = await this.receiveSegment();
     if (fin.flags.FIN) {
       this.state = TCPState.TIME_WAIT;
 
@@ -192,8 +200,10 @@ export class TCPConnection {
 
       await this.sendSegment(finalAck);
 
-      // Wait 2*MSL before transitioning to CLOSED
-      await sleep(2 * 120000); // 2*MSL = 4 minutes
+      // Brief delay before transitioning to CLOSED — the OS kernel handles
+      // the real TIME_WAIT (2*MSL) on the underlying socket, so we only need
+      // a short pause to let the final ACK flush before closing our state.
+      await sleep(100);
       this.state = TCPState.CLOSED;
     }
   }
@@ -291,7 +301,18 @@ export class TCPConnection {
     // Read from socket with optional timeout
     const buffer = new Uint8Array(this.config.maxSegmentSize + 60); // MSS + max TCP header
 
-    const bytesRead = await this.socket.read(buffer);
+    const readPromise = this.socket.read(buffer);
+
+    let bytesRead: number | null;
+    if (timeout) {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Receive segment timeout")), timeout);
+      });
+      bytesRead = await Promise.race([readPromise, timeoutPromise]);
+    } else {
+      bytesRead = await readPromise;
+    }
+
     if (bytesRead === null) {
       throw new Error("Connection closed by peer");
     }
@@ -538,17 +559,31 @@ export function verifyTCPChecksum(
  * Create TCP segment
  */
 export function createTCPSegment(params: Partial<TCPSegment>): TCPSegment {
+  const options = params.options || {};
+
+  // Calculate actual header size based on options present
+  let optionsSize = 0;
+  if (options.MSS !== undefined) optionsSize += 4;
+  if (options.WINDOW_SCALE !== undefined) optionsSize += 3;
+  if (options.SACK_PERMITTED) optionsSize += 2;
+  if (options.SACK && options.SACK.length > 0) optionsSize += 2 + options.SACK.length * 8;
+  if (options.TIMESTAMP !== undefined) optionsSize += 10;
+
+  // Header must be 4-byte aligned; base header is 20 bytes
+  const actualHeaderSize = 20 + optionsSize;
+  const dataOffset = Math.ceil(actualHeaderSize / 4);
+
   return {
     sourcePort: params.sourcePort || 0,
     destinationPort: params.destinationPort || 0,
     sequenceNumber: params.sequenceNumber || 0,
     acknowledgmentNumber: params.acknowledgmentNumber || 0,
-    dataOffset: 5, // 20 bytes header
+    dataOffset,
     flags: params.flags || {},
     windowSize: params.windowSize || 65535,
     checksum: 0, // Calculated before sending
     urgentPointer: 0,
-    options: params.options || {},
+    options,
     data: params.data || new Uint8Array(0),
     timestamp: params.timestamp || Date.now(),
   };

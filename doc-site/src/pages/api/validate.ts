@@ -29,7 +29,7 @@ interface ValidationError {
 
 interface ValidationSuccessResponse {
   valid: true;
-  ast?: any;
+  ast?: Record<string, unknown>;
 }
 
 interface ValidationErrorResponse {
@@ -77,10 +77,23 @@ function validateQueryBasic(query: string): ValidationError[] {
   const pairs: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
   const closingChars = new Set([')', ']', '}']);
 
+  let inString: string | null = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     for (let j = 0; j < line.length; j++) {
       const char = line[j];
+
+      // Track string state
+      if ((char === '"' || char === "'") && (j === 0 || line[j - 1] !== '\\')) {
+        if (inString === null) {
+          inString = char;
+          continue;
+        } else if (inString === char) {
+          inString = null;
+          continue;
+        }
+      }
+      if (inString !== null) continue;
 
       if (char in pairs) {
         stack.push({ char, line: i + 1, column: j + 1 });
@@ -105,6 +118,8 @@ function validateQueryBasic(query: string): ValidationError[] {
         }
       }
     }
+    // Reset inString at end of line (strings don't span lines in BrowserX query)
+    inString = null;
   }
 
   // Check for unclosed brackets/braces/parens
@@ -141,11 +156,28 @@ export const prerender = false;
 
 export const POST: APIRoute = async ({ request }) => {
   try {
+    // Check Content-Type
+    const contentType = request.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      return new Response(JSON.stringify({
+        valid: false,
+        errors: [{
+          line: 0,
+          column: 0,
+          message: 'Content-Type must be application/json.',
+          type: 'semantic' as const,
+        }],
+      } satisfies ValidationErrorResponse), {
+        status: 415,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     // Parse request body
     const body = await request.json() as ValidationRequest;
 
     // Validate request body
-    if (!body || typeof body.query !== 'string') {
+    if (typeof body !== 'object' || body === null || typeof (body as any).query !== 'string') {
       return new Response(
         JSON.stringify({
           valid: false,
@@ -235,7 +267,7 @@ export const POST: APIRoute = async ({ request }) => {
         errors: [{
           line: 0,
           column: 0,
-          message: error instanceof Error ? error.message : 'Internal server error',
+          message: 'Internal server error',
           type: 'semantic' as const,
         }],
       } satisfies ValidationErrorResponse),

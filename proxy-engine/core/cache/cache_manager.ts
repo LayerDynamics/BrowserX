@@ -12,6 +12,7 @@ interface CacheEntry {
   etag?: string;
   lastModified?: string;
   maxAge: number; // Seconds
+  lastAccessed: number; // Timestamp of last access for LRU eviction
   encryptionIV?: Uint8Array; // IV for encrypted entries
 }
 
@@ -163,6 +164,7 @@ class HTTPCacheManager {
       etag: response.headers["etag"],
       lastModified: response.headers["last-modified"],
       maxAge: maxAge,
+      lastAccessed: Date.now(),
       encryptionIV: encryptionIV,
     };
 
@@ -201,12 +203,13 @@ class HTTPCacheManager {
         `[CACHE EXPIRED] ${cacheKey} (age: ${age.toFixed(1)}s, max-age: ${entry.maxAge}s)`,
       );
       this.memoryCache.delete(cacheKey);
-      this.cacheSize -= entry.response.body.length;
+      this.cacheSize = Math.max(0, this.cacheSize - entry.response.body.length);
       this.stats.misses++;
       return null;
     }
 
     this.stats.hits++;
+    entry.lastAccessed = Date.now();
     console.log(`[CACHE HIT] ${cacheKey} (age: ${age.toFixed(1)}s/${entry.maxAge}s)`);
 
     // Update Age header
@@ -275,15 +278,22 @@ class HTTPCacheManager {
    * Evict least recently used entry
    */
   private evictLRU(): void {
-    // Simple approach: remove first entry (oldest insertion in Map)
-    const firstKey = this.memoryCache.keys().next().value;
-    if (firstKey) {
-      const entry = this.memoryCache.get(firstKey)!;
-      this.memoryCache.delete(firstKey);
-      this.cacheSize -= entry.response.body.length;
+    // Find entry with oldest lastAccessed timestamp
+    let lruKey: string | undefined;
+    let lruTime = Infinity;
+    for (const [key, entry] of this.memoryCache.entries()) {
+      if (entry.lastAccessed < lruTime) {
+        lruTime = entry.lastAccessed;
+        lruKey = key;
+      }
+    }
+    if (lruKey) {
+      const entry = this.memoryCache.get(lruKey)!;
+      this.memoryCache.delete(lruKey);
+      this.cacheSize = Math.max(0, this.cacheSize - entry.response.body.length);
       this.stats.evictions++;
       console.log(
-        `[CACHE EVICT] ${firstKey} (size: ${(entry.response.body.length / 1024).toFixed(2)} KB)`,
+        `[CACHE EVICT] ${lruKey} (size: ${(entry.response.body.length / 1024).toFixed(2)} KB)`,
       );
     }
   }
@@ -295,7 +305,7 @@ class HTTPCacheManager {
     const entry = this.memoryCache.get(cacheKey);
     if (entry) {
       this.memoryCache.delete(cacheKey);
-      this.cacheSize -= entry.response.body.length;
+      this.cacheSize = Math.max(0, this.cacheSize - entry.response.body.length);
       console.log(`[CACHE INVALIDATE] ${cacheKey}`);
     }
   }
@@ -308,7 +318,7 @@ class HTTPCacheManager {
     for (const [key, entry] of this.memoryCache.entries()) {
       if (pattern.test(key)) {
         this.memoryCache.delete(key);
-        this.cacheSize -= entry.response.body.length;
+        this.cacheSize = Math.max(0, this.cacheSize - entry.response.body.length);
         count++;
       }
     }
@@ -337,7 +347,7 @@ class HTTPCacheManager {
         const age = (now - entry.timestamp) / 1000;
         if (age > entry.maxAge) {
           this.memoryCache.delete(key);
-          this.cacheSize -= entry.response.body.length;
+          this.cacheSize = Math.max(0, this.cacheSize - entry.response.body.length);
           removed++;
         }
       }
@@ -365,8 +375,8 @@ class HTTPCacheManager {
   /**
    * Get memory cache reference
    */
-  getCache(): Map<string, CacheEntry> {
-    return this.memoryCache;
+  getCache(): ReadonlyMap<string, CacheEntry> {
+    return new Map(this.memoryCache);
   }
 
   /**
@@ -409,12 +419,28 @@ class HTTPCacheManager {
     }
 
     let count = 0;
-    const regex = new RegExp(pattern);
+
+    // Guard against ReDoS: limit pattern length and catch invalid regex
+    if (pattern.length > 200) {
+      console.warn(`[CACHE PURGE] Pattern too long (${pattern.length} chars), using string match`);
+      for (const [key, entry] of this.memoryCache.entries()) {
+        if (key.includes(pattern)) {
+          this.memoryCache.delete(key);
+          this.cacheSize = Math.max(0, this.cacheSize - entry.response.body.length);
+          count++;
+        }
+      }
+      return count;
+    }
+
+    // Escape special regex characters to prevent ReDoS from user-supplied patterns
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(escaped);
 
     for (const [key, entry] of this.memoryCache.entries()) {
       if (regex.test(key)) {
         this.memoryCache.delete(key);
-        this.cacheSize -= entry.response.body.length;
+        this.cacheSize = Math.max(0, this.cacheSize - entry.response.body.length);
         count++;
       }
     }

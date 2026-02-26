@@ -60,40 +60,191 @@ export function validateUrl(url: string, config: UrlValidationConfig = {}): void
 }
 
 /**
- * Check if hostname is a private IP address
+ * Check if an IPv4 address (dotted-decimal) is private/reserved
+ */
+function isPrivateIPv4(a: number, b: number, _c: number, _d: number): boolean {
+  if (a === 10) return true;                          // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16.0.0/12
+  if (a === 192 && b === 168) return true;             // 192.168.0.0/16
+  if (a === 169 && b === 254) return true;             // 169.254.0.0/16 (link-local)
+  if (a === 127) return true;                          // 127.0.0.0/8 (loopback)
+  if (a === 0) return true;                            // 0.0.0.0/8
+  return false;
+}
+
+/**
+ * Try to parse an octal/hex/decimal IP and check if it's private
+ */
+function isObfuscatedPrivateIP(hostname: string): boolean {
+  // Decimal IP (single number like 2130706433 = 127.0.0.1)
+  if (/^\d{1,10}$/.test(hostname)) {
+    const num = parseInt(hostname, 10);
+    if (num >= 0 && num <= 0xFFFFFFFF) {
+      const a = (num >>> 24) & 0xFF;
+      const b = (num >>> 16) & 0xFF;
+      const c = (num >>> 8) & 0xFF;
+      const d = num & 0xFF;
+      return isPrivateIPv4(a, b, c, d);
+    }
+  }
+
+  // Octal or hex notation (e.g., 0177.0.0.1 or 0x7f.0.0.1)
+  const parts = hostname.split(".");
+  if (parts.length === 4) {
+    const hasOctalOrHex = parts.some((p) => /^0[0-7]+$/.test(p) || /^0x[0-9a-fA-F]+$/i.test(p));
+    if (hasOctalOrHex) {
+      const octets = parts.map((p) => {
+        if (p.startsWith("0x") || p.startsWith("0X")) return parseInt(p, 16);
+        if (p.startsWith("0") && p.length > 1) return parseInt(p, 8);
+        return parseInt(p, 10);
+      });
+      if (octets.every((o) => o >= 0 && o <= 255)) {
+        return isPrivateIPv4(octets[0], octets[1], octets[2], octets[3]);
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Expand any IPv6 address to its full 8-group hex form.
+ * Handles :: expansion, IPv4-mapped suffixes (dotted and hex), and NAT64.
+ */
+function expandIPv6(addr: string): string {
+  let working = addr.toLowerCase().trim();
+
+  // Strip zone ID (e.g., %eth0)
+  const zoneIdx = working.indexOf("%");
+  if (zoneIdx !== -1) {
+    working = working.substring(0, zoneIdx);
+  }
+
+  // Handle IPv4 suffix (e.g., ::ffff:127.0.0.1 or ::127.0.0.1)
+  const ipv4Suffix = working.match(/:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Suffix) {
+    const [fullMatch, a, b, c, d] = ipv4Suffix;
+    const hi = ((parseInt(a) << 8) | parseInt(b)).toString(16).padStart(4, "0");
+    const lo = ((parseInt(c) << 8) | parseInt(d)).toString(16).padStart(4, "0");
+    working = working.substring(0, working.length - fullMatch.length + 1) + hi + ":" + lo;
+  }
+
+  // Split on ::
+  const halves = working.split("::");
+  let groups: string[];
+
+  if (halves.length === 2) {
+    const left = halves[0] ? halves[0].split(":") : [];
+    const right = halves[1] ? halves[1].split(":") : [];
+    const missing = 8 - left.length - right.length;
+    const middle = Array(missing).fill("0000");
+    groups = [...left, ...middle, ...right];
+  } else {
+    groups = working.split(":");
+  }
+
+  // Pad each group to 4 hex digits
+  return groups.map((g) => g.padStart(4, "0")).join(":");
+}
+
+/**
+ * Check if hostname is a private IP address (IPv4, IPv6, obfuscated)
  */
 export function isPrivateIP(hostname: string): boolean {
+  // Strip brackets from IPv6 (e.g., [::1] → ::1)
+  let host = hostname;
+  if (host.startsWith("[") && host.endsWith("]")) {
+    host = host.slice(1, -1);
+  }
+
   // Localhost
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1"
-  ) {
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
     return true;
   }
 
-  // IPv4 private ranges
-  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  // IPv6 checks
+  const hostLower = host.toLowerCase();
+
+  // IPv6 loopback
+  if (hostLower === "0:0:0:0:0:0:0:1" || hostLower === "0000:0000:0000:0000:0000:0000:0000:0001") {
+    return true;
+  }
+
+  // IPv6 unique-local (fc00::/7)
+  if (hostLower.startsWith("fc") || hostLower.startsWith("fd")) {
+    if (hostLower.length > 2 && (hostLower[2] === ":" || /^[0-9a-f]/.test(hostLower[2]))) {
+      return true;
+    }
+  }
+
+  // IPv6 link-local (fe80::/10)
+  if (hostLower.startsWith("fe80:") || hostLower.startsWith("fe80%")) {
+    return true;
+  }
+
+  // IPv4-mapped IPv6 (::ffff:x.x.x.x)
+  const mappedMatch = hostLower.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (mappedMatch) {
+    const [, a, b, c, d] = mappedMatch.map(Number);
+    return isPrivateIPv4(a, b, c, d);
+  }
+
+  // Standard IPv4 private ranges
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
+    const [, a, b, c, d] = ipv4Match.map(Number);
+    return isPrivateIPv4(a, b, c, d);
+  }
 
-    // 10.0.0.0/8
-    if (a === 10) return true;
+  // Obfuscated IPs (octal, hex, decimal)
+  if (isObfuscatedPrivateIP(host)) {
+    return true;
+  }
 
-    // 172.16.0.0/12
-    if (a === 172 && b >= 16 && b <= 31) return true;
+  // Comprehensive IPv6 check via full expansion
+  if (host.includes(":")) {
+    const expanded = expandIPv6(host);
 
-    // 192.168.0.0/16
-    if (a === 192 && b === 168) return true;
+    // Loopback ::1
+    if (expanded === "0000:0000:0000:0000:0000:0000:0000:0001") {
+      return true;
+    }
 
-    // 169.254.0.0/16 (link-local)
-    if (a === 169 && b === 254) return true;
+    // Link-local fe80::/10
+    if (expanded.startsWith("fe80:")) {
+      return true;
+    }
 
-    // 127.0.0.0/8 (loopback)
-    if (a === 127) return true;
+    // Unique-local fc00::/7 (fc or fd)
+    if (expanded.startsWith("fc") || expanded.startsWith("fd")) {
+      return true;
+    }
 
-    // 0.0.0.0/8
-    if (a === 0) return true;
+    // IPv4-mapped ::ffff:x.x.x.x (last 32 bits as IPv4)
+    if (expanded.startsWith("0000:0000:0000:0000:0000:ffff:")) {
+      const tail = expanded.substring(30); // e.g., "7f00:0001"
+      const tailParts = tail.split(":");
+      if (tailParts.length === 2) {
+        const hi = parseInt(tailParts[0], 16);
+        const lo = parseInt(tailParts[1], 16);
+        const a = (hi >> 8) & 0xFF, b = hi & 0xFF;
+        const c = (lo >> 8) & 0xFF, d = lo & 0xFF;
+        return isPrivateIPv4(a, b, c, d);
+      }
+    }
+
+    // NAT64 prefix 64:ff9b::/96
+    if (expanded.startsWith("0064:ff9b:0000:0000:0000:0000:")) {
+      const tail = expanded.substring(30);
+      const tailParts = tail.split(":");
+      if (tailParts.length === 2) {
+        const hi = parseInt(tailParts[0], 16);
+        const lo = parseInt(tailParts[1], 16);
+        const a = (hi >> 8) & 0xFF, b = hi & 0xFF;
+        const c = (lo >> 8) & 0xFF, d = lo & 0xFF;
+        return isPrivateIPv4(a, b, c, d);
+      }
+    }
   }
 
   return false;

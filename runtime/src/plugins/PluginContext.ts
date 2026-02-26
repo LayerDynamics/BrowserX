@@ -76,12 +76,14 @@ export class PluginContextImpl implements PluginContext {
   private readonly _options: PluginContextOptions;
 
   // Contribution tracking
-  private readonly requestMiddleware: Map<string, RequestMiddleware> = new Map();
-  private readonly responseMiddleware: Map<string, ResponseMiddleware> = new Map();
+  private readonly requestMiddleware: Map<string, { middleware: RequestMiddleware; priority: number }> = new Map();
+  private readonly responseMiddleware: Map<string, { middleware: ResponseMiddleware; priority: number }> = new Map();
   private readonly queryFunctions: Map<string, FunctionImplementation> = new Map();
   private readonly mcpTools: Map<string, MCPToolDefinition> = new Map();
   private readonly devtoolsDomains: Map<string, DevToolsDomainDefinition> = new Map();
   private readonly healthCheckIds: Set<string> = new Set();
+  private readonly initSteps: Map<string, InitializationStep> = new Map();
+  private readonly shutdownSteps: Map<string, ShutdownStep> = new Map();
 
   constructor(options: PluginContextOptions) {
     this.pluginId = options.pluginId;
@@ -101,7 +103,7 @@ export class PluginContextImpl implements PluginContext {
 
   // ── Contribution Registration ──
 
-  addRequestMiddleware(middleware: RequestMiddleware, _priority?: number): Disposable {
+  addRequestMiddleware(middleware: RequestMiddleware, priority = 100): Disposable {
     const key = `${this.pluginId}:${middleware.name}`;
 
     if (this.requestMiddleware.has(key)) {
@@ -110,9 +112,9 @@ export class PluginContextImpl implements PluginContext {
       );
     }
 
-    this.requestMiddleware.set(key, middleware);
+    this.requestMiddleware.set(key, { middleware, priority });
     this._options.onAddRequestMiddleware?.(middleware);
-    this.log.debug(`Registered request middleware: ${middleware.name}`);
+    this.log.debug(`Registered request middleware: ${middleware.name} (priority: ${priority})`);
 
     const disposable: Disposable = {
       dispose: () => {
@@ -126,7 +128,7 @@ export class PluginContextImpl implements PluginContext {
     return disposable;
   }
 
-  addResponseMiddleware(middleware: ResponseMiddleware, _priority?: number): Disposable {
+  addResponseMiddleware(middleware: ResponseMiddleware, priority = 100): Disposable {
     const key = `${this.pluginId}:${middleware.name}`;
 
     if (this.responseMiddleware.has(key)) {
@@ -135,9 +137,9 @@ export class PluginContextImpl implements PluginContext {
       );
     }
 
-    this.responseMiddleware.set(key, middleware);
+    this.responseMiddleware.set(key, { middleware, priority });
     this._options.onAddResponseMiddleware?.(middleware);
-    this.log.debug(`Registered response middleware: ${middleware.name}`);
+    this.log.debug(`Registered response middleware: ${middleware.name} (priority: ${priority})`);
 
     const disposable: Disposable = {
       dispose: () => {
@@ -249,16 +251,58 @@ export class PluginContextImpl implements PluginContext {
     return disposable;
   }
 
-  registerInitStep(step: InitializationStep): void {
+  registerInitStep(step: InitializationStep): Disposable {
+    const key = `${this.pluginId}:${step.name}`;
+    if (this.initSteps.has(key)) {
+      throw new Error(
+        `Init step "${step.name}" already registered by plugin "${this.pluginId}"`,
+      );
+    }
+    this.initSteps.set(key, step);
     this.log.debug(`Registered init step: ${step.name}`);
-    // Init steps are stored for the PluginManager to integrate
-    // They will be executed during the next runtime start
+
+    const disposable: Disposable = {
+      dispose: () => {
+        this.initSteps.delete(key);
+        this.log.debug(`Unregistered init step: ${step.name}`);
+      },
+    };
+    this.registry.addDisposable(this.pluginId, disposable);
+    return disposable;
   }
 
-  registerShutdownStep(step: ShutdownStep): void {
+  registerShutdownStep(step: ShutdownStep): Disposable {
+    const key = `${this.pluginId}:${step.name}`;
+    if (this.shutdownSteps.has(key)) {
+      throw new Error(
+        `Shutdown step "${step.name}" already registered by plugin "${this.pluginId}"`,
+      );
+    }
+    this.shutdownSteps.set(key, step);
     this.log.debug(`Registered shutdown step: ${step.name}`);
-    // Shutdown steps are stored for the PluginManager to integrate
-    // They will be executed during runtime shutdown
+
+    const disposable: Disposable = {
+      dispose: () => {
+        this.shutdownSteps.delete(key);
+        this.log.debug(`Unregistered shutdown step: ${step.name}`);
+      },
+    };
+    this.registry.addDisposable(this.pluginId, disposable);
+    return disposable;
+  }
+
+  /**
+   * Get all registered init steps from this plugin context.
+   */
+  getInitSteps(): InitializationStep[] {
+    return Array.from(this.initSteps.values());
+  }
+
+  /**
+   * Get all registered shutdown steps from this plugin context.
+   */
+  getShutdownSteps(): ShutdownStep[] {
+    return Array.from(this.shutdownSteps.values());
   }
 
   // ── Runtime Access ──
@@ -297,14 +341,18 @@ export class PluginContextImpl implements PluginContext {
    * Get all registered request middleware from this plugin context.
    */
   getRequestMiddleware(): RequestMiddleware[] {
-    return Array.from(this.requestMiddleware.values());
+    return Array.from(this.requestMiddleware.values())
+      .sort((a, b) => a.priority - b.priority)
+      .map(({ middleware }) => middleware);
   }
 
   /**
    * Get all registered response middleware from this plugin context.
    */
   getResponseMiddleware(): ResponseMiddleware[] {
-    return Array.from(this.responseMiddleware.values());
+    return Array.from(this.responseMiddleware.values())
+      .sort((a, b) => a.priority - b.priority)
+      .map(({ middleware }) => middleware);
   }
 
   /**

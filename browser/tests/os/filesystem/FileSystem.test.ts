@@ -7,7 +7,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { FileSystem } from "../../../src/os/filesystem/FileSystem.ts";
 
-const TEST_DIR = "./browser/tests/os/filesystem/temp_test_data";
+const TEST_DIR = new URL("./temp_test_data", import.meta.url).pathname;
 const fs = new FileSystem();
 
 // Utility to clean up test directory

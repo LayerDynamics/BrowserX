@@ -116,16 +116,22 @@ export const BrowserPreview: React.FC = () => {
     // Show the most recent screenshot
     const latestScreenshot = screenshots[screenshots.length - 1];
 
+    const isValidImage = latestScreenshot.data.startsWith('data:image/');
+
     return (
       <div className="screenshot-container">
         <div className="screenshot-timestamp">
           Captured at: {formatTimestamp(latestScreenshot.timestamp)}
         </div>
-        <img
-          src={latestScreenshot.data}
-          alt="Browser screenshot"
-          className="screenshot-image"
-        />
+        {isValidImage ? (
+          <img
+            src={latestScreenshot.data}
+            alt="Browser screenshot"
+            className="screenshot-image"
+          />
+        ) : (
+          <div className="tab-empty">Screenshot data is not a valid image.</div>
+        )}
       </div>
     );
   };
@@ -143,9 +149,9 @@ export const BrowserPreview: React.FC = () => {
     return (
       <div className="console-container">
         {consoleLogs.map((log, index) => (
-          <div key={`${log.timestamp}-${index}`} className={`console-log ${getLogLevelClass(log.level)}`}>
+          <div key={`${log.timestamp}-${index}`} className={`console-log ${getLogLevelClass(log.level)}`} aria-label={log.level}>
             <span className="log-timestamp">{formatTimestamp(log.timestamp)}</span>
-            <span className="log-icon">{getLogLevelIcon(log.level)}</span>
+            <span className="log-icon" aria-hidden="true">{getLogLevelIcon(log.level)}</span>
             <span className="log-message">{log.message}</span>
           </div>
         ))}

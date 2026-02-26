@@ -1954,21 +1954,8 @@ export interface CompileOptions {
   validate?: boolean;
 }
 
-/** Eagerly-loaded ByteCodeX instance (FFI may not be available) */
-let _bytecodex: import("@browserx/bytecodex").ByteCodeX | null = null;
-
-// Top-level async init — resolves before any compile() call in practice.
-// Falls gracefully to null if dylib not built.
-try {
-  const { ByteCodeX } = await import("@browserx/bytecodex");
-  _bytecodex = new ByteCodeX();
-} catch {
-  _bytecodex = null;
-}
-
-function getByteCodeX(): import("@browserx/bytecodex").ByteCodeX | null {
-  return _bytecodex;
-}
+const { ByteCodeX } = await import("@browserx/bytecodex");
+const _bytecodex = new ByteCodeX();
 
 export class V8Compiler {
   /**
@@ -1991,37 +1978,33 @@ export class V8Compiler {
 
     // Optional bytecodex optimization pass (Rust FFI)
     if (options?.optimize || options?.validate) {
-      const bcx = getByteCodeX();
-      if (bcx) {
-        const input = {
-          instructions: Array.from(compiled.bytecode),
-          constant_pool: compiled.constantPool.map((c) =>
-            typeof c === "number" || typeof c === "string" ? c : null
-          ),
-        };
+      const input = {
+        instructions: Array.from(compiled.bytecode),
+        constant_pool: compiled.constantPool.map((c: unknown) =>
+          typeof c === "number" || typeof c === "string" ? c : null
+        ),
+      };
 
-        if (options.validate) {
-          const validation = bcx.validate(input);
-          if (validation && !validation.valid) {
-            const errors = validation.errors.filter((e) => e.severity === "Error");
-            if (errors.length > 0) {
-              throw new Error(
-                `Bytecode validation failed: ${errors[0].message} at offset ${errors[0].offset}`,
-              );
-            }
+      if (options.validate) {
+        const validation = _bytecodex.validate(input);
+        if (!validation.valid) {
+          const errors = validation.errors.filter(
+            (e: { severity: string }) => e.severity === "Error",
+          );
+          if (errors.length > 0) {
+            throw new Error(
+              `Bytecode validation failed: ${errors[0].message} at offset ${errors[0].offset}`,
+            );
           }
         }
+      }
 
-        if (options.optimize) {
-          const result = bcx.optimize(input);
-          if (result) {
-            compiled.bytecode = new Uint8Array(result.instructions);
-            // Merge optimized constant pool back (preserve non-serializable entries)
-            for (let i = 0; i < result.constant_pool.length; i++) {
-              if (result.constant_pool[i] !== null) {
-                compiled.constantPool[i] = result.constant_pool[i];
-              }
-            }
+      if (options.optimize) {
+        const result = _bytecodex.optimize(input);
+        compiled.bytecode = new Uint8Array(result.instructions);
+        for (let i = 0; i < result.constant_pool.length; i++) {
+          if (result.constant_pool[i] !== null) {
+            compiled.constantPool[i] = result.constant_pool[i];
           }
         }
       }

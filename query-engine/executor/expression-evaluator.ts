@@ -112,6 +112,21 @@ export class ExpressionEvaluator {
    * Evaluate binary expression
    */
   private async evaluateBinary(expr: BinaryExpression): Promise<unknown> {
+    // Short-circuit logical operators with SQL boolean semantics:
+    // AND/OR always return boolean values, not raw operands
+    if (expr.operator === "AND") {
+      const left = await this.evaluate(expr.left);
+      if (!toBoolean(left)) return false;
+      const right = await this.evaluate(expr.right);
+      return toBoolean(right);
+    }
+    if (expr.operator === "OR") {
+      const left = await this.evaluate(expr.left);
+      if (toBoolean(left)) return true;
+      const right = await this.evaluate(expr.right);
+      return toBoolean(right);
+    }
+
     const left = await this.evaluate(expr.left);
     const right = await this.evaluate(expr.right);
 
@@ -156,13 +171,6 @@ export class ExpressionEvaluator {
 
       case "<=":
         return this.compare(left, right) <= 0;
-
-      // Logical operators
-      case "AND":
-        return toBoolean(left) && toBoolean(right);
-
-      case "OR":
-        return toBoolean(left) || toBoolean(right);
 
       // String operators
       case "||":
@@ -339,18 +347,6 @@ export class ExpressionEvaluator {
 
     // Convert to strings for comparison
     return toString(left).localeCompare(toString(right));
-  }
-
-  /**
-   * Convert value to boolean
-   */
-  private toBoolean(value: unknown): boolean {
-    if (typeof value === "boolean") return value;
-    if (value === null || value === undefined) return false;
-    if (typeof value === "number") return value !== 0;
-    if (typeof value === "string") return value.length > 0;
-    if (Array.isArray(value)) return value.length > 0;
-    return true;
   }
 
   /**

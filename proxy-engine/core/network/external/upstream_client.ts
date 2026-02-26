@@ -21,6 +21,8 @@ export interface RequestOptions {
   retries?: number;
   retryDelay?: number;
   circuitBreaker?: boolean;
+  /** Pre-established connection from a pool — skips Deno.connect() when provided */
+  pooledConn?: Deno.TcpConn;
 }
 
 /**
@@ -131,16 +133,17 @@ export class UpstreamClient {
     const url = new URL(options.url);
     const secure = url.protocol === "https:";
 
-    // Connect to server
-    const conn = await Deno.connect({
+    // Use pooled connection if provided, otherwise open a new one
+    const ownsConn = !options.pooledConn;
+    const conn = options.pooledConn ?? await Deno.connect({
       hostname: host,
       port,
     });
 
     try {
-      // Upgrade to TLS if needed
+      // Upgrade to TLS if needed (only for connections we opened ourselves)
       let stream: Deno.Conn | Deno.TlsConn = conn;
-      if (secure) {
+      if (secure && ownsConn) {
         stream = await Deno.startTls(conn, {
           hostname: host,
         });
@@ -193,10 +196,14 @@ export class UpstreamClient {
 
       return response;
     } finally {
-      try {
-        conn.close();
-      } catch {
-        // Ignore close errors
+      // Only close connections we opened ourselves; pooled connections
+      // are released by the caller via connectionManager.releaseConnection()
+      if (ownsConn) {
+        try {
+          conn.close();
+        } catch {
+          // Ignore close errors
+        }
       }
     }
   }
@@ -249,11 +256,27 @@ export class UpstreamClient {
     // Get body
     let body = data.subarray(headersEnd + 4);
 
-    // Read remaining body based on content-length
+    // Read remaining body based on content-length or transfer-encoding
     const contentLength = headers["content-length"];
+    const transferEncoding = headers["transfer-encoding"];
+
     if (contentLength) {
       const expectedLength = parseInt(contentLength);
       while (body.length < expectedLength) {
+        const n = await stream.read(buffer);
+        if (n === null) break;
+
+        const newBody = new Uint8Array(body.length + n);
+        newBody.set(body);
+        newBody.set(buffer.subarray(0, n), body.length);
+        body = newBody;
+      }
+    } else if (transferEncoding && transferEncoding.toLowerCase().includes("chunked")) {
+      // Chunked transfer-encoding: read chunk-size (hex) + chunk data until 0-length chunk
+      body = await this.readChunkedBody(stream, body);
+    } else {
+      // No content-length and no chunked encoding: read until connection close
+      while (true) {
         const n = await stream.read(buffer);
         if (n === null) break;
 
@@ -271,6 +294,75 @@ export class UpstreamClient {
       body,
       duration: 0, // Will be set by caller
     };
+  }
+
+  /**
+   * Read chunked transfer-encoded body from stream.
+   * Parses chunk-size (hex) lines, reads chunk data, and accumulates
+   * until a 0-length terminating chunk is received.
+   */
+  private async readChunkedBody(
+    stream: Deno.Conn | Deno.TlsConn,
+    initialData: Uint8Array,
+  ): Promise<Uint8Array> {
+    const decoder = new TextDecoder();
+    const readBuffer = new Uint8Array(8192);
+    let raw = initialData;
+    let result = new Uint8Array(0);
+
+    while (true) {
+      // Ensure we have a complete chunk-size line (\r\n terminated)
+      let lineEnd = -1;
+      while (true) {
+        const text = decoder.decode(raw);
+        lineEnd = text.indexOf("\r\n");
+        if (lineEnd !== -1) break;
+
+        const n = await stream.read(readBuffer);
+        if (n === null) return result; // connection closed
+
+        const newRaw = new Uint8Array(raw.length + n);
+        newRaw.set(raw);
+        newRaw.set(readBuffer.subarray(0, n), raw.length);
+        raw = newRaw;
+      }
+
+      // Parse chunk size (hex, ignore extensions after semicolon)
+      const sizeLine = decoder.decode(raw.subarray(0, lineEnd)).trim().split(";")[0];
+      const chunkSize = parseInt(sizeLine, 16);
+
+      // Advance past the chunk-size line and its \r\n
+      raw = raw.subarray(lineEnd + 2);
+
+      if (chunkSize === 0) {
+        // Terminal chunk — done
+        break;
+      }
+
+      // Read until we have chunkSize + 2 bytes (chunk data + trailing \r\n)
+      const needed = chunkSize + 2;
+      while (raw.length < needed) {
+        const n = await stream.read(readBuffer);
+        if (n === null) break;
+
+        const newRaw = new Uint8Array(raw.length + n);
+        newRaw.set(raw);
+        newRaw.set(readBuffer.subarray(0, n), raw.length);
+        raw = newRaw;
+      }
+
+      // Append chunk data to result
+      const chunkData = raw.subarray(0, chunkSize);
+      const newResult = new Uint8Array(result.length + chunkSize);
+      newResult.set(result);
+      newResult.set(chunkData, result.length);
+      result = newResult;
+
+      // Advance past chunk data + \r\n
+      raw = raw.subarray(needed);
+    }
+
+    return result;
   }
 
   /**

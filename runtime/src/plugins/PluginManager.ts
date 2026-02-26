@@ -29,6 +29,7 @@ import type {
 import { PluginRegistry } from "./PluginRegistry.ts";
 import { PluginContextImpl, type PluginContextOptions } from "./PluginContext.ts";
 import { PluginLoader, type PluginLoadResult } from "./PluginLoader.ts";
+import { DAG, GraphNode, GraphEdge, topologicalSort, CycleError } from "@browserx/graphx";
 
 /**
  * Plugin Manager Options
@@ -62,6 +63,8 @@ export class PluginManager {
   private readonly eventListeners: RuntimeEventListener[] = [];
   private readonly pluginContexts: Map<string, PluginContextImpl> = new Map();
   private readonly activationOrder: string[] = [];
+  private readonly pluginEntryMap: Map<string, PluginEntry> = new Map();
+  private readonly devToolsDomainRegistry: Map<string, DevToolsDomainDefinition> = new Map();
 
   private started = false;
 
@@ -213,8 +216,8 @@ export class PluginManager {
       );
 
       // Store the plugin-specific config if provided
-      if (entry?.config) {
-        // Config will be passed via PluginContext during activation
+      if (entry) {
+        this.pluginEntryMap.set(plugin.id, entry);
       }
     } catch (error) {
       console.error(
@@ -422,34 +425,25 @@ export class PluginManager {
    */
   getActivationOrder(): string[] {
     const allPlugins = this.registry.getAll();
-    const visited = new Set<string>();
-    const order: string[] = [];
-    const visiting = new Set<string>();
+    const dag = new DAG<Plugin>();
 
-    const visit = (pluginId: string) => {
-      if (visited.has(pluginId)) return;
-      if (visiting.has(pluginId)) return; // Cycle — already caught in validation
-
-      visiting.add(pluginId);
-
-      const info = this.registry.get(pluginId);
-      if (info) {
-        const deps = info.plugin.dependencies ?? [];
-        for (const dep of deps) {
-          visit(dep);
-        }
-      }
-
-      visiting.delete(pluginId);
-      visited.add(pluginId);
-      order.push(pluginId);
-    };
-
+    // Add nodes
     for (const info of allPlugins) {
-      visit(info.plugin.id);
+      dag.addNode(new GraphNode(info.plugin.id, info.plugin));
     }
 
-    return order;
+    // Add edges: dependency → dependent (source=dep, target=plugin)
+    for (const info of allPlugins) {
+      const deps = info.plugin.dependencies ?? [];
+      for (const dep of deps) {
+        // Skip edges for unregistered dependencies (validation catches it separately)
+        if (!this.registry.has(dep)) continue;
+        dag.addEdge(new GraphEdge(dep + "->" + info.plugin.id, dep, info.plugin.id));
+      }
+    }
+
+    const result = topologicalSort(dag);
+    return result.order;
   }
 
   /**
@@ -457,42 +451,77 @@ export class PluginManager {
    */
   private detectCycles(): string | null {
     const allPlugins = this.registry.getAll();
-    const visited = new Set<string>();
-    const stack = new Set<string>();
+    const dag = new DAG<Plugin>();
 
-    const dfs = (pluginId: string, path: string[]): string | null => {
-      if (stack.has(pluginId)) {
-        const cycleStart = path.indexOf(pluginId);
-        const cycle = path.slice(cycleStart).concat(pluginId);
-        return `Circular dependency detected: ${cycle.join(" → ")}`;
-      }
+    // Add all nodes first
+    for (const info of allPlugins) {
+      dag.addNode(new GraphNode(info.plugin.id, info.plugin));
+    }
 
-      if (visited.has(pluginId)) {
-        return null;
-      }
-
-      visited.add(pluginId);
-      stack.add(pluginId);
-
-      const info = this.registry.get(pluginId);
-      if (info) {
-        const deps = info.plugin.dependencies ?? [];
-        for (const dep of deps) {
-          const result = dfs(dep, [...path, pluginId]);
-          if (result) return result;
+    // Try adding edges; CycleError means a cycle exists
+    for (const info of allPlugins) {
+      const deps = info.plugin.dependencies ?? [];
+      for (const dep of deps) {
+        if (!this.registry.has(dep)) continue;
+        try {
+          dag.addEdge(new GraphEdge(dep + "->" + info.plugin.id, dep, info.plugin.id));
+        } catch (error) {
+          if (error instanceof CycleError) {
+            // Build cycle path for the error message
+            // Walk the dependency chain to reconstruct the cycle
+            const cycle = this.traceCyclePath(info.plugin.id, dep);
+            return `Circular dependency detected: ${cycle.join(" \u2192 ")}`;
+          }
+          throw error;
         }
       }
-
-      stack.delete(pluginId);
-      return null;
-    };
-
-    for (const info of allPlugins) {
-      const result = dfs(info.plugin.id, []);
-      if (result) return result;
     }
 
     return null;
+  }
+
+  /**
+   * Trace the cycle path from a plugin back to itself through dependencies.
+   */
+  private traceCyclePath(pluginId: string, depThatCausedCycle: string): string[] {
+    // The cycle is: depThatCausedCycle -> ... -> pluginId -> depThatCausedCycle
+    const path: string[] = [depThatCausedCycle];
+    const visited = new Set<string>();
+
+    const trace = (current: string): boolean => {
+      if (current === pluginId) {
+        path.push(current);
+        path.push(depThatCausedCycle);
+        return true;
+      }
+      if (visited.has(current)) return false;
+      visited.add(current);
+
+      const info = this.registry.get(current);
+      if (!info) return false;
+
+      const deps = info.plugin.dependencies ?? [];
+      for (const dep of deps) {
+        path.push(dep);
+        if (trace(dep)) return true;
+        path.pop();
+      }
+      return false;
+    };
+
+    // Start from depThatCausedCycle, try to reach pluginId
+    const info = this.registry.get(depThatCausedCycle);
+    if (info) {
+      const deps = info.plugin.dependencies ?? [];
+      for (const dep of deps) {
+        path.push(dep);
+        if (trace(dep)) return path;
+        path.pop();
+      }
+    }
+
+    // Fallback: simple A → B → A
+    return [depThatCausedCycle, pluginId, depThatCausedCycle];
   }
 
   // ── Query Methods ──
@@ -742,14 +771,22 @@ export class PluginManager {
    * Find plugin-specific config from the configured plugin entries.
    */
   private findPluginConfig(pluginId: string): Record<string, unknown> {
-    for (const entry of this.pluginConfig.plugins) {
-      // Try to match by path — the loaded plugin's ID should match
-      // We'll check the registry for a plugin at this path
-      const info = this.registry.get(pluginId);
-      if (info && entry.config) {
-        return entry.config;
+    // First check the entry map (keyed by plugin.id at registration time)
+    const entry = this.pluginEntryMap.get(pluginId);
+    if (entry?.config) {
+      return entry.config;
+    }
+
+    // Fallback: search configured plugin entries by path containing the pluginId.
+    // This handles plugins registered via registerPlugin() that weren't loaded
+    // through loadConfiguredPlugins() but still have config in the config file.
+    for (const configEntry of this.pluginConfig.plugins) {
+      const pathStem = configEntry.path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? '';
+      if (pathStem === pluginId && configEntry.config) {
+        return configEntry.config;
       }
     }
+
     return {};
   }
 

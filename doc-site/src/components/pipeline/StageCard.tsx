@@ -13,24 +13,25 @@ interface StageCardProps {
   animationIndex: number;
 }
 
+const STAGE_COLORS: Record<number, string> = {
+  0: '#4ade80', // Lexer — green
+  1: '#60a5fa', // Parser — blue
+  2: '#f472b6', // Semantic — pink
+  3: '#fb923c', // Optimizer — orange
+  4: '#a78bfa', // Planner — purple
+  5: '#facc15', // Executor — yellow
+  6: '#34d399', // Formatter — emerald
+};
+
 export const StageCard: React.FC<StageCardProps> = ({ event, animationIndex }) => {
   const [expanded, setExpanded] = useState(false);
-
-  const STAGE_COLORS: Record<number, string> = {
-    0: '#4ade80', // Lexer — green
-    1: '#60a5fa', // Parser — blue
-    2: '#f472b6', // Semantic — pink
-    3: '#fb923c', // Optimizer — orange
-    4: '#a78bfa', // Planner — purple
-    5: '#facc15', // Executor — yellow
-    6: '#34d399', // Formatter — emerald
-  };
 
   const stageColor = STAGE_COLORS[event.stage] ?? '#ffffff';
 
   return (
     <div
       className="stage-card"
+      aria-label={`${event.name} stage details`}
       style={{
         animationDelay: `${animationIndex * 0.06}s`,
         '--stage-color': stageColor,
@@ -39,7 +40,7 @@ export const StageCard: React.FC<StageCardProps> = ({ event, animationIndex }) =
       role="button"
       aria-expanded={expanded}
       tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && setExpanded((x) => !x)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded((x) => !x); } }}
     >
       <div className="stage-card__header">
         <div className="stage-card__left">

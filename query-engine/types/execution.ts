@@ -91,6 +91,8 @@ export interface QueryMetadata {
  * Query options
  */
 export interface QueryOptions {
+  /** Pre-assigned query ID (used by executeAsync to track background queries) */
+  queryId?: QueryID;
   timeout?: DurationMs;
   /** External AbortSignal for cancellation support (e.g., from MCP withTimeout) */
   signal?: AbortSignal;
@@ -99,6 +101,10 @@ export interface QueryOptions {
   stream?: boolean;
   trace?: boolean;
   profile?: boolean;
+  /** Maximum response size in bytes */
+  maxResponseSize?: Bytes;
+  /** Allow additional string-keyed options */
+  [x: string]: unknown;
 }
 
 export enum Permission {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { QueryEditor } from './QueryEditor';
 import { QueryBuilder } from './QueryBuilder';
 import { QueryGenerator } from './QueryGenerator';
@@ -14,6 +14,17 @@ import './ControlBar.css';
 const STAGE_NAMES = ['Lex', 'Parse', 'Analyze', 'Optimize', 'Plan', 'Execute', 'Format'] as const;
 const MOCK_DELAYS = [60, 80, 50, 70, 40, 300, 30]; // ms per stage for simulation
 
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function csvQuote(val: string): string {
+  if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+    return `"${val.replace(/"/g, '""')}"`;
+  }
+  return val;
+}
+
 /**
  * Main Playground component — 3-panel layout: Editor | Visualizer | Preview.
  */
@@ -24,7 +35,6 @@ export const Playground: React.FC = () => {
     setEditorMode,
     showHistory,
     showTemplates,
-    executeQuery,
     cancelExecution,
     addToHistory,
     addScreenshot,
@@ -37,21 +47,34 @@ export const Playground: React.FC = () => {
     setPipelineStages,
   } = usePlaygroundStore();
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveNameInput, setSaveNameInput] = useState('');
 
   useEffect(() => {
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get('q');
+    if (q) usePlaygroundStore.getState().setQuery(q);
+  }, []);
+
   const handleExecute = async () => {
+    const query = usePlaygroundStore.getState().currentQuery;
     const executionId = `exec_${Date.now()}`;
     const startTime = Date.now();
 
     clearResults();
     resetPipeline();
+    usePlaygroundStore.setState({ activeExecution: { id: executionId, status: 'running' } });
     addConsoleLog({ level: 'info', message: `Starting execution: ${executionId}`, timestamp: Date.now() });
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     // Animate pipeline stages while the real fetch is in-flight
     const stageTimers: ReturnType<typeof setTimeout>[] = [];
@@ -77,7 +100,8 @@ export const Playground: React.FC = () => {
       const response = await fetch('/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: currentQuery, options: { timeout: 60000, captureScreenshots: true } }),
+        body: JSON.stringify({ query, options: { timeout: 60000, captureScreenshots: true } }),
+        signal: controller.signal,
       });
 
       // Real response arrived — stop simulation
@@ -122,10 +146,20 @@ export const Playground: React.FC = () => {
             for (const req of results.networkRequests) addNetworkRequest(req);
           }
         }
-        addScreenshot(`data:text/plain;base64,${btoa(`Query executed at ${new Date().toISOString()}`)}`);
+        addScreenshot(results.screenshot ?? `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==`);
+        addToHistory({
+          id: executionId,
+          query,
+          timestamp: startTime,
+          status: 'success',
+          duration: Date.now() - startTime,
+        });
+      } else {
+        const errData = await response.json().catch(() => ({ error: { message: 'Request failed' } }));
+        throw new Error(errData.error?.message ?? `HTTP ${response.status}`);
       }
 
-      await executeQuery(currentQuery);
+      usePlaygroundStore.setState({ activeExecution: null });
     } catch (error: unknown) {
       stageTimers.forEach(clearTimeout);
 
@@ -142,16 +176,17 @@ export const Playground: React.FC = () => {
       addConsoleLog({ level: 'error', message: errorMessage, timestamp: Date.now() });
       addToHistory({
         id: executionId,
-        query: currentQuery,
+        query,
         timestamp: startTime,
         status: 'error',
         duration: Date.now() - startTime,
       });
+      usePlaygroundStore.setState({ activeExecution: null });
     }
   };
 
   const handleCancel = () => {
-    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+    if (abortControllerRef.current) { abortControllerRef.current.abort(); abortControllerRef.current = null; }
     cancelExecution();
     addConsoleLog({ level: 'info', message: 'Execution cancelled', timestamp: Date.now() });
   };
@@ -175,7 +210,7 @@ export const Playground: React.FC = () => {
       case 'csv': {
         const cols = currentResults.columns ?? [];
         const rows = currentResults.rows ?? [];
-        content  = [cols.join(','), ...rows.map((r) => cols.map((c) => JSON.stringify(r[c] ?? '')).join(','))].join('\n');
+        content  = [cols.join(','), ...rows.map((r) => cols.map((c) => csvQuote(String(r[c] ?? ''))).join(','))].join('\n');
         mimeType = 'text/csv';
         filename = 'results.csv';
         break;
@@ -183,7 +218,7 @@ export const Playground: React.FC = () => {
       case 'html': {
         const hc = currentResults.columns ?? [];
         const hr = currentResults.rows ?? [];
-        content  = `<!DOCTYPE html><html><head><title>Query Results</title></head><body><table border="1"><thead><tr>${hc.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${hr.map((r) => `<tr>${hc.map((c) => `<td>${r[c] ?? ''}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
+        content  = `<!DOCTYPE html><html><head><title>Query Results</title></head><body><table border="1"><thead><tr>${hc.map((c) => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead><tbody>${hr.map((r) => `<tr>${hc.map((c) => `<td>${escapeHtml(String(r[c] ?? ''))}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
         mimeType = 'text/html';
         filename = 'results.html';
         break;
@@ -200,11 +235,15 @@ export const Playground: React.FC = () => {
   };
 
   const handleSave = () => {
-    const name = prompt('Enter a name for this query:');
-    if (name) {
-      saveQuery(name);
-      addConsoleLog({ level: 'info', message: `Query saved as "${name}"`, timestamp: Date.now() });
+    setShowSaveModal(true);
+    setSaveNameInput('');
+  };
+  const handleSaveConfirm = () => {
+    if (saveNameInput.trim()) {
+      saveQuery(saveNameInput.trim());
+      addConsoleLog({ level: 'info', message: `Query saved as "${saveNameInput.trim()}"`, timestamp: Date.now() });
     }
+    setShowSaveModal(false);
   };
 
   const handleShare = () => {
@@ -227,24 +266,45 @@ export const Playground: React.FC = () => {
         onSave={handleSave}
         onShare={handleShare}
       />
+      {showSaveModal && (
+        <div className="save-modal" style={{ padding: '8px 14px', background: 'var(--bx-overlay)', borderBottom: '1px solid var(--bx-border)', display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            type="text"
+            value={saveNameInput}
+            onChange={(e) => setSaveNameInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSaveConfirm()}
+            placeholder="Query name…"
+            autoFocus
+            style={{ flex: 1, background: 'var(--bx-raised)', border: '1px solid var(--bx-border)', borderRadius: '2px', color: 'var(--bx-white)', padding: '4px 8px', fontSize: '0.8125rem' }}
+          />
+          <button onClick={handleSaveConfirm} className="btn btn-primary" style={{ padding: '4px 12px' }}>Save</button>
+          <button onClick={() => setShowSaveModal(false)} className="btn btn-secondary" style={{ padding: '4px 12px' }}>Cancel</button>
+        </div>
+      )}
       <div className="playground-content">
         {showHistory   && <HistoryPanel />}
         {showTemplates && <TemplatesPanel />}
 
         {/* Panel 1: Editor */}
         <div className="editor-panel">
-          <div className="editor-mode-tabs">
+          <div className="editor-mode-tabs" role="tablist">
             <button
               className={`editor-mode-tab${editorMode === 'code'      ? ' editor-mode-tab--active' : ''}`}
               onClick={() => setEditorMode('code')}
+              role="tab"
+              aria-selected={editorMode === 'code'}
             >Code</button>
             <button
               className={`editor-mode-tab${editorMode === 'blocks'    ? ' editor-mode-tab--active' : ''}`}
               onClick={() => setEditorMode('blocks')}
+              role="tab"
+              aria-selected={editorMode === 'blocks'}
             >Builder</button>
             <button
               className={`editor-mode-tab${editorMode === 'generator' ? ' editor-mode-tab--active' : ''}`}
               onClick={() => setEditorMode('generator')}
+              role="tab"
+              aria-selected={editorMode === 'generator'}
             >Generator</button>
           </div>
           <div className="editor-mode-content">

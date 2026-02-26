@@ -2,6 +2,8 @@ use deno_bindgen::deno_bindgen;
 use std::collections::HashMap;
 use parking_lot::Mutex;
 use lazy_static::lazy_static;
+use crate::gpu::device::DEVICES;
+use crate::gpu::bind_group::{GPU_BUFFERS, gpu_create_buffer};
 
 /// Buffer pool entry
 #[derive(Debug, Clone)]
@@ -10,6 +12,7 @@ struct PooledBuffer {
     usage: u32, // wgpu::BufferUsages bits
     last_used: u64, // Timestamp
     in_use: u8,
+    device_handle: u64, // Which device created this buffer
 }
 
 /// Buffer pool configuration
@@ -28,6 +31,7 @@ pub struct BufferPool {
     total_size: u64,
     hits: u64,
     misses: u64,
+    default_device_handle: u64,
 }
 
 lazy_static! {
@@ -47,6 +51,7 @@ impl BufferPool {
             total_size: 0,
             hits: 0,
             misses: 0,
+            default_device_handle: 1,
         }
     }
 
@@ -78,8 +83,23 @@ impl BufferPool {
             }
         }
 
-        // Would create new buffer here (return handle to caller to create)
-        None
+        // Create a real GPU buffer via the DEVICES registry
+        let device_handle = self.default_device_handle;
+        let buffer_handle = gpu_create_buffer(device_handle, size, usage, false);
+        if buffer_handle == 0 {
+            return None; // Device not available or buffer creation failed
+        }
+
+        self.buffers.insert(buffer_handle, PooledBuffer {
+            size,
+            usage,
+            last_used: Self::timestamp(),
+            in_use: 1,
+            device_handle,
+        });
+        self.total_size += size;
+
+        Some(buffer_handle)
     }
 
     /// Release buffer back to pool
@@ -97,6 +117,7 @@ impl BufferPool {
             usage,
             last_used: Self::timestamp(),
             in_use: 0,
+            device_handle: self.default_device_handle,
         });
         self.total_size += size;
     }
@@ -122,7 +143,8 @@ impl BufferPool {
         for handle in to_remove {
             if let Some(buffer) = self.buffers.remove(&handle) {
                 self.total_size -= buffer.size;
-                // Would destroy GPU buffer here
+                // Destroy the actual GPU buffer
+                GPU_BUFFERS.write().remove(&handle);
             }
         }
     }
@@ -202,4 +224,17 @@ pub fn buffer_pool_clear() {
 /// FFI: Evict old buffers
 pub fn buffer_pool_evict() {
     BUFFER_POOL.lock().evict_old_buffers();
+}
+
+/// FFI: Set the default device handle for buffer creation
+/// Returns 1 if device exists, 0 if not found
+pub fn buffer_pool_set_device(device_handle: u64) -> u8 {
+    let devices = DEVICES.read();
+    if devices.get(&device_handle).is_none() {
+        return 0;
+    }
+    drop(devices);
+    let mut pool = BUFFER_POOL.lock();
+    pool.default_device_handle = device_handle;
+    1
 }

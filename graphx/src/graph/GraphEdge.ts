@@ -29,7 +29,7 @@ export class GraphEdge<T = unknown> {
 
   reversed(): GraphEdge<T> {
     return new GraphEdge<T>(
-      this.id,
+      `${this.id}_rev`,
       this.target,
       this.source,
       this.weight,

@@ -210,10 +210,12 @@ export class TLSProxy {
     });
 
     await client.connect();
-    const response = await client.sendRequest(request);
-    await client.close();
-
-    return response;
+    try {
+      const response = await client.sendRequest(request);
+      return response;
+    } finally {
+      await client.close();
+    }
   }
 
   /**
@@ -233,10 +235,12 @@ export class TLSProxy {
     });
 
     await client.connect();
-    const response = await client.sendRequest(request);
-    client.close();
-
-    return response;
+    try {
+      const response = await client.sendRequest(request);
+      return response;
+    } finally {
+      client.close();
+    }
   }
 
   /**
@@ -253,10 +257,12 @@ export class TLSProxy {
     const client = new HTTPSClient(server.host, server.port);
 
     await client.connect();
-    const response = await client.sendRequest(request);
-    await client.close();
-
-    return response;
+    try {
+      const response = await client.sendRequest(request);
+      return response;
+    } finally {
+      await client.close();
+    }
   }
 
   /**

@@ -27,6 +27,7 @@ import { startHttpServer } from "./server/transports/http.ts";
 import { registerQueryTools } from "./tools/query-tools.ts";
 import { registerBrowserTools } from "./tools/browser-tools.ts";
 import { registerProxyTools } from "./tools/proxy-tools.ts";
+import { registerGraphTools } from "./tools/graph-tools.ts";
 import { registerPageResources } from "./resources/page-resources.ts";
 import { registerMetricsResources } from "./resources/metrics-resources.ts";
 import { registerVisibilityResources } from "./resources/visibility-resources.ts";
@@ -146,6 +147,7 @@ async function main(): Promise<void> {
   registerQueryTools(server, context);
   registerBrowserTools(server, context);
   registerProxyTools(server, context);
+  registerGraphTools(server, context);
   registerVisibilityTools(server, context, context.visibilityService);
 
   // Register all resources

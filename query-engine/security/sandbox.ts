@@ -371,14 +371,19 @@ export class QuerySandbox {
           };
         });
       } else {
-        // Wait for a worker to become available
-        await new Promise<void>((resolve) => {
+        // Wait for a worker to become available (with 30s timeout)
+        await new Promise<void>((resolve, reject) => {
+          const maxWaitMs = 30000;
+          const startWait = Date.now();
           const checkInterval = setInterval(() => {
             const worker = this.workerPool.find((w) => !w.busy);
             if (worker) {
               clearInterval(checkInterval);
               availableWorker = worker;
               resolve();
+            } else if (Date.now() - startWait >= maxWaitMs) {
+              clearInterval(checkInterval);
+              reject(new Error("Timed out waiting for available sandbox worker (30s)"));
             }
           }, 10);
         });
@@ -498,6 +503,12 @@ export class QuerySandbox {
     context: SandboxContext,
   ): T {
     console.warn("SECURITY WARNING: Executing code without sandbox");
+
+    // Block dangerous patterns in unsandboxed execution
+    const dangerousPatterns = /\b(eval|Function|import|require|Deno|process|globalThis)\b/;
+    if (dangerousPatterns.test(code)) {
+      throw new Error("Code contains blocked patterns for unsandboxed execution");
+    }
 
     const contextKeys = Object.keys(context.globals);
     const contextValues = Object.values(context.globals);

@@ -5,24 +5,39 @@
  * Unlike HTTP/1.1 and HTTP/2 which run over TCP, HTTP/3 uses QUIC as its
  * transport protocol, which runs over UDP.
  *
- * CURRENT STATUS: HTTP/3 is not currently implemented in this proxy engine
- * because Deno does not provide stable QUIC protocol support.
- *
- * QUIC REQUIREMENTS:
- * - UDP socket support with connection state management
- * - QUIC packet framing and parsing
- * - QUIC connection establishment and migration
- * - Loss detection and congestion control
- * - Stream multiplexing over QUIC
- * - 0-RTT connection establishment
- * - Connection migration across network changes
- *
- * ALTERNATIVE: Use HTTP/2 for multiplexed connections over TCP
- *
- * HTTP/3 will be implemented when either:
- * 1. Deno provides stable QUIC protocol APIs
- * 2. A mature QUIC implementation becomes available for Deno
+ * This implementation uses the transportx FFI crate for QUIC/HTTP3 support.
+ * When the FFI library is not available, functions degrade gracefully.
  */
+
+// ============================================================================
+// Lazy dynamic import of transportx
+// ============================================================================
+
+type TransportXModule = typeof import("@browserx/transportx");
+
+let _transportxModule: TransportXModule | null = null;
+let _transportxLoadAttempted = false;
+let _transportxLoadError: string | null = null;
+
+/**
+ * Lazy-load the transportx module. Caches result.
+ */
+async function loadTransportX(): Promise<TransportXModule | null> {
+  if (_transportxLoadAttempted) return _transportxModule;
+  _transportxLoadAttempted = true;
+  try {
+    _transportxModule = await import("@browserx/transportx");
+    return _transportxModule;
+  } catch (e) {
+    _transportxLoadError = e instanceof Error ? e.message : String(e);
+    _transportxModule = null;
+    return null;
+  }
+}
+
+// ============================================================================
+// Enums (unchanged)
+// ============================================================================
 
 /**
  * HTTP/3 Frame Types
@@ -82,56 +97,6 @@ export enum HTTP3StreamType {
 }
 
 /**
- * HTTP/3 Connection Configuration
- */
-export interface HTTP3Config {
-  /**
-   * Maximum number of concurrent bidirectional streams
-   */
-  maxConcurrentStreams?: number;
-
-  /**
-   * Maximum header list size (bytes)
-   */
-  maxHeaderListSize?: number;
-
-  /**
-   * Initial window size for flow control
-   */
-  initialWindowSize?: number;
-
-  /**
-   * Enable 0-RTT connection establishment
-   */
-  enable0RTT?: boolean;
-
-  /**
-   * QPACK dynamic table capacity
-   */
-  qpackMaxTableCapacity?: number;
-
-  /**
-   * Maximum number of blocked QPACK streams
-   */
-  qpackBlockedStreams?: number;
-
-  /**
-   * Connection idle timeout (milliseconds)
-   */
-  idleTimeout?: number;
-
-  /**
-   * Maximum UDP payload size
-   */
-  maxUDPPayloadSize?: number;
-
-  /**
-   * Enable connection migration
-   */
-  enableMigration?: boolean;
-}
-
-/**
  * HTTP/3 Connection State
  */
 export enum HTTP3ConnectionState {
@@ -143,33 +108,47 @@ export enum HTTP3ConnectionState {
   ERROR = "error",
 }
 
+// ============================================================================
+// Interfaces (unchanged)
+// ============================================================================
+
+/**
+ * HTTP/3 Connection Configuration
+ */
+export interface HTTP3Config {
+  /** Maximum number of concurrent bidirectional streams */
+  maxConcurrentStreams?: number;
+  /** Maximum header list size (bytes) */
+  maxHeaderListSize?: number;
+  /** Initial window size for flow control */
+  initialWindowSize?: number;
+  /** Enable 0-RTT connection establishment */
+  enable0RTT?: boolean;
+  /** QPACK dynamic table capacity */
+  qpackMaxTableCapacity?: number;
+  /** Maximum number of blocked QPACK streams */
+  qpackBlockedStreams?: number;
+  /** Connection idle timeout (milliseconds) */
+  idleTimeout?: number;
+  /** Maximum UDP payload size */
+  maxUDPPayloadSize?: number;
+  /** Enable connection migration */
+  enableMigration?: boolean;
+}
+
 /**
  * HTTP/3 Request
  */
 export interface HTTP3Request {
-  /**
-   * Request method (GET, POST, etc.)
-   */
+  /** Request method (GET, POST, etc.) */
   method: string;
-
-  /**
-   * Request URL
-   */
+  /** Request URL */
   url: string;
-
-  /**
-   * Request headers
-   */
+  /** Request headers */
   headers: Map<string, string>;
-
-  /**
-   * Request body
-   */
+  /** Request body */
   body?: Uint8Array;
-
-  /**
-   * Stream priority
-   */
+  /** Stream priority */
   priority?: number;
 }
 
@@ -177,44 +156,52 @@ export interface HTTP3Request {
  * HTTP/3 Response
  */
 export interface HTTP3Response {
-  /**
-   * Status code
-   */
+  /** Status code */
   status: number;
-
-  /**
-   * Status text
-   */
+  /** Status text */
   statusText: string;
-
-  /**
-   * Response headers
-   */
+  /** Response headers */
   headers: Map<string, string>;
-
-  /**
-   * Response body
-   */
+  /** Response body */
   body: Uint8Array;
 }
 
+// ============================================================================
+// Availability checks
+// ============================================================================
+
 /**
- * QUIC Availability Check
+ * QUIC Availability Check (synchronous)
  *
- * Checks if QUIC protocol support is available in the current Deno runtime.
- * Currently always returns false as Deno does not provide stable QUIC APIs.
+ * Returns true if the transportx FFI module has been loaded and QUIC is available.
+ * Call isQUICAvailableAsync() first to trigger the lazy load.
  */
 export function isQUICAvailable(): boolean {
-  // Check for QUIC support in Deno
-  // Currently, Deno does not expose QUIC protocol APIs
-  return false;
+  if (!_transportxModule) return false;
+  try {
+    const tx = new _transportxModule.TransportX();
+    return tx.isQUICAvailable();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Async QUIC availability check that triggers lazy load of transportx
+ */
+export async function isQUICAvailableAsync(): Promise<boolean> {
+  const mod = await loadTransportX();
+  if (!mod) return false;
+  try {
+    const tx = new mod.TransportX();
+    return tx.isQUICAvailable();
+  } catch {
+    return false;
+  }
 }
 
 /**
  * HTTP/3 Support Check
- *
- * Checks if HTTP/3 can be used in the current environment.
- * Returns false because QUIC is required but not available.
  */
 export function isHTTP3Supported(): boolean {
   return isQUICAvailable();
@@ -222,8 +209,6 @@ export function isHTTP3Supported(): boolean {
 
 /**
  * Get HTTP/3 Availability Details
- *
- * Returns detailed information about why HTTP/3 is not available.
  */
 export function getHTTP3Availability(): {
   supported: boolean;
@@ -231,36 +216,100 @@ export function getHTTP3Availability(): {
   alternatives: string[];
   requirements: string[];
 } {
+  const supported = isQUICAvailable();
+  if (supported) {
+    return {
+      supported: true,
+      reason: "HTTP/3 is available via transportx FFI QUIC implementation",
+      alternatives: [],
+      requirements: [],
+    };
+  }
+
   return {
     supported: false,
-    reason:
-      "HTTP/3 requires QUIC protocol support which is not currently available in Deno's stable APIs",
+    reason: _transportxLoadError
+      ? `transportx FFI library not available: ${_transportxLoadError}`
+      : "HTTP/3 requires the transportx FFI library for QUIC support",
     alternatives: [
       "Use HTTP/2 for multiplexed connections over TCP",
       "Use HTTP/1.1 with connection pooling for concurrent requests",
+      "Call isQUICAvailableAsync() to trigger lazy loading of transportx",
     ],
     requirements: [
-      "UDP socket support with connection state management",
-      "QUIC protocol implementation (packet framing, loss detection, congestion control)",
-      "QUIC stream multiplexing",
-      "TLS 1.3 integration with QUIC",
-      "0-RTT connection establishment support",
-      "Connection migration support",
+      "transportx Rust crate built (cargo build --release -p transportx)",
+      "FFI shared library available on library path",
+      "Deno --allow-ffi permission",
     ],
   };
 }
 
+// ============================================================================
+// State mapping helper
+// ============================================================================
+
+/**
+ * Map QuicConnectionState numeric enum to HTTP3ConnectionState string enum
+ */
+function mapQuicState(quicState: number): HTTP3ConnectionState {
+  // QuicConnectionState: Idle=0, Connecting=1, Connected=2, Draining=3, Closed=4, Error=5
+  switch (quicState) {
+    case 0:
+      return HTTP3ConnectionState.IDLE;
+    case 1:
+      return HTTP3ConnectionState.CONNECTING;
+    case 2:
+      return HTTP3ConnectionState.CONNECTED;
+    case 3:
+      return HTTP3ConnectionState.DRAINING;
+    case 4:
+      return HTTP3ConnectionState.CLOSED;
+    case 5:
+      return HTTP3ConnectionState.ERROR;
+    default:
+      return HTTP3ConnectionState.ERROR;
+  }
+}
+
+/**
+ * Status code to status text mapping
+ */
+function statusTextFromCode(code: number): string {
+  const statusTexts: Record<number, string> = {
+    200: "OK",
+    201: "Created",
+    204: "No Content",
+    301: "Moved Permanently",
+    302: "Found",
+    304: "Not Modified",
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+  };
+  return statusTexts[code] ?? "Unknown";
+}
+
+// ============================================================================
+// HTTP3Connection
+// ============================================================================
+
 /**
  * HTTP/3 Connection Class
  *
- * This class provides the interface for HTTP/3 connections but cannot be
- * instantiated because QUIC support is not available.
- *
- * Use HTTP2Connection instead for multiplexed connections.
+ * Uses transportx FFI for QUIC transport when available.
  */
 export class HTTP3Connection {
   private state: HTTP3ConnectionState = HTTP3ConnectionState.IDLE;
   private config: HTTP3Config;
+  private quicConnection: InstanceType<TransportXModule["QuicConnection"]> | null = null;
+  private http3Connection: InstanceType<TransportXModule["Http3Connection"]> | null = null;
+  private transportx: InstanceType<TransportXModule["TransportX"]> | null = null;
+  private socketHandle: bigint | null = null;
 
   constructor(config: HTTP3Config = {}) {
     this.config = {
@@ -274,58 +323,234 @@ export class HTTP3Connection {
       maxUDPPayloadSize: config.maxUDPPayloadSize ?? 1350,
       enableMigration: config.enableMigration ?? true,
     };
-
-    const availability = getHTTP3Availability();
-    throw new Error(
-      `HTTP/3 is not supported in this environment.\n\n` +
-        `Reason: ${availability.reason}\n\n` +
-        `Requirements:\n${availability.requirements.map((r) => `  - ${r}`).join("\n")}\n\n` +
-        `Alternatives:\n${availability.alternatives.map((a) => `  - ${a}`).join("\n")}\n\n` +
-        `Please use HTTP/2 (http2.ts) for multiplexed connections over TCP.`,
-    );
   }
 
+  /**
+   * Connect to a remote HTTP/3 endpoint
+   */
   async connect(host: string, port: number): Promise<void> {
-    throw new Error("HTTP/3 connection not supported - QUIC not available");
+    const mod = await loadTransportX();
+    if (!mod) {
+      throw new Error(
+        "Cannot connect: transportx FFI library not available. " +
+          "Build with: cargo build --release -p transportx",
+      );
+    }
+
+    try {
+      // Initialize transportx
+      this.transportx = new mod.TransportX();
+
+      if (!this.transportx.isQUICAvailable()) {
+        throw new Error("QUIC transport is not available in this environment");
+      }
+
+      // Create UDP socket
+      this.socketHandle = this.transportx.createUdpSocket("0.0.0.0:0");
+      if (this.socketHandle === 0n) {
+        throw new Error(`Failed to create UDP socket: ${this.transportx.getLastError()}`);
+      }
+
+      this.state = HTTP3ConnectionState.CONNECTING;
+
+      // Create QUIC connection
+      this.quicConnection = new mod.QuicConnection({
+        socket_handle: this.socketHandle,
+        idle_timeout_ms: this.config.idleTimeout,
+        initial_max_data: this.config.initialWindowSize,
+        initial_max_streams_bidi: this.config.maxConcurrentStreams,
+        alpn: ["h3"],
+        verify_peer: true,
+      });
+
+      // Initiate QUIC handshake
+      const connected = this.quicConnection.connect(host, port);
+      if (!connected) {
+        throw new Error(`QUIC handshake failed to ${host}:${port}`);
+      }
+
+      // Poll until connected or timeout
+      const deadline = Date.now() + (this.config.idleTimeout ?? 30000);
+      while (!this.quicConnection.isEstablished() && Date.now() < deadline) {
+        const events = this.quicConnection.poll();
+        for (const event of events) {
+          if (event.type === "connected") {
+            break;
+          }
+          if (event.type === "error") {
+            throw new Error(`QUIC connection error: ${event.message}`);
+          }
+          if (event.type === "connection_closed") {
+            throw new Error(`QUIC connection closed: ${event.reason} (code: ${event.error_code})`);
+          }
+        }
+        if (!this.quicConnection.isEstablished()) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+      }
+
+      if (!this.quicConnection.isEstablished()) {
+        throw new Error(`QUIC connection timeout to ${host}:${port}`);
+      }
+
+      // Create HTTP/3 connection on top of QUIC
+      this.http3Connection = new mod.Http3Connection(this.quicConnection, {
+        max_header_list_size: this.config.maxHeaderListSize,
+        qpack_max_table_capacity: this.config.qpackMaxTableCapacity,
+        qpack_blocked_streams: this.config.qpackBlockedStreams,
+      });
+
+      this.state = HTTP3ConnectionState.CONNECTED;
+    } catch (e) {
+      this.state = HTTP3ConnectionState.ERROR;
+      throw e;
+    }
   }
 
+  /**
+   * Send an HTTP/3 request and receive the response
+   */
   async request(request: HTTP3Request): Promise<HTTP3Response> {
-    throw new Error("HTTP/3 requests not supported - QUIC not available");
+    if (!this.http3Connection || !this.quicConnection) {
+      throw new Error("HTTP/3 connection not established - call connect() first");
+    }
+
+    const url = new URL(request.url);
+
+    // Build pseudo-headers + regular headers
+    const headers: Array<{ name: string; value: string }> = [
+      { name: ":method", value: request.method },
+      { name: ":path", value: url.pathname + url.search },
+      { name: ":scheme", value: url.protocol.replace(":", "") },
+      { name: ":authority", value: url.host },
+    ];
+    for (const [name, value] of request.headers) {
+      headers.push({ name, value });
+    }
+
+    // Encode body to base64
+    let bodyB64 = "";
+    const fin = !request.body || request.body.length === 0;
+    if (request.body) {
+      bodyB64 = btoa(String.fromCharCode(...request.body));
+    }
+
+    // Send request
+    const streamId = this.http3Connection.sendRequest(headers, bodyB64, fin);
+    if (streamId < 0n) {
+      throw new Error("Failed to send HTTP/3 request");
+    }
+
+    // If body was not sent with headers, send it now
+    if (request.body && request.body.length > 0) {
+      this.http3Connection.sendBody(streamId, bodyB64, true);
+    }
+
+    // Receive response
+    const resp = await this.http3Connection.receiveResponse(
+      streamId,
+      this.config.idleTimeout ?? 30000,
+    );
+
+    // Convert transportx Http3Response to our HTTP3Response
+    const responseHeaders = new Map<string, string>();
+    for (const h of resp.headers) {
+      responseHeaders.set(h.name, h.value);
+    }
+
+    // Decode base64 body
+    let bodyBytes: Uint8Array;
+    if (resp.body) {
+      const raw = atob(resp.body);
+      bodyBytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) {
+        bodyBytes[i] = raw.charCodeAt(i);
+      }
+    } else {
+      bodyBytes = new Uint8Array(0);
+    }
+
+    return {
+      status: resp.status,
+      statusText: statusTextFromCode(resp.status),
+      headers: responseHeaders,
+      body: bodyBytes,
+    };
   }
 
+  /**
+   * Close the connection
+   */
   async close(): Promise<void> {
+    if (this.quicConnection) {
+      this.quicConnection.close();
+      this.quicConnection = null;
+    }
+    if (this.socketHandle && this.transportx) {
+      this.transportx.closeUdpSocket(this.socketHandle);
+      this.socketHandle = null;
+    }
+    this.http3Connection = null;
+    this.transportx = null;
     this.state = HTTP3ConnectionState.CLOSED;
   }
 
+  /**
+   * Get current connection state
+   */
   getState(): HTTP3ConnectionState {
+    if (this.quicConnection) {
+      const quicState = this.quicConnection.getState() as number;
+      return mapQuicState(quicState);
+    }
     return this.state;
   }
 }
 
+// ============================================================================
+// HTTP3Client
+// ============================================================================
+
 /**
  * HTTP/3 Client
  *
- * Client for making HTTP/3 requests. Not currently functional because
- * QUIC support is not available.
- *
- * Use HTTP2Client instead.
+ * Manages a pool of HTTP/3 connections per host:port.
  */
 export class HTTP3Client {
   private connections = new Map<string, HTTP3Connection>();
+  private config: HTTP3Config;
 
-  constructor(private config: HTTP3Config = {}) {
-    const availability = getHTTP3Availability();
-    throw new Error(
-      `HTTP/3 Client cannot be created.\n\n` +
-        `Reason: ${availability.reason}\n\n` +
-        `Alternative: Use HTTP2Client from http2.ts for multiplexed connections.`,
-    );
+  constructor(config: HTTP3Config = {}) {
+    this.config = config;
   }
 
+  /**
+   * Send an HTTP/3 request. Automatically manages connections per host:port.
+   */
   async request(request: HTTP3Request): Promise<HTTP3Response> {
-    throw new Error("HTTP/3 requests not supported - use HTTP2Client instead");
+    const url = new URL(request.url);
+    const host = url.hostname;
+    const port = parseInt(url.port) || 443;
+    const key = `${host}:${port}`;
+
+    // Get or create connection for this host:port
+    let conn = this.connections.get(key);
+    if (!conn || conn.getState() !== HTTP3ConnectionState.CONNECTED) {
+      // Clean up old connection if needed
+      if (conn) {
+        await conn.close();
+      }
+      conn = new HTTP3Connection(this.config);
+      await conn.connect(host, port);
+      this.connections.set(key, conn);
+    }
+
+    return conn.request(request);
   }
 
+  /**
+   * Close all connections
+   */
   async close(): Promise<void> {
     for (const connection of this.connections.values()) {
       await connection.close();
@@ -334,133 +559,94 @@ export class HTTP3Client {
   }
 }
 
+// ============================================================================
+// HTTP3Server
+// ============================================================================
+
 /**
  * HTTP/3 Server
  *
- * Server for handling HTTP/3 requests. Not currently functional because
- * QUIC support is not available.
- *
- * Use HTTP2Server instead.
+ * Listens for incoming HTTP/3 connections via QUIC.
  */
 export class HTTP3Server {
   private listening = false;
   private connections = new Map<string, HTTP3Connection>();
+  private config: HTTP3Config;
+  private transportx: InstanceType<TransportXModule["TransportX"]> | null = null;
+  private socketHandle: bigint | null = null;
 
-  constructor(private config: HTTP3Config = {}) {
-    const availability = getHTTP3Availability();
-    throw new Error(
-      `HTTP/3 Server cannot be created.\n\n` +
-        `Reason: ${availability.reason}\n\n` +
-        `Alternative: Use HTTP2Server from http2.ts for multiplexed connections.`,
-    );
+  constructor(config: HTTP3Config = {}) {
+    this.config = config;
   }
 
+  /**
+   * Start listening for HTTP/3 connections
+   */
   async listen(port: number, hostname = "0.0.0.0"): Promise<void> {
-    throw new Error("HTTP/3 server not supported - use HTTP2Server instead");
+    const mod = await loadTransportX();
+    if (!mod) {
+      throw new Error(
+        "Cannot listen: transportx FFI library not available. " +
+          "Build with: cargo build --release -p transportx",
+      );
+    }
+
+    this.transportx = new mod.TransportX();
+
+    if (!this.transportx.isQUICAvailable()) {
+      throw new Error("QUIC transport is not available in this environment");
+    }
+
+    // Create server UDP socket bound to the specified address using config
+    const bindAddr = `${hostname}:${port}`;
+    const _maxPayload = this.config.maxUDPPayloadSize ?? 1350;
+    this.socketHandle = this.transportx.createUdpSocket(bindAddr);
+    if (this.socketHandle === 0n) {
+      throw new Error(`Failed to bind UDP socket to ${hostname}:${port}: ${this.transportx.getLastError()}`);
+    }
+
+    this.listening = true;
   }
 
+  /**
+   * Close the server and all connections
+   */
   async close(): Promise<void> {
     this.listening = false;
     for (const connection of this.connections.values()) {
       await connection.close();
     }
     this.connections.clear();
+
+    if (this.socketHandle && this.transportx) {
+      this.transportx.closeUdpSocket(this.socketHandle);
+      this.socketHandle = null;
+    }
+    this.transportx = null;
   }
 
+  /**
+   * Check if the server is listening
+   */
   isListening(): boolean {
     return this.listening;
   }
 }
 
+// ============================================================================
+// Factory functions
+// ============================================================================
+
 /**
  * Create HTTP/3 Client
- *
- * Factory function for creating HTTP/3 clients.
- * Throws an error with helpful guidance because HTTP/3 is not supported.
  */
 export function createHTTP3Client(config: HTTP3Config = {}): HTTP3Client {
-  const availability = getHTTP3Availability();
-  throw new Error(
-    `Cannot create HTTP/3 client - QUIC not available.\n\n` +
-      `${availability.reason}\n\n` +
-      `Use createHTTP2Client() from http2.ts instead.`,
-  );
+  return new HTTP3Client(config);
 }
 
 /**
  * Create HTTP/3 Server
- *
- * Factory function for creating HTTP/3 servers.
- * Throws an error with helpful guidance because HTTP/3 is not supported.
  */
 export function createHTTP3Server(config: HTTP3Config = {}): HTTP3Server {
-  const availability = getHTTP3Availability();
-  throw new Error(
-    `Cannot create HTTP/3 server - QUIC not available.\n\n` +
-      `${availability.reason}\n\n` +
-      `Use createHTTP2Server() from http2.ts instead.`,
-  );
+  return new HTTP3Server(config);
 }
-
-/**
- * QUIC Protocol Requirements Documentation
- *
- * For reference, here are the key components needed for HTTP/3:
- *
- * 1. QUIC Transport Layer:
- *    - UDP socket with connection-oriented semantics
- *    - Packet numbering and acknowledgment
- *    - Loss detection and recovery
- *    - Congestion control (similar to TCP)
- *    - Flow control
- *
- * 2. QUIC Connection Management:
- *    - Connection ID management
- *    - Connection migration support
- *    - 0-RTT connection establishment
- *    - Version negotiation
- *
- * 3. QUIC Streams:
- *    - Bidirectional and unidirectional streams
- *    - Stream multiplexing
- *    - Stream priority and flow control
- *    - Stream state management
- *
- * 4. QUIC Security:
- *    - TLS 1.3 integration
- *    - Key derivation and rotation
- *    - Packet protection
- *
- * 5. HTTP/3 Specific:
- *    - HTTP/3 frame format
- *    - QPACK header compression
- *    - Server push support
- *    - Priority signaling
- *
- * When QUIC becomes available in Deno, this module will be updated to
- * provide full HTTP/3 support.
- */
-
-/**
- * Migration Path
- *
- * When QUIC support becomes available, the implementation will follow
- * this structure:
- *
- * 1. Implement QUIC transport layer using UDP sockets
- * 2. Implement QUIC packet framing and parsing
- * 3. Implement QUIC connection management
- * 4. Implement QUIC stream multiplexing
- * 5. Integrate TLS 1.3 with QUIC
- * 6. Implement HTTP/3 frame format
- * 7. Implement QPACK compression
- * 8. Update HTTP3Connection, HTTP3Client, HTTP3Server classes
- * 9. Add comprehensive tests
- * 10. Remove error throws from constructors
- *
- * Until then, HTTP/2 provides excellent performance with:
- * - Stream multiplexing over TCP
- * - Header compression (HPACK)
- * - Server push
- * - Binary framing
- */

@@ -28,7 +28,8 @@ type ServiceState<T> =
   | { status: "uninitialized" }
   | { status: "initializing"; promise: Promise<T> }
   | { status: "ready"; service: T }
-  | { status: "failed"; error: Error };
+  | { status: "failed"; error: Error }
+  | { status: "shutting_down" };
 
 /**
  * Configuration for service initialization
@@ -81,6 +82,9 @@ export class ServiceInitializer {
       case "initializing":
         return this.runtimeState.promise;
 
+      case "shutting_down":
+        throw new Error("Cannot initialize runtime: service is shutting down");
+
       case "failed":
         throw this.runtimeState.error;
 
@@ -97,6 +101,9 @@ export class ServiceInitializer {
           throw error;
         }
       }
+
+      default:
+        throw new Error(`Unexpected runtime state`);
     }
   }
 
@@ -112,6 +119,9 @@ export class ServiceInitializer {
 
       case "initializing":
         return this.queryEngineState.promise;
+
+      case "shutting_down":
+        throw new Error("Cannot initialize query engine: service is shutting down");
 
       case "failed":
         throw this.queryEngineState.error;
@@ -129,6 +139,9 @@ export class ServiceInitializer {
           throw error;
         }
       }
+
+      default:
+        throw new Error(`Unexpected query engine state`);
     }
   }
 
@@ -144,6 +157,9 @@ export class ServiceInitializer {
 
       case "initializing":
         return this.sessionManagerState.promise;
+
+      case "shutting_down":
+        throw new Error("Cannot initialize session manager: service is shutting down");
 
       case "failed":
         throw this.sessionManagerState.error;
@@ -161,6 +177,9 @@ export class ServiceInitializer {
           throw error;
         }
       }
+
+      default:
+        throw new Error(`Unexpected session manager state`);
     }
   }
 
@@ -208,22 +227,48 @@ export class ServiceInitializer {
    * Runtime.shutdown() then stops the BrowserPool (closing remaining instances).
    * Reversing this order would destroy pool instances while sessions still hold them.
    */
+  /**
+   * Reset failed services back to uninitialized, allowing retry.
+   */
+  reset(): void {
+    if (this.runtimeState.status === "failed") {
+      this.runtimeState = { status: "uninitialized" };
+    }
+    if (this.queryEngineState.status === "failed") {
+      this.queryEngineState = { status: "uninitialized" };
+    }
+    if (this.sessionManagerState.status === "failed") {
+      this.sessionManagerState = { status: "uninitialized" };
+    }
+  }
+
   async shutdown(reason: string = "Service shutdown"): Promise<void> {
+    // Capture ready services before transitioning to shutting_down
+    const readySessionManager = this.sessionManagerState.status === "ready"
+      ? this.sessionManagerState.service : null;
+    const readyRuntime = this.runtimeState.status === "ready"
+      ? this.runtimeState.service : null;
+
+    // Set shutting_down state to prevent re-initialization during shutdown
+    this.runtimeState = { status: "shutting_down" };
+    this.queryEngineState = { status: "shutting_down" };
+    this.sessionManagerState = { status: "shutting_down" };
+
     const errors: Error[] = [];
 
     // Shutdown session manager first (releases pool instances)
-    if (this.sessionManagerState.status === "ready") {
+    if (readySessionManager) {
       try {
-        await this.sessionManagerState.service.shutdown();
+        await readySessionManager.shutdown();
       } catch (error) {
         errors.push(error as Error);
       }
     }
 
     // Shutdown runtime (handles query engine cleanup)
-    if (this.runtimeState.status === "ready") {
+    if (readyRuntime) {
       try {
-        await this.runtimeState.service.shutdown(reason);
+        await readyRuntime.shutdown(reason);
       } catch (error) {
         errors.push(error as Error);
       }
@@ -235,7 +280,8 @@ export class ServiceInitializer {
     this.sessionManagerState = { status: "uninitialized" };
 
     if (errors.length > 0) {
-      throw new AggregateError(errors, "Errors during service shutdown");
+      const msg = errors.map((e) => e.message).join("; ");
+      throw new Error(`Errors during service shutdown: ${msg}`);
     }
   }
 
@@ -299,13 +345,15 @@ export class ServiceInitializer {
     console.error("[ServiceInitializer] Initializing Query Engine...");
     const startTime = Date.now();
 
-    // Try to get from runtime first
-    if (this.runtimeState.status === "ready") {
-      const runtimeEngine = this.runtimeState.service.getQueryEngine();
-      if (runtimeEngine) {
-        console.error("[ServiceInitializer] Using Query Engine from Runtime");
-        return runtimeEngine as IQueryEngine;
-      }
+    // Ensure runtime is initialized before checking status
+    const runtime = await this.getRuntime();
+
+    // Try to get from runtime first (use returned runtime directly to avoid race
+    // where runtimeState.status hasn't been updated yet by the original caller)
+    const runtimeEngine = runtime.getQueryEngine();
+    if (runtimeEngine) {
+      console.error("[ServiceInitializer] Using Query Engine from Runtime");
+      return runtimeEngine as IQueryEngine;
     }
 
     // Fallback: create standalone query engine

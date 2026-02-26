@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useEffect } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import { usePlaygroundStore } from './store';
 import type { ValidationError } from './store';
@@ -14,6 +14,12 @@ export const QueryEditor: React.FC = () => {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current !== null) clearTimeout(debounceTimerRef.current);
+    };
+  }, []);
 
   /**
    * Call /api/validate, dispatch AST data to store, and set Monaco markers.
@@ -75,25 +81,27 @@ export const QueryEditor: React.FC = () => {
     editorRef.current = editor;
     monacoRef.current = monaco;
 
-    monaco.languages.register({ id: 'browserx-query' });
+    if (!monaco.languages.getLanguages().find((l: { id: string }) => l.id === 'browserx-query')) {
+      monaco.languages.register({ id: 'browserx-query' });
 
-    monaco.languages.setMonarchTokensProvider('browserx-query', {
-      tokenizer: {
-        root: [
-          [
-            /\b(SELECT|FROM|WHERE|NAVIGATE|TO|CLICK|INSERT|INTO|IF|THEN|ELSE|FOR|EACH|IN|WITH|CAPTURE|SET|SHOW|EXISTS|COUNT|TEXT|HTML|ATTR|UPDATE|DELETE|END|DO|RANGE|OR|AND)\b/,
-            'keyword',
-          ],
-          [/[=!<>]+/, 'operator'],
-          [/\d+/, 'number'],
-          [/"([^"\\]|\\.)*"/, 'string'],
-          [/'([^'\\]|\\.)*'/, 'string'],
-          [/--.*$/, 'comment'],
-          [/[{}[\]()]/, 'bracket'],
+      monaco.languages.setMonarchTokensProvider('browserx-query', {
+        tokenizer: {
+          root: [
+            [
+              /\b(SELECT|FROM|WHERE|NAVIGATE|TO|CLICK|INSERT|INTO|IF|THEN|ELSE|FOR|EACH|IN|WITH|CAPTURE|SET|SHOW|EXISTS|COUNT|TEXT|HTML|ATTR|UPDATE|DELETE|END|DO|RANGE|OR|AND)\b/,
+              'keyword',
+            ],
+            [/[=!<>]+/, 'operator'],
+            [/\d+/, 'number'],
+            [/"([^"\\]|\\.)*"/, 'string'],
+            [/'([^'\\]|\\.)*'/, 'string'],
+            [/--.*$/, 'comment'],
+            [/[{}[\]()]/, 'bracket'],
           [/[,;]/, 'delimiter'],
         ],
       },
-    });
+      });
+    }
 
     monaco.editor.defineTheme('browserx-dark', {
       base: 'vs-dark',

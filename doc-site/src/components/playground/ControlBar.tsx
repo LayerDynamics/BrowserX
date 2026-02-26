@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { usePlaygroundStore } from './store';
 
 /**
@@ -35,6 +35,19 @@ export function ControlBar({
 
   // Local state for export dropdown
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showExportMenu]);
 
   // Determine if query is currently running
   const isRunning = activeExecution !== null;
@@ -84,7 +97,7 @@ export function ControlBar({
         >
           🔗 Share
         </button>
-        <div className="dropdown">
+        <div className="dropdown" ref={dropdownRef}>
           <button
             className="btn btn-secondary"
             onClick={() => setShowExportMenu(!showExportMenu)}

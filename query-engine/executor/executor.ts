@@ -41,10 +41,11 @@ import {
 import { QueryID } from "../types/primitives.ts";
 import { EvaluationContext, ExpressionEvaluator } from "./expression-evaluator.ts";
 import { BrowserController } from "../controllers/browser/browser-controller.ts";
-import { setCurrentBrowserController, clearBrowserContext } from "../controllers/browser/browser-context.ts";
+import { setCurrentBrowserController, clearBrowserContext, withBrowserContext } from "../controllers/browser/browser-context.ts";
 import { ProxyController } from "../controllers/proxy/proxy-controller.ts";
 import { ExecutionContextManager, StateManager } from "../state/mod.ts";
 import { type DependencyGraph, topologicalSort } from "../utils/mod.ts";
+import { isSafeRegex } from "../utils/string-utils.ts";
 import { BrowserEngine } from "@browserx/browser";
 
 /**
@@ -115,102 +116,113 @@ export class QueryExecutor {
     // Convert to legacy format for backward compatibility
     const context: ExecutionContext = this.currentContextManager.toLegacyContext();
 
-    // Set browser context for DOM function evaluation throughout this query
-    if (this.browserController) {
-      setCurrentBrowserController(this.browserController);
-    }
+    // Execute the query body, wrapping in AsyncLocalStorage-based browser context
+    // if a browser controller is available (concurrency-safe isolation).
+    // Falls back to singleton set/clear for legacy code paths without a controller.
+    const executeBody = async (): Promise<ExecutionResult> => {
+      let cacheHits = 0;
+      let cacheMisses = 0;
 
-    let cacheHits = 0;
-    let cacheMisses = 0;
+      try {
+        // Get topological order for sequential execution
+        const order = this.getExecutionOrder(plan);
 
-    try {
-      // Get topological order for sequential execution
-      const order = this.getExecutionOrder(plan);
+        // Execute steps in order
+        for (const stepId of order) {
+          // Check abort signal before each step
+          if (signal?.aborted) {
+            throw signal.reason || new Error("Query aborted during execution");
+          }
 
-      // Execute steps in order
-      for (const stepId of order) {
-        // Check abort signal before each step
-        if (signal?.aborted) {
-          throw signal.reason || new Error("Query aborted during execution");
-        }
+          const step = plan.steps.find((s: ExecutionStep) => s.id === stepId);
+          if (!step) continue;
 
-        const step = plan.steps.find((s: ExecutionStep) => s.id === stepId);
-        if (!step) continue;
+          // Check cache
+          if (step.cacheable && step.cacheKey) {
+            const cached = context.cache!.get(step.cacheKey);
+            if (cached) {
+              cacheHits++;
+              context.stepResults.set(stepId, {
+                stepId,
+                success: true,
+                data: cached,
+                timing: {
+                  startTime: performance.now(),
+                  endTime: performance.now(),
+                  duration: 0,
+                },
+                cacheHit: true,
+              });
+              continue;
+            } else {
+              cacheMisses++;
+            }
+          }
 
-        // Check cache
-        if (step.cacheable && step.cacheKey) {
-          const cached = context.cache!.get(step.cacheKey);
-          if (cached) {
-            cacheHits++;
-            context.stepResults.set(stepId, {
-              stepId,
-              success: true,
-              data: cached,
-              timing: {
-                startTime: performance.now(),
-                endTime: performance.now(),
-                duration: 0,
-              },
-              cacheHit: true,
-            });
-            continue;
-          } else {
-            cacheMisses++;
+          // Execute step
+          const result = await this.executeStep(step, context);
+          context.stepResults.set(stepId, result);
+
+          // Store in cache if cacheable
+          if (step.cacheable && step.cacheKey && result.success) {
+            context.cache!.set(step.cacheKey, result.data);
+          }
+
+          // If step failed and is critical, stop execution
+          if (!result.success) {
+            throw result.error || new Error(`Step ${stepId} failed`);
           }
         }
 
-        // Execute step
-        const result = await this.executeStep(step, context);
-        context.stepResults.set(stepId, result);
+        const endTime = performance.now();
 
-        // Store in cache if cacheable
-        if (step.cacheable && step.cacheKey && result.success) {
-          context.cache!.set(step.cacheKey, result.data);
-        }
+        // Get final result from last step
+        const lastStepId = order[order.length - 1];
+        const lastResult = context.stepResults.get(lastStepId);
 
-        // If step failed and is critical, stop execution
-        if (!result.success) {
-          throw result.error || new Error(`Step ${stepId} failed`);
-        }
+        return {
+          queryId: plan.id,
+          data: lastResult?.data,
+          success: true,
+          timing: {
+            startTime,
+            endTime,
+            totalTime: endTime - startTime,
+          },
+          stepResults: context.stepResults,
+          cacheHits,
+          cacheMisses,
+        };
+      } catch (error) {
+        const endTime = performance.now();
+
+        return {
+          queryId: plan.id,
+          data: null,
+          success: false,
+          error: error as Error,
+          timing: {
+            startTime,
+            endTime,
+            totalTime: endTime - startTime,
+          },
+          stepResults: context.stepResults,
+          cacheHits,
+          cacheMisses,
+        };
+      }
+    };
+
+    // Use AsyncLocalStorage-based context for concurrency-safe browser isolation
+    try {
+      if (this.browserController) {
+        return await withBrowserContext(this.browserController, executeBody);
       }
 
-      const endTime = performance.now();
-
-      // Get final result from last step
-      const lastStepId = order[order.length - 1];
-      const lastResult = context.stepResults.get(lastStepId);
-
-      return {
-        queryId: plan.id,
-        data: lastResult?.data,
-        success: true,
-        timing: {
-          startTime,
-          endTime,
-          totalTime: endTime - startTime,
-        },
-        stepResults: context.stepResults,
-        cacheHits,
-        cacheMisses,
-      };
-    } catch (error) {
-      const endTime = performance.now();
-
-      return {
-        queryId: plan.id,
-        data: null,
-        success: false,
-        error: error as Error,
-        timing: {
-          startTime,
-          endTime,
-          totalTime: endTime - startTime,
-        },
-        stepResults: context.stepResults,
-        cacheHits,
-        cacheMisses,
-      };
+      // No browser controller — execute without browser context
+      return await executeBody();
     } finally {
+      // Clear singleton fallback that may have been set by executeNavigate/executeDOMQuery
       clearBrowserContext();
     }
   }
@@ -941,15 +953,15 @@ export class QueryExecutor {
     // Set up request interceptor based on patterns
     const interceptor = (request: any) => {
       // Check if request matches patterns
-      const urlMatch = !step.urlPattern || new RegExp(step.urlPattern).test(request.url);
+      const urlMatch = !step.urlPattern || (isSafeRegex(step.urlPattern) && new RegExp(step.urlPattern).test(request.url));
       const methodMatch = !step.methodPattern ||
-        new RegExp(step.methodPattern).test(request.method);
+        (isSafeRegex(step.methodPattern) && new RegExp(step.methodPattern).test(request.method));
 
       let headerMatch = true;
       if (step.headerMatchers) {
         for (const [key, pattern] of Object.entries(step.headerMatchers)) {
           const headerValue = request.headers[key.toLowerCase()];
-          if (!headerValue || !new RegExp(pattern).test(headerValue)) {
+          if (!headerValue || !isSafeRegex(pattern) || !new RegExp(pattern).test(headerValue)) {
             headerMatch = false;
             break;
           }
@@ -1231,10 +1243,8 @@ export class QueryExecutor {
     // Use utility function for topological sort
     try {
       return topologicalSort(graph);
-    } catch (error) {
-      // Fall back to sequential order if there's a cycle
-      console.warn("Circular dependency detected in execution plan, using sequential order");
-      return plan.steps.map((s: ExecutionStep) => s.id);
+    } catch (_error) {
+      throw new Error("Circular dependency in execution plan");
     }
   }
 

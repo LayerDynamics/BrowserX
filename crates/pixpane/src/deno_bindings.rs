@@ -817,12 +817,11 @@ pub fn window_exists(window_id: u64) -> u8 {
 #[deno_bindgen]
 pub fn window_render(window_id: u64) -> u8 {
     match crate::window::system::with_window_mut(window_id, |window| {
-        // Get window reference before mutable borrow
-        let winit_window = window.inner() as *const winit::window::Window;
+        // Clone the Arc to avoid aliasing the mutable borrow of render_state
+        let winit_window = std::sync::Arc::clone(&window.inner);
 
         if let Some(render_state) = &mut window.render_state {
-            // SAFETY: We know the window is valid for the duration of this closure
-            let winit_window_ref = unsafe { &*winit_window };
+            let winit_window_ref = &*winit_window;
 
             match crate::rendering::render_frame(render_state, winit_window_ref) {
                 Ok(()) => {
@@ -906,12 +905,11 @@ pub fn window_upload_pixels(window_id: u64, pixels: &[u8], width: u32, height: u
 #[deno_bindgen]
 pub fn egui_begin_frame(window_id: u64) -> u8 {
     match crate::window::system::with_window_mut(window_id, |window| {
-        // Get window pointer before mutable borrow
-        let winit_window = window.inner() as *const winit::window::Window;
+        // Clone the Arc to avoid aliasing the mutable borrow of render_state
+        let winit_window = std::sync::Arc::clone(&window.inner);
 
         if let Some(render_state) = &mut window.render_state {
-            // SAFETY: We know the window is valid for the duration of this closure
-            let winit_window_ref = unsafe { &*winit_window };
+            let winit_window_ref = &*winit_window;
             render_state.egui_state.begin_frame(winit_window_ref);
             clear_last_error();
             0
@@ -1156,13 +1154,13 @@ pub fn egui_checkbox(window_id: u64, id: &str, label: &str, checked: u8) -> u8 {
             current as u8
         } else {
             set_last_error("Window does not have rendering enabled".to_string());
-            checked
+            (checked != 0) as u8
         }
     }) {
         Some(result) => result,
         None => {
             set_last_error(format!("Window {} not found", window_id));
-            checked
+            (checked != 0) as u8
         }
     }
 }

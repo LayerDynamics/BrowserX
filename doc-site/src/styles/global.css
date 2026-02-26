@@ -151,6 +151,7 @@ nav.sidebar {
   color: var(--bx-white);
   background: var(--bx-raised);
   border-left: 2px solid var(--bx-white);
+  margin-left: -2px;
 }
 
 /* Sidebar section labels */
@@ -254,6 +255,12 @@ main {
 .pagefind-ui__search-input:focus {
   border-color: var(--bx-border-hi);
   outline: none;
+}
+
+.pagefind-ui__search-input:focus-visible {
+  border-color: var(--bx-border-hi);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bx-border-hi);
 }
 
 /* ── Aside / callout components ────────────────────────────── */
