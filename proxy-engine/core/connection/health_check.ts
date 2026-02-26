@@ -210,11 +210,17 @@ export function createHealthChecker(config: HealthCheckConfig): HealthChecker {
 /**
  * Health monitor manages health checks for multiple servers
  */
+/**
+ * Maximum health check backoff interval (5 minutes)
+ */
+const MAX_HEALTH_CHECK_BACKOFF = 300000;
+
 export class HealthMonitor {
   private checker: HealthChecker;
   private states: Map<string, ServerHealthState> = new Map();
   private intervalId?: number;
   private running = false;
+  private nextCheckTime: Map<string, number> = new Map();
 
   constructor(private config: HealthCheckConfig) {
     this.checker = createHealthChecker(config);
@@ -266,11 +272,31 @@ export class HealthMonitor {
   }
 
   /**
-   * Check a single server
+   * Check a single server (with exponential backoff for failed servers)
    */
   private async checkServer(server: UpstreamServer): Promise<void> {
+    // Apply exponential backoff: skip this check if not yet time
+    const now = Date.now();
+    const nextTime = this.nextCheckTime.get(server.id) ?? 0;
+    if (now < nextTime) {
+      return; // Skip — backoff period not yet elapsed
+    }
+
     const result = await this.checker.check(server);
     this.updateState(result);
+
+    // Schedule next check time based on consecutive failures
+    const state = this.states.get(server.id);
+    if (state && state.consecutiveFailures > 0) {
+      const backoff = Math.min(
+        this.config.interval * Math.pow(2, state.consecutiveFailures),
+        MAX_HEALTH_CHECK_BACKOFF,
+      );
+      this.nextCheckTime.set(server.id, now + backoff);
+    } else {
+      // Healthy — use normal interval (no extra delay)
+      this.nextCheckTime.delete(server.id);
+    }
   }
 
   /**
@@ -356,10 +382,18 @@ export class HealthMonitor {
   }
 
   /**
+   * Get the next scheduled check time for a server (used for backoff)
+   */
+  getNextCheckTime(serverId: string): number | undefined {
+    return this.nextCheckTime.get(serverId);
+  }
+
+  /**
    * Reset all health states
    */
   reset(): void {
     this.states.clear();
+    this.nextCheckTime.clear();
   }
 
   /**

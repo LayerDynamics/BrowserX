@@ -15,6 +15,7 @@ export {
   countOccurrences,
   dedent,
   escapeRegex,
+  escapeSelector,
   escapeString,
   indent,
   interpolate,

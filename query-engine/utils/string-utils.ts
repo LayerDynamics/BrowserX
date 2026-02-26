@@ -55,6 +55,35 @@ export function unescapeString(str: string): string {
 }
 
 /**
+ * Escape a CSS selector for safe interpolation into JavaScript strings
+ * passed to querySelector/querySelectorAll. Prevents injection when
+ * selectors are embedded in template strings like: `document.querySelector('${selector}')`.
+ *
+ * This escapes JS string special characters (quotes, backslashes, newlines)
+ * and rejects null bytes and XSS patterns.
+ */
+export function escapeSelector(selector: string): string {
+  // Reject null bytes
+  if (selector.includes("\0")) {
+    throw new Error("Selector must not contain null bytes");
+  }
+  // Reject XSS patterns
+  if (/<script|javascript:|on\w+=/gi.test(selector)) {
+    throw new Error("Selector contains dangerous content");
+  }
+  // Escape JS string special characters to prevent breaking out of quotes
+  return selector
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+/**
  * Escape special characters for use in regular expressions
  */
 export function escapeRegex(str: string): string {

@@ -19,6 +19,7 @@ import {
   ExpressionEvaluator,
 } from "../../executor/expression-evaluator.ts";
 
+
 /**
  * Query DOM options
  */
@@ -204,7 +205,7 @@ export class BrowserController {
       throw new Error("No page available for DOM query");
     }
 
-    // Query elements
+    // Query elements using the selector directly (native querySelector, no interpolation risk)
     const elements = await this.currentPage.query(step.selector, step.selectorType);
 
     this.checkAbort(options);

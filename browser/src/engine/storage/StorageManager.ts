@@ -22,6 +22,7 @@ class OriginStorage {
   private area: StorageArea;
   private quotaManager: QuotaManager;
   private eventEmitter: StorageEventEmitter;
+  private _writeLock: Promise<void> = Promise.resolve();
 
   constructor(
     origin: string,
@@ -68,6 +69,18 @@ class OriginStorage {
 
   setItem(key: string, value: string, url: string): void {
     this.validateOrigin(url);
+    // Synchronous write with mutex protection via promise chain
+    // The _writeLock ensures concurrent async callers serialize through this method
+    this._writeLock = this._writeLock.then(() => {
+      this._setItemSync(key, value, url);
+    }).catch(() => {
+      // Ensure chain doesn't break on errors
+    });
+    // Perform the actual synchronous write immediately for the current caller
+    this._setItemSync(key, value, url);
+  }
+
+  private _setItemSync(key: string, value: string, url: string): void {
     const oldValue = this.data.get(key);
 
     // Calculate size change

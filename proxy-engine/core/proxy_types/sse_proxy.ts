@@ -170,6 +170,9 @@ export class SSEProxy {
   private config: Required<Omit<SSEProxyConfig, "transformHook">>;
   private transformHook?: (event: SSEEvent, direction: string) => SSEEvent;
 
+  // Track last received event ID for reconnection
+  private lastEventId: string | undefined;
+
   // Statistics
   private stats: SSEProxyStats = {
     totalConnections: 0,
@@ -232,8 +235,8 @@ export class SSEProxy {
         return this.createErrorResponse(503, "No healthy upstream servers available");
       }
 
-      // Get Last-Event-ID if present (for reconnection)
-      const lastEventId = request.headers["last-event-id"];
+      // Get Last-Event-ID if present (for reconnection), fall back to tracked ID
+      const lastEventId = request.headers["last-event-id"] || this.lastEventId;
 
       // Create upstream request
       const upstreamRequest = this.buildUpstreamRequest(request, server, context, lastEventId);
@@ -403,6 +406,11 @@ export class SSEProxy {
 
     for (const event of events) {
       try {
+        // Track last event ID for reconnection
+        if (event.id !== undefined) {
+          this.lastEventId = event.id;
+        }
+
         // Inspect event if enabled
         if (this.config.inspectEvents) {
           this.inspectEvent(event, context);
@@ -609,6 +617,13 @@ export class SSEProxy {
    */
   getRoute(): Route {
     return this.route;
+  }
+
+  /**
+   * Get the last received event ID (used for reconnection)
+   */
+  getLastEventId(): string | undefined {
+    return this.lastEventId;
   }
 
   /**

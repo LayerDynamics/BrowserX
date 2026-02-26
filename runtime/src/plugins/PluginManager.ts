@@ -118,8 +118,37 @@ export class PluginManager {
 
     // Phase 4: Activate plugins in dependency order
     const activationOrder = this.getActivationOrder();
+    const failedPlugins = new Set<string>();
+
     for (const pluginId of activationOrder) {
-      await this.activatePlugin(pluginId);
+      // Skip plugins that depend on a failed plugin
+      const info = this.registry.get(pluginId);
+      if (info) {
+        const deps = info.plugin.dependencies ?? [];
+        const blockedBy = deps.find((dep) => failedPlugins.has(dep));
+        if (blockedBy) {
+          console.warn(
+            `[PluginManager] Skipping plugin "${pluginId}": depends on failed plugin "${blockedBy}"`,
+          );
+          failedPlugins.add(pluginId);
+          this.registry.setError(pluginId, new Error(`Dependency "${blockedBy}" failed to activate`));
+          continue;
+        }
+      }
+
+      try {
+        await this.activatePlugin(pluginId);
+      } catch {
+        // activatePlugin may throw for registration/state issues
+        failedPlugins.add(pluginId);
+        continue;
+      }
+
+      // Check if activation failed (activatePlugin catches errors internally)
+      const postInfo = this.registry.get(pluginId);
+      if (postInfo && postInfo.state === "error") {
+        failedPlugins.add(pluginId);
+      }
     }
 
     this.started = true;
@@ -184,7 +213,7 @@ export class PluginManager {
   private async loadPluginDirectories(): Promise<void> {
     for (const dir of this.pluginConfig.pluginDirs) {
       console.debug(`[PluginManager] Scanning plugin directory: ${dir}`);
-      const results = await this.loader.scanDirectory(dir);
+      const results: PluginLoadResult[] = await this.loader.scanDirectory(dir);
 
       for (const result of results) {
         if (result.success && result.plugin) {
@@ -714,9 +743,7 @@ export class PluginManager {
    * Wire a DevTools domain into the DevTools domain registry.
    */
   private wireDevToolsDomain(domain: DevToolsDomainDefinition): void {
-    // DevTools domains require a more complex setup (BaseDomain instance, etc.)
-    // For now, we store them for the DevTools system to discover via getAllDevToolsDomains()
-    // The actual domain registration would require the DevTools protocol layer
+    this.devToolsDomainRegistry.set(domain.name, domain);
     console.debug(
       `[PluginManager] DevTools domain "${domain.name}" registered by plugin — available for DevTools integration`,
     );
@@ -726,9 +753,17 @@ export class PluginManager {
    * Unwire a DevTools domain from the DevTools domain registry.
    */
   private unwireDevToolsDomain(name: string): void {
+    this.devToolsDomainRegistry.delete(name);
     console.debug(
       `[PluginManager] DevTools domain "${name}" unregistered by plugin`,
     );
+  }
+
+  /**
+   * Get all registered DevTools domains from plugins.
+   */
+  getDevToolsDomains(): Map<string, DevToolsDomainDefinition> {
+    return new Map(this.devToolsDomainRegistry);
   }
 
   // ── Events ──

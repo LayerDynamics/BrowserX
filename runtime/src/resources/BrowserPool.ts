@@ -81,6 +81,9 @@ export class BrowserPool {
   private lifetimes: number[] = [];
   private useCounts: number[] = [];
 
+  // Set of instance IDs currently being acquired (guards against cleanup race)
+  private acquiringIds: Set<string> = new Set();
+
   // Promise-based waiter queue (replaces busy-wait polling)
   private waiters: Array<{ resolve: (id: string) => void; reject: (err: Error) => void; timer: number }> = [];
 
@@ -184,15 +187,25 @@ export class BrowserPool {
 
     // Try to get an idle instance immediately
     for (const instance of this.instances.values()) {
-      if (instance.state === "idle") {
-        return this.markInUse(instance, options.url);
+      if (instance.state === "idle" && !this.acquiringIds.has(instance.id)) {
+        this.acquiringIds.add(instance.id);
+        try {
+          return this.markInUse(instance, options.url);
+        } finally {
+          this.acquiringIds.delete(instance.id);
+        }
       }
     }
 
     // No idle instance available - try to create new one
     if (this.instances.size < this.config.maxInstances) {
       const instance = await this.createInstance();
-      return this.markInUse(instance, options.url);
+      this.acquiringIds.add(instance.id);
+      try {
+        return this.markInUse(instance, options.url);
+      } finally {
+        this.acquiringIds.delete(instance.id);
+      }
     }
 
     // Pool exhausted - wait for a release with timeout
@@ -485,6 +498,9 @@ export class BrowserPool {
     const toClose: string[] = [];
 
     for (const [id, instance] of this.instances.entries()) {
+      // Skip instances currently being acquired
+      if (this.acquiringIds.has(id)) continue;
+
       if (instance.state === "idle") {
         const idleTime = now - instance.lastUsedAt;
 
@@ -499,6 +515,8 @@ export class BrowserPool {
     }
 
     for (const id of toClose) {
+      // Double-check not acquired in the meantime
+      if (this.acquiringIds.has(id)) continue;
       await this.closeInstance(id, "idle_timeout");
     }
   }
@@ -511,6 +529,9 @@ export class BrowserPool {
     const toClose: string[] = [];
 
     for (const [id, instance] of this.instances.entries()) {
+      // Skip instances currently being acquired
+      if (this.acquiringIds.has(id)) continue;
+
       const lifetime = now - instance.createdAt;
 
       if (lifetime > this.config.maxLifetime && instance.state === "idle") {
@@ -519,6 +540,7 @@ export class BrowserPool {
     }
 
     for (const id of toClose) {
+      if (this.acquiringIds.has(id)) continue;
       await this.closeInstance(id, "max_lifetime_exceeded");
     }
   }

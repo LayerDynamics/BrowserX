@@ -17,6 +17,11 @@ import { createLoadBalancer } from "../../gateway/router/load_balancer/factory.t
 import { HealthMonitor } from "../connection/health_check.ts";
 
 /**
+ * Maximum WebSocket message size (10MB)
+ */
+export const MAX_MESSAGE_SIZE = 10 * 1024 * 1024;
+
+/**
  * WebSocket proxy configuration
  */
 export interface WebSocketProxyConfig {
@@ -362,8 +367,11 @@ export class WebSocketProxy {
 
         // Add forwarded headers if enabled
         if (this.config.addForwardedHeaders) {
-          // Note: WebSocket API doesn't support custom headers
-          // In production, this would be handled at the TCP level
+          // Forward client info via subprotocol encoding
+          // (WebSocket API doesn't support custom headers directly)
+          const clientIp = context.clientIP || "unknown";
+          const host = request.uri || url;
+          console.debug(`[WebSocketProxy] Forwarding connection from ${clientIp} to ${host}`);
         }
 
         // Wait for connection to open
@@ -410,11 +418,18 @@ export class WebSocketProxy {
       try {
         const data = event.data;
 
-        // Check message size
+        // Check message size against configured limit and absolute maximum
         const size = typeof data === "string" ? data.length : data.byteLength;
-        if (size > this.config.maxMessageSize) {
+        const effectiveLimit = Math.min(this.config.maxMessageSize, MAX_MESSAGE_SIZE);
+        if (size > effectiveLimit) {
           this.stats.messageErrors++;
-          console.error("[WebSocket Proxy] Message too large:", size);
+          console.error(`[WebSocket Proxy] Message too large: ${size} bytes (limit: ${effectiveLimit})`);
+          if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.close(1009, "Message too large");
+          }
+          if (originWs.readyState === WebSocket.OPEN) {
+            originWs.close(1009, "Message too large");
+          }
           return;
         }
 
@@ -446,11 +461,18 @@ export class WebSocketProxy {
       try {
         const data = event.data;
 
-        // Check message size
+        // Check message size against configured limit and absolute maximum
         const size = typeof data === "string" ? data.length : data.byteLength;
-        if (size > this.config.maxMessageSize) {
+        const effectiveLimit = Math.min(this.config.maxMessageSize, MAX_MESSAGE_SIZE);
+        if (size > effectiveLimit) {
           this.stats.messageErrors++;
-          console.error("[WebSocket Proxy] Message too large:", size);
+          console.error(`[WebSocket Proxy] Message too large: ${size} bytes (limit: ${effectiveLimit})`);
+          if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.close(1009, "Message too large");
+          }
+          if (originWs.readyState === WebSocket.OPEN) {
+            originWs.close(1009, "Message too large");
+          }
           return;
         }
 

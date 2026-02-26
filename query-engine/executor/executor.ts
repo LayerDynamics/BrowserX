@@ -48,12 +48,22 @@ import { type DependencyGraph, topologicalSort } from "../utils/mod.ts";
 import { isSafeRegex } from "../utils/string-utils.ts";
 import { BrowserEngine } from "@browserx/browser";
 
+/** Maximum number of loop iterations (default) */
+export const MAX_ITERATIONS = 10000;
+
+/** Maximum result set size */
+export const MAX_RESULT_SIZE = 100000;
+
 /**
  * Execution options
  */
 export interface ExecutionOptions {
   /** AbortSignal for cancellation support */
   signal?: AbortSignal;
+  /** Maximum iterations for FOR loops (default: MAX_ITERATIONS) */
+  maxIterations?: number;
+  /** Maximum result set rows (default: MAX_RESULT_SIZE) */
+  maxResultSize?: number;
 }
 
 /**
@@ -84,6 +94,10 @@ export class QueryExecutor {
   private currentContextManager?: ExecutionContextManager;
   /** Abort signal for cancellation support */
   private signal?: AbortSignal;
+  /** Max iterations for FOR loops */
+  private maxIterations: number = MAX_ITERATIONS;
+  /** Max result set size */
+  private maxResultSize: number = MAX_RESULT_SIZE;
 
   constructor(
     browserController?: BrowserController,
@@ -104,6 +118,8 @@ export class QueryExecutor {
 
     // Store signal as instance property for use in step handlers
     this.signal = signal;
+    this.maxIterations = options.maxIterations ?? MAX_ITERATIONS;
+    this.maxResultSize = options.maxResultSize ?? MAX_RESULT_SIZE;
 
     // Check if already aborted
     if (signal?.aborted) {
@@ -445,6 +461,15 @@ export class QueryExecutor {
     // Execute the DOM query step which returns extracted data
     const results = await this.browserController.executeDOMQuery(step, options);
 
+    // Enforce result set size limit
+    if (Array.isArray(results) && results.length > this.maxResultSize) {
+      throw new Error(
+        `Result set size limit exceeded: ${results.length} rows, maximum is ${this.maxResultSize}`,
+      );
+    }
+
+    // Store results in execution context for downstream steps
+    context.variables.set("__lastQueryResult", results);
     return results;
   }
 
@@ -470,7 +495,7 @@ export class QueryExecutor {
     const evaluator = new ExpressionEvaluator(evalContext);
 
     // Filter array by evaluating predicate for each item
-    const filtered = [];
+    const filtered: unknown[] = [];
     for (const item of input) {
       // Set current item as the row being evaluated
       evaluator.setContext({ currentRow: item as Record<string, unknown> });
@@ -482,6 +507,7 @@ export class QueryExecutor {
       }
     }
 
+    this.enforceResultSizeLimit(filtered);
     context.variables.set(step.outputVariable, filtered);
     return filtered;
   }
@@ -637,9 +663,22 @@ export class QueryExecutor {
       throw new Error(`Loop collection must be an array`);
     }
 
+    if (collection.length > this.maxIterations) {
+      throw new Error(
+        `FOR loop iteration limit exceeded: collection has ${collection.length} items, maximum is ${this.maxIterations}`,
+      );
+    }
+
     const results: unknown[] = [];
+    let iterationCount = 0;
 
     for (const item of collection) {
+      iterationCount++;
+      if (iterationCount > this.maxIterations) {
+        throw new Error(
+          `FOR loop iteration limit exceeded: ${this.maxIterations} iterations`,
+        );
+      }
       // Push new scope for loop iteration (enables variable shadowing)
       if (this.currentContextManager) {
         this.currentContextManager.pushScope();
@@ -708,6 +747,7 @@ export class QueryExecutor {
     }
 
     await this.browserController.executeClick(step, options);
+    context.variables.set("__lastAction", "click");
     return { clicked: true, selector: step.selector };
   }
 
@@ -726,6 +766,7 @@ export class QueryExecutor {
     }
 
     await this.browserController.executeType(step, options);
+    context.variables.set("__lastAction", "type");
     return { typed: true, selector: step.selector, text: step.text };
   }
 
@@ -744,6 +785,7 @@ export class QueryExecutor {
     }
 
     await this.browserController.executeWait(step, options);
+    context.variables.set("__lastAction", "wait");
     return { waited: true, waitType: step.waitType };
   }
 
@@ -762,6 +804,7 @@ export class QueryExecutor {
     }
 
     const screenshot = await this.browserController.executeScreenshot(step, options);
+    context.variables.set("__lastScreenshot", screenshot);
     return screenshot;
   }
 
@@ -780,6 +823,7 @@ export class QueryExecutor {
     }
 
     const pdf = await this.browserController.executePDF(step, options);
+    context.variables.set("__lastPDF", pdf);
     return pdf;
   }
 
@@ -798,6 +842,7 @@ export class QueryExecutor {
     }
 
     const result = await this.browserController.executeEvaluateJS(step, options);
+    context.variables.set("__lastEvalResult", result);
     return result;
   }
 
@@ -815,6 +860,7 @@ export class QueryExecutor {
     }
 
     const cached = await this.proxyController.executeCacheLookup(step);
+    context.variables.set(step.cacheKey, cached);
     return cached;
   }
 
@@ -832,6 +878,7 @@ export class QueryExecutor {
     }
 
     const cached = await this.proxyController.executeCacheRetrieve(step);
+    context.variables.set(step.cacheKey, cached);
     return cached;
   }
 
@@ -848,8 +895,9 @@ export class QueryExecutor {
       return { stored: false, reason: "No proxy controller configured" };
     }
 
+    const value = context.variables.get(step.cacheKey);
     await this.proxyController.executeCacheStore(step);
-    return { stored: true, cacheKey: step.cacheKey };
+    return { stored: true, cacheKey: step.cacheKey, hadValue: value !== undefined };
   }
 
   /**
@@ -884,6 +932,7 @@ export class QueryExecutor {
       }),
     );
 
+    this.enforceResultSizeLimit(mapped);
     context.variables.set(step.outputVariable, mapped);
     return mapped;
   }
@@ -998,6 +1047,7 @@ export class QueryExecutor {
     };
 
     this.proxyController.addRequestInterceptor(interceptor);
+    context.variables.set("__lastInterceptor", { action: step.action, urlPattern: step.urlPattern });
     return { interceptorAdded: true, action: step.action };
   }
 
@@ -1028,6 +1078,7 @@ export class QueryExecutor {
     };
 
     this.proxyController.addRequestInterceptor(interceptor);
+    context.variables.set("__lastModifiedRequest", step.requestId);
     return { modified: true, requestId: step.requestId };
   }
 
@@ -1182,6 +1233,7 @@ export class QueryExecutor {
       }
     }
 
+    this.enforceResultSizeLimit(results);
     context.variables.set(step.outputVariable, results);
     return results;
   }
@@ -1223,6 +1275,17 @@ export class QueryExecutor {
 
     context.variables.set(step.variable, value);
     return value;
+  }
+
+  /**
+   * Enforce result set size limit on an array
+   */
+  private enforceResultSizeLimit(results: unknown[]): void {
+    if (results.length > this.maxResultSize) {
+      throw new Error(
+        `Result set size limit exceeded: ${results.length} rows, maximum is ${this.maxResultSize}`,
+      );
+    }
   }
 
   /**

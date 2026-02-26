@@ -14,6 +14,11 @@ import type {
 import type { HTTPRequest, HTTPResponse } from "../../core/network/transport/http/http.ts";
 
 /**
+ * Default middleware execution timeout (30 seconds)
+ */
+const DEFAULT_MIDDLEWARE_TIMEOUT = 30000;
+
+/**
  * Middleware chain executor
  */
 export class MiddlewareChain {
@@ -27,7 +32,10 @@ export class MiddlewareChain {
     enabled: boolean;
   }> = [];
 
-  constructor(config?: MiddlewareChainConfig) {
+  private middlewareTimeout: number;
+
+  constructor(config?: MiddlewareChainConfig, middlewareTimeout?: number) {
+    this.middlewareTimeout = middlewareTimeout ?? DEFAULT_MIDDLEWARE_TIMEOUT;
     if (config) {
       // Add request middleware
       for (const item of config.request) {
@@ -81,7 +89,10 @@ export class MiddlewareChain {
       }
 
       try {
-        const result = await middleware.processRequest(request, context);
+        const result = await this.withTimeout(
+          middleware.processRequest(request, context),
+          middleware.name,
+        );
 
         // Check if middleware wants to short-circuit
         if (result.type !== "continue") {
@@ -117,10 +128,9 @@ export class MiddlewareChain {
       }
 
       try {
-        currentResponse = await middleware.processResponse(
-          request,
-          currentResponse,
-          context,
+        currentResponse = await this.withTimeout(
+          middleware.processResponse(request, currentResponse, context),
+          middleware.name,
         );
       } catch (error) {
         // Log error but continue with current response
@@ -151,6 +161,46 @@ export class MiddlewareChain {
       const bPriority = (b.middleware as any).priority || 100;
       return aPriority - bPriority;
     });
+  }
+
+  /**
+   * Wrap a promise with a timeout
+   */
+  private withTimeout<T>(promise: Promise<T>, middlewareName: string): Promise<T> {
+    if (this.middlewareTimeout <= 0) {
+      return promise;
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Middleware "${middlewareName}" timed out after ${this.middlewareTimeout}ms`));
+      }, this.middlewareTimeout);
+
+      promise.then(
+        (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  /**
+   * Get middleware timeout
+   */
+  getMiddlewareTimeout(): number {
+    return this.middlewareTimeout;
+  }
+
+  /**
+   * Set middleware timeout
+   */
+  setMiddlewareTimeout(timeout: number): void {
+    this.middlewareTimeout = timeout;
   }
 
   /**

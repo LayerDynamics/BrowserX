@@ -47,6 +47,7 @@ const STATE_TRANSITIONS: StateTransition[] = [
  */
 export class LifecycleManager {
   private state: RuntimeState = RuntimeState.STOPPED;
+  private _transitioning = false;
   private components: Map<ComponentId, ComponentState> = new Map();
   private stateHistory: Array<{ state: RuntimeState; timestamp: number }> = [];
 
@@ -86,7 +87,20 @@ export class LifecycleManager {
    * Transition to a new state
    * @throws Error if transition is invalid
    */
+  /**
+   * Check if a transition is currently in progress
+   */
+  isTransitioning(): boolean {
+    return this._transitioning;
+  }
+
   transition(targetState: RuntimeState): void {
+    if (this._transitioning) {
+      throw new Error(
+        `Cannot transition to ${targetState}: a transition is already in progress (current state: ${this.state})`,
+      );
+    }
+
     if (!this.canTransitionTo(targetState)) {
       const valid = this.getValidTransitions().join(", ");
       throw new Error(
@@ -95,16 +109,24 @@ export class LifecycleManager {
       );
     }
 
-    const previousState = this.state;
-    this.state = targetState;
-    this.stateHistory.push({
-      state: targetState,
-      timestamp: Date.now(),
-    });
+    this._transitioning = true;
+    try {
+      const previousState = this.state;
+      if (previousState === targetState) {
+        throw new Error(`Already in state ${targetState}`);
+      }
+      this.state = targetState;
+      this.stateHistory.push({
+        state: targetState,
+        timestamp: Date.now(),
+      });
 
-    // Keep history bounded
-    if (this.stateHistory.length > 100) {
-      this.stateHistory.shift();
+      // Keep history bounded
+      if (this.stateHistory.length > 100) {
+        this.stateHistory.shift();
+      }
+    } finally {
+      this._transitioning = false;
     }
   }
 

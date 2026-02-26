@@ -194,6 +194,8 @@ export class HTMLTokenizer {
     if (char === "<") {
       this.state = HTMLTokenizerState.TAG_OPEN;
       this.position++;
+    } else if (char === "&") {
+      this.consumeCharacterReference();
     } else {
       this.emitCharacterToken(char);
       this.position++;
@@ -709,6 +711,78 @@ export class HTMLTokenizer {
       );
       this.currentAttributeName = "";
       this.currentAttributeValue = "";
+    }
+  }
+
+  /**
+   * Consume a character reference (&#NNN; or &#xHHH; or &name;)
+   * Handles numeric character references with overflow protection per HTML5 spec.
+   */
+  private consumeCharacterReference(): void {
+    // Skip the '&'
+    this.position++;
+
+    if (this.position >= this.input.length) {
+      this.emitCharacterToken("&");
+      return;
+    }
+
+    const next = this.input[this.position];
+
+    if (next === "#") {
+      // Numeric character reference
+      this.position++;
+
+      if (this.position >= this.input.length) {
+        this.emitCharacterToken("&");
+        this.emitCharacterToken("#");
+        return;
+      }
+
+      let isHex = false;
+      if (this.input[this.position] === "x" || this.input[this.position] === "X") {
+        isHex = true;
+        this.position++;
+      }
+
+      let numStr = "";
+      while (this.position < this.input.length) {
+        const c = this.input[this.position];
+        if (c === ";") {
+          this.position++;
+          break;
+        }
+        if (isHex && /[0-9a-fA-F]/.test(c)) {
+          numStr += c;
+          this.position++;
+        } else if (!isHex && /[0-9]/.test(c)) {
+          numStr += c;
+          this.position++;
+        } else {
+          break;
+        }
+      }
+
+      if (numStr.length === 0) {
+        // Not a valid numeric ref, emit the consumed characters literally
+        this.emitCharacterToken("&");
+        this.emitCharacterToken("#");
+        if (isHex) this.emitCharacterToken("x");
+        return;
+      }
+
+      const codePoint = parseInt(numStr, isHex ? 16 : 10);
+
+      // If codePoint exceeds Unicode max (0x10FFFF), use replacement character U+FFFD
+      if (codePoint > 0x10FFFF || codePoint === 0) {
+        this.emitCharacterToken("\uFFFD");
+      } else {
+        this.emitCharacterToken(String.fromCodePoint(codePoint));
+      }
+    } else {
+      // Named character reference — emit '&' literally and let the rest be parsed normally
+      // (Full named entity support would require a large lookup table)
+      this.emitCharacterToken("&");
     }
   }
 

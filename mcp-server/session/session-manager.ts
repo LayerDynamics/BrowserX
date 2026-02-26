@@ -77,7 +77,7 @@ export class SessionManager {
   private totalClosed = 0;
 
   constructor(config: SessionManagerConfig = {}) {
-    this.maxSessions = config.maxSessions ?? 10;
+    this.maxSessions = config.maxSessions ?? 100;
     this.sessionTimeout = config.sessionTimeout ?? 30 * 60 * 1000; // 30 minutes
     this.defaultViewport = config.defaultViewport ?? { width: 1280, height: 720 };
     this.browserPool = config.browserPool;
@@ -91,14 +91,22 @@ export class SessionManager {
    * Create a new browser session
    */
   async createSession(permissions: Permission[] = []): Promise<string> {
-    // Enforce session limit
+    // Enforce hard session limit
     if (this.sessions.size >= this.maxSessions) {
       // Try to cleanup idle sessions first
       await this.cleanupIdleSessions();
 
-      // If still at limit, close the oldest session
+      // If still at limit, evict the oldest session
       if (this.sessions.size >= this.maxSessions) {
         await this.closeOldestSession();
+      }
+
+      // If still at limit after eviction, throw
+      if (this.sessions.size >= this.maxSessions) {
+        throw new Error(
+          `Maximum session limit reached (${this.maxSessions}). ` +
+          `Close an existing session before creating a new one.`
+        );
       }
     }
 

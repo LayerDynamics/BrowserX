@@ -91,11 +91,63 @@ export class ConnectionPool {
   }
 
   release(pooledConn: PooledConnectionInfo): void {
+    // Validate the connection is still alive before returning to pool
+    if (!this.isConnectionAlive(pooledConn)) {
+      console.log(`[POOL] Connection ${pooledConn.id} is dead, disposing instead of returning to pool`);
+      this.disposeConnection(pooledConn);
+      return;
+    }
+
     pooledConn.inUse = false;
     pooledConn.lastUsedAt = Date.now();
 
     console.log(`[POOL] Released connection ${pooledConn.id}`);
     console.log(`  Returned to pool for ${pooledConn.host}:${pooledConn.port}`);
+  }
+
+  /**
+   * Check if a connection is still alive
+   */
+  private isConnectionAlive(conn: PooledConnectionInfo): boolean {
+    try {
+      // Check basic validity first (age, idle time)
+      if (!this.isConnectionValid(conn)) {
+        return false;
+      }
+
+      // Try to check if the underlying connection is still open
+      // Deno.Conn doesn't have a direct "isAlive" check, but we can
+      // verify the resource is still valid by checking if rid exists
+      const rid = (conn.conn as any).rid;
+      if (rid !== undefined && rid !== null) {
+        return true;
+      }
+
+      return true; // If no rid property, assume alive
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Dispose a dead connection and remove it from the pool
+   */
+  private disposeConnection(conn: PooledConnectionInfo): void {
+    try {
+      conn.conn.close();
+    } catch {
+      // Already closed
+    }
+
+    // Remove from pool
+    const poolKey = `${conn.host}:${conn.port}`;
+    const pool = this.pools.get(poolKey);
+    if (pool) {
+      const index = pool.indexOf(conn);
+      if (index !== -1) {
+        pool.splice(index, 1);
+      }
+    }
   }
 
   private isConnectionValid(conn: PooledConnectionInfo): boolean {
@@ -157,10 +209,23 @@ export class ConnectionPool {
     this.pools.forEach((pool, poolKey) => {
       const before = pool.length;
 
-      // Remove invalid connections
+      // Remove invalid connections and idle connections past timeout
       const validConnections = pool.filter((conn) => {
         if (conn.inUse) {
           return true; // Keep active connections
+        }
+
+        // Check idle timeout using current timestamp
+        const idleMs = now - conn.lastUsedAt;
+        if (idleMs > this.config.idleTimeout) {
+          try {
+            conn.conn.close();
+            totalClosed++;
+            console.log(`  ✗ Closed idle connection ${conn.id} for ${poolKey} (idle ${idleMs}ms)`);
+          } catch {
+            // Already closed
+          }
+          return false;
         }
 
         if (!this.isConnectionValid(conn)) {

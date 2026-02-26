@@ -220,12 +220,32 @@ export class ActivityTracker {
     }, timing);
   }
 
+  /** Maximum log file size before rotation (50MB) */
+  private static readonly MAX_LOG_SIZE = 50 * 1024 * 1024;
+
   /**
-   * Append entry to daily log file
+   * Append entry to daily log file with rotation
    */
   private async appendLog(entry: ActivityEntry): Promise<void> {
     const datePath = this.getDatePath();
     const logPath = `${this.baseDir}/logs/${datePath}.jsonl`;
+
+    // Check file size and rotate if needed
+    try {
+      const stat = await Deno.stat(logPath);
+      if (stat.size >= ActivityTracker.MAX_LOG_SIZE) {
+        const backupPath = `${logPath}.1`;
+        try {
+          await Deno.remove(backupPath);
+        } catch {
+          // Backup may not exist
+        }
+        await Deno.rename(logPath, backupPath);
+        console.log(`[ActivityTracker] Rotated log file: ${logPath} -> ${backupPath}`);
+      }
+    } catch {
+      // File doesn't exist yet, no rotation needed
+    }
 
     const line = JSON.stringify(entry) + "\n";
     await Deno.writeTextFile(logPath, line, { append: true, create: true });

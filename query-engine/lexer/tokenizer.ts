@@ -5,6 +5,9 @@
 
 import { createToken, getKeywordType, isKeyword, Token, TokenType } from "./token.ts";
 
+/** Maximum number of tokens the lexer will produce before throwing */
+export const MAX_TOKENS = 10000;
+
 /**
  * Lexer class for tokenizing query strings
  */
@@ -33,6 +36,10 @@ export class Lexer {
       // Skip whitespace and comments
       if (token.type !== TokenType.WHITESPACE && token.type !== TokenType.COMMENT) {
         this.tokens.push(token);
+
+        if (this.tokens.length > MAX_TOKENS) {
+          throw new Error(`Token limit exceeded: query produces more than ${MAX_TOKENS} tokens`);
+        }
       }
     }
 
@@ -222,8 +229,8 @@ export class Lexer {
     }
 
     // Check for byte suffix (KB, MB, GB)
-    if (this.peek() === "K" || this.peek() === "M" || this.peek() === "G") {
-      const prefix = this.peek();
+    const byteSizePrefix = this.peek();
+    if (byteSizePrefix === "K" || byteSizePrefix === "M" || byteSizePrefix === "G") {
       if (this.peekNext() === "B") {
         value += this.advance(); // K/M/G
         value += this.advance(); // B

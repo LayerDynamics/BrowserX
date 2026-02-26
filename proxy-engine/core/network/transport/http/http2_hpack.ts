@@ -72,6 +72,11 @@ const STATIC_TABLE: Array<[string, string]> = [
 ];
 
 /**
+ * Maximum decompressed header size to prevent HPACK bomb attacks (64KB)
+ */
+export const MAX_DECOMPRESSED_HEADER_SIZE = 65536;
+
+/**
  * HPACK encoder/decoder
  */
 export class HPACKCodec {
@@ -131,6 +136,7 @@ export class HPACKCodec {
   decode(buffer: Uint8Array): Map<string, string> {
     const headers = new Map<string, string>();
     let offset = 0;
+    let totalDecompressedSize = 0;
 
     while (offset < buffer.length) {
       const byte = buffer[offset];
@@ -141,6 +147,10 @@ export class HPACKCodec {
         offset += bytesRead;
 
         const [name, value] = this.getHeaderAtIndex(index - 1);
+        totalDecompressedSize += name.length + value.length;
+        if (totalDecompressedSize > MAX_DECOMPRESSED_HEADER_SIZE) {
+          throw new Error(`HPACK decompressed header size exceeds limit of ${MAX_DECOMPRESSED_HEADER_SIZE} bytes`);
+        }
         headers.set(name, value);
       } else if (byte & 0x40) {
         // Literal with incremental indexing (01xxxxxx)
@@ -169,6 +179,10 @@ export class HPACKCodec {
         const { value, bytesRead: valueBytesRead } = this.decodeString(buffer, offset);
         offset += valueBytesRead;
 
+        totalDecompressedSize += name.length + value.length;
+        if (totalDecompressedSize > MAX_DECOMPRESSED_HEADER_SIZE) {
+          throw new Error(`HPACK decompressed header size exceeds limit of ${MAX_DECOMPRESSED_HEADER_SIZE} bytes`);
+        }
         headers.set(name, value);
         this.addToDynamicTable(name, value);
       } else if (byte & 0x20) {
@@ -201,6 +215,10 @@ export class HPACKCodec {
         const { value, bytesRead: valueBytesRead } = this.decodeString(buffer, offset);
         offset += valueBytesRead;
 
+        totalDecompressedSize += name.length + value.length;
+        if (totalDecompressedSize > MAX_DECOMPRESSED_HEADER_SIZE) {
+          throw new Error(`HPACK decompressed header size exceeds limit of ${MAX_DECOMPRESSED_HEADER_SIZE} bytes`);
+        }
         headers.set(name, value);
       }
     }
@@ -367,8 +385,10 @@ export class HPACKCodec {
     const stringBytes = buffer.slice(offset, offset + length);
     const decoder = new TextDecoder();
 
-    // For simplicity, ignore Huffman encoding
-    const value = decoder.decode(stringBytes);
+    // Huffman-encoded strings require Huffman decoding table; raw strings decode directly
+    const value = huffman
+      ? decoder.decode(stringBytes) // TODO: implement proper Huffman decoding
+      : decoder.decode(stringBytes);
     const bytesRead = lengthBytes + length;
 
     return { value, bytesRead };

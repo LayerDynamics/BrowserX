@@ -4,7 +4,7 @@
  */
 
 // Main executor
-export { type ExecutionOptions, type ExecutionResult, QueryExecutor } from "./executor.ts";
+export { type ExecutionOptions, type ExecutionResult, MAX_ITERATIONS, MAX_RESULT_SIZE, QueryExecutor } from "./executor.ts";
 
 // Internal components - ExecutionContextManager is in state module
 export { ExecutionContextManager } from "../state/execution-context.ts";

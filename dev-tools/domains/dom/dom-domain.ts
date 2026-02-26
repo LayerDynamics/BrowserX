@@ -7,6 +7,7 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import { validateParams, validateQuerySelectorParams } from "../../protocol/validate-params.ts";
 import { domToGraph } from "./dom-graph.ts";
 import { type DOMNode, type DOMElement, DOMNodeType } from "../../../browser/src/types/dom.ts";
 import type { NodeID } from "../../../browser/src/types/identifiers.ts";
@@ -48,9 +49,14 @@ export class DOMDomain extends BaseDomain {
     /** Dirty flag — when true, nodeMap must be rebuilt before use */
     private nodeMapDirty: boolean = true;
 
-    /** Search results cache */
+    /** Search results cache (searchId -> nodeIds) */
     private searchResults: Map<string, NodeID[]> = new Map();
     private searchIdCounter: number = 0;
+
+    /** Query-keyed search cache (query -> nodeIds). Invalidated on DOM mutations via nodeMapDirty. */
+    private querySearchCache: Map<string, NodeID[]> = new Map();
+    /** Tracks whether the query search cache is valid (reset when nodeMapDirty is set) */
+    private querySearchCacheDirty: boolean = true;
 
     protected setup(): void {
         // Register methods
@@ -59,7 +65,7 @@ export class DOMDomain extends BaseDomain {
         });
 
         this.registerMethod("querySelector", "Execute querySelector on a node", async (params) => {
-            return await this.querySelector(params as unknown as QuerySelectorParams);
+            return await this.querySelector(validateParams(params, validateQuerySelectorParams) as QuerySelectorParams);
         });
 
         this.registerMethod("querySelectorAll", "Execute querySelectorAll on a node", async (params) => {
@@ -372,6 +378,7 @@ export class DOMDomain extends BaseDomain {
         const element = node as unknown as DOMElement;
         element.setAttribute(params.name, params.value);
         this.nodeMapDirty = true;
+        this.querySearchCacheDirty = true;
         if (this.enabled) {
             this.emitEvent("attributeModified", {
                 nodeId: params.nodeId,
@@ -390,6 +397,7 @@ export class DOMDomain extends BaseDomain {
         const element = node as unknown as DOMElement;
         element.removeAttribute(params.name);
         this.nodeMapDirty = true;
+        this.querySearchCacheDirty = true;
         if (this.enabled) {
             this.emitEvent("attributeRemoved", {
                 nodeId: params.nodeId,
@@ -408,6 +416,7 @@ export class DOMDomain extends BaseDomain {
         node.parentNode.removeChild(node);
         this.nodeMap.delete(params.nodeId);
         this.nodeMapDirty = true;
+        this.querySearchCacheDirty = true;
         this.emitEvent("childNodeRemoved", {
             parentNodeId: parentId,
             nodeId: params.nodeId,
@@ -496,7 +505,19 @@ export class DOMDomain extends BaseDomain {
             return { searchId: "0", resultCount: 0 };
         }
 
-        const results = this.searchDOM(dom, params.query);
+        // Invalidate query search cache on DOM mutations
+        if (this.querySearchCacheDirty) {
+            this.querySearchCache.clear();
+            this.querySearchCacheDirty = false;
+        }
+
+        // Use cached results if available for this query
+        let results = this.querySearchCache.get(params.query);
+        if (!results) {
+            results = this.searchDOM(dom, params.query);
+            this.querySearchCache.set(params.query, results);
+        }
+
         const searchId = String(++this.searchIdCounter);
 
         // Cap search results cache to prevent unbounded growth
@@ -535,6 +556,7 @@ export class DOMDomain extends BaseDomain {
     override dispose(): void {
         this.nodeMap.clear();
         this.searchResults.clear();
+        this.querySearchCache.clear();
         super.dispose();
     }
 }

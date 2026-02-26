@@ -386,6 +386,45 @@ export function sanitizeForLogging(value: string): string {
 }
 
 /**
+ * Sanitize a CSS selector, rejecting dangerous content.
+ * Rejects null bytes, script injection attempts, and unbalanced brackets.
+ */
+export function sanitizeSelector(selector: string): string {
+  if (!selector || typeof selector !== "string") {
+    throw new Error("Selector must be a non-empty string");
+  }
+
+  // Null bytes
+  if (selector.includes("\0")) {
+    throw new Error("Selector contains null bytes");
+  }
+
+  // Script injection patterns
+  const lowerSelector = selector.toLowerCase();
+  if (lowerSelector.includes("<script")) {
+    throw new Error("Selector contains forbidden pattern: <script");
+  }
+  if (lowerSelector.includes("javascript:")) {
+    throw new Error("Selector contains forbidden pattern: javascript:");
+  }
+
+  // Unbalanced brackets
+  let depth = 0;
+  for (const ch of selector) {
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    if (depth < 0) {
+      throw new Error("Selector contains unbalanced brackets");
+    }
+  }
+  if (depth !== 0) {
+    throw new Error("Selector contains unbalanced brackets");
+  }
+
+  return selector;
+}
+
+/**
  * Validate CSS selector syntax (basic validation)
  */
 export function validateSelector(selector: string): void {
@@ -396,6 +435,9 @@ export function validateSelector(selector: string): void {
   if (selector.length > 1000) {
     throw new Error("Selector too long (max 1000 characters)");
   }
+
+  // Sanitize for dangerous content
+  sanitizeSelector(selector);
 
   // Check for obviously invalid selectors
   if (selector.startsWith(">") || selector.startsWith("+") || selector.startsWith("~")) {

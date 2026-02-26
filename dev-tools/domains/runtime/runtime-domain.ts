@@ -7,6 +7,7 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import { validateParams, validateEvaluateParams } from "../../protocol/validate-params.ts";
 import type { ScriptExecutor} from "../../../browser/src/engine/javascript/ScriptExecutor.ts";
 import type {
     RemoteObject,
@@ -39,7 +40,7 @@ export class RuntimeDomain extends BaseDomain {
 
     protected setup(): void {
         this.registerMethod("evaluate", "Evaluate JavaScript expression", async (params) => {
-            return await this.evaluate(params as unknown as EvaluateParams);
+            return await this.evaluate(validateParams(params, validateEvaluateParams) as EvaluateParams);
         });
 
         this.registerMethod("getProperties", "Get properties of a remote object", async (params) => {

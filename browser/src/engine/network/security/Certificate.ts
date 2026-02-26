@@ -136,7 +136,16 @@ function buildCertificateChain(
     }
 
     // Find issuer certificate in intermediates or trusted CAs
-    const issuer = allCerts.find((ca) => ca.subject === current.issuer);
+    // Verify both subject name match AND public key linkage for chain integrity
+    const issuer = allCerts.find((ca) => {
+      if (ca.subject !== current.issuer) return false;
+      // If the current cert has an issuerPublicKey field, verify it matches the candidate's publicKey
+      const currentWithIssuerKey = current as Certificate & { issuerPublicKey?: ByteBuffer };
+      if (currentWithIssuerKey.issuerPublicKey) {
+        return arraysEqual(currentWithIssuerKey.issuerPublicKey, ca.publicKey);
+      }
+      return true;
+    });
     if (!issuer) {
       // Issuer not found in provided certificates
       // This could mean we're missing an intermediate or the root CA isn't trusted

@@ -8,6 +8,7 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import { validateParams, validateSetCookieParams } from "../../protocol/validate-params.ts";
 import type { Cookie } from "../../../browser/src/types/storage.ts";
 import type {
     StorageType,
@@ -39,7 +40,7 @@ export class StorageDomain extends BaseDomain {
         });
 
         this.registerMethod("setCookie", "Set a cookie with the given parameters", async (params) => {
-            return await this.setCookie(params as unknown as SetCookieParams);
+            return await this.setCookie(validateParams(params, validateSetCookieParams) as SetCookieParams);
         });
 
         this.registerMethod("deleteCookie", "Delete a cookie by name and optional scope", async (params) => {

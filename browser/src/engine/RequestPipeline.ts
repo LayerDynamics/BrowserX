@@ -33,6 +33,8 @@ export interface RequestOptions {
   maxRedirects?: number;
   cache?: boolean | "force-cache" | "no-cache" | "no-store";
   signal?: AbortSignal;
+  /** @internal Used to track visited URLs for redirect cycle detection */
+  _visitedUrls?: Set<string>;
 }
 
 /**
@@ -502,6 +504,13 @@ export class RequestPipeline {
             // This handles both absolute URLs (https://...) and relative URLs (/path, ./path, ../path)
             const redirectUrl = new URL(locationHeader, request.url).toString();
 
+            // Redirect cycle detection
+            const visitedUrls = options._visitedUrls ?? new Set<string>();
+            visitedUrls.add(request.url);
+            if (visitedUrls.has(redirectUrl)) {
+              throw new RequestPipelineError("Redirect cycle detected", "redirect");
+            }
+
             // Create redirect options, removing host header so it will be set correctly for new URL
             // The host header must match the target hostname, not the original hostname
             const redirectHeaders = options.headers ? { ...options.headers } : undefined;
@@ -518,6 +527,7 @@ export class RequestPipeline {
               ...options,
               headers: redirectHeaders,
               maxRedirects: maxRedirects - 1,
+              _visitedUrls: visitedUrls,
             };
             return await this.request(redirectUrl, redirectOptions);
           }
