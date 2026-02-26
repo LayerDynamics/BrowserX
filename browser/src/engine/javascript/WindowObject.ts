@@ -887,10 +887,25 @@ export class WindowObject {
             : "";
           const listeners = eventListeners.get(eventName) ?? [];
           for (const listener of listeners) {
-            if (
-              listener.type === "function" && listener.value.isNative && listener.value.nativeImpl
-            ) {
-              listener.value.nativeImpl(event);
+            if (listener.type === "function") {
+              if (listener.value.isNative && listener.value.nativeImpl) {
+                listener.value.nativeImpl(event);
+              } else if (listener.value.code && typeof listener.value.code === "object") {
+                // Non-native JS function: compile and execute via interpreter
+                try {
+                  const funcNode = listener.value.code as { body?: { body: unknown[] } };
+                  if (funcNode.body) {
+                    const generator = new BytecodeGenerator();
+                    const compiled = generator.generate({
+                      type: "Program",
+                      body: funcNode.body.body,
+                    } as unknown as ProgramNode);
+                    this.context.getInterpreter().executeFunction(compiled, [event ?? createUndefined()]);
+                  }
+                } catch {
+                  // Best-effort execution
+                }
+              }
             }
           }
         }
