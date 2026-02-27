@@ -41,11 +41,12 @@ import {
 import { QueryID } from "../types/primitives.ts";
 import { EvaluationContext, ExpressionEvaluator } from "./expression-evaluator.ts";
 import { BrowserController } from "../controllers/browser/browser-controller.ts";
-import { clearBrowserContext, withBrowserContext } from "../controllers/browser/browser-context.ts";
+import { clearBrowserContext, setCurrentBrowserController, withBrowserContext } from "../controllers/browser/browser-context.ts";
 import { ProxyController } from "../controllers/proxy/proxy-controller.ts";
 import { ExecutionContextManager, StateManager } from "../state/mod.ts";
 import { type DependencyGraph, toBoolean, topologicalSort } from "../utils/mod.ts";
 import { isSafeRegex } from "../utils/string-utils.ts";
+import { BrowserEngine } from "@browserx/browser";
 
 /** Dangerous header keys that could cause prototype pollution */
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);

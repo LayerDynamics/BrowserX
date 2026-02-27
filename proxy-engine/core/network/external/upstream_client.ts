@@ -144,7 +144,7 @@ export class UpstreamClient {
       // Upgrade to TLS if needed — applies to both owned and pooled connections
       // so that HTTPS upstreams always get encrypted transport.
       let stream: Deno.Conn | Deno.TlsConn = conn;
-      if (secure) {
+      if (secure && ownsConn) {
         stream = await Deno.startTls(conn, {
           hostname: host,
         });
