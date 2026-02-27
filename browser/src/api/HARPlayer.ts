@@ -235,7 +235,7 @@ export class HARPlayer {
    * Start playback mode
    * @param options - Playback options
    */
-  startPlayback(options: PlaybackOptions = {}): void {
+  async startPlayback(options: PlaybackOptions = {}): Promise<void> {
     if (!this.har) {
       throw new Error("No HAR data loaded. Call loadHAR() first.");
     }
@@ -257,11 +257,11 @@ export class HARPlayer {
 
     // Extract and apply cookies/auth if requested
     if (this.options.maintainCookies) {
-      this.applyCookiesFromHAR();
+      await this.applyCookiesFromHAR();
     }
 
     if (this.options.maintainAuth) {
-      this.applyAuthFromHAR();
+      await this.applyAuthFromHAR();
     }
   }
 
@@ -703,11 +703,25 @@ export class HARPlayer {
   /**
    * Apply cookies from HAR to current page context
    */
-  private applyCookiesFromHAR(): void {
+  private async applyCookiesFromHAR(): Promise<void> {
     const { cookies } = this.extractCookiesFromHAR();
 
-    // This would integrate with the page's cookie manager
-    // For now, we store them and they can be retrieved via getCookies()
+    // Set cookies on the page via document.cookie
+    for (const cookie of cookies) {
+      let cookieStr = `${cookie.name}=${cookie.value}`;
+      if (cookie.path) cookieStr += `; path=${cookie.path}`;
+      if (cookie.domain) cookieStr += `; domain=${cookie.domain}`;
+      if (cookie.secure) cookieStr += "; secure";
+      if (cookie.httpOnly) cookieStr += "; HttpOnly";
+      if (cookie.expires) cookieStr += `; expires=${cookie.expires}`;
+
+      try {
+        await this.page.evaluate(`document.cookie = ${JSON.stringify(cookieStr)}`);
+      } catch {
+        // Cookie setting may fail for httpOnly or cross-domain cookies
+      }
+    }
+
     this.extractedCookies = cookies;
   }
 
@@ -723,10 +737,24 @@ export class HARPlayer {
   /**
    * Apply authentication from HAR
    */
-  private applyAuthFromHAR(): void {
+  private async applyAuthFromHAR(): Promise<void> {
     const auth = this.extractAuthFromHAR();
 
-    // Store extracted auth for retrieval
+    // Set auth-related cookies on the page
+    for (const cookie of auth.cookies) {
+      let cookieStr = `${cookie.name}=${cookie.value}`;
+      if (cookie.path) cookieStr += `; path=${cookie.path}`;
+      if (cookie.domain) cookieStr += `; domain=${cookie.domain}`;
+      if (cookie.secure) cookieStr += "; secure";
+
+      try {
+        await this.page.evaluate(`document.cookie = ${JSON.stringify(cookieStr)}`);
+      } catch {
+        // Cookie setting may fail
+      }
+    }
+
+    // Store extracted auth for retrieval and use in request headers
     this.extractedAuth = auth;
   }
 

@@ -652,3 +652,176 @@ Deno.test({
     assert(charTokens.length > 0);
   },
 });
+
+// Task 5: TAG_OPEN DOCTYPE detection tests
+
+Deno.test({
+  name: "HTMLTokenizer - DOCTYPE detected directly from TAG_OPEN state",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<!DOCTYPE html>");
+    assertEquals(tokens[0].type, HTMLTokenType.DOCTYPE);
+    assertEquals(tokens[0].data, "html");
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - DOCTYPE case insensitive (mixed case)",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<!DoCtYpE html>");
+    assertEquals(tokens[0].type, HTMLTokenType.DOCTYPE);
+    assertEquals(tokens[0].data, "html");
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - DOCTYPE followed by normal HTML",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<!DOCTYPE html><html><body></body></html>");
+    assertEquals(tokens[0].type, HTMLTokenType.DOCTYPE);
+    const startTags = tokens.filter((t) => t.type === HTMLTokenType.START_TAG);
+    assertEquals(startTags.length, 2); // html, body
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - comment still works after DOCTYPE fix",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<!-- hello -->");
+    assertEquals(tokens[0].type, HTMLTokenType.COMMENT);
+    assertEquals(tokens[0].data, " hello ");
+  },
+});
+
+// Task 6: RCDATA/RAWTEXT state tests
+
+Deno.test({
+  name: "HTMLTokenizer - textarea content treated as RCDATA",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<textarea><b>not bold</b></textarea>");
+    const startTag = tokens.find((t) => t.type === HTMLTokenType.START_TAG && t.tagName === "textarea");
+    const endTag = tokens.find((t) => t.type === HTMLTokenType.END_TAG && t.tagName === "textarea");
+    assertExists(startTag);
+    assertExists(endTag);
+    // <b>not bold</b> should be character tokens, not parsed as tags
+    const innerStartTags = tokens.filter((t) => t.type === HTMLTokenType.START_TAG && t.tagName === "b");
+    assertEquals(innerStartTags.length, 0);
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - title content treated as RCDATA",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<title>My <b>Page</b></title>");
+    const startTag = tokens.find((t) => t.type === HTMLTokenType.START_TAG && t.tagName === "title");
+    const endTag = tokens.find((t) => t.type === HTMLTokenType.END_TAG && t.tagName === "title");
+    assertExists(startTag);
+    assertExists(endTag);
+    // <b> and </b> should NOT be parsed as tags
+    const bTags = tokens.filter((t) => (t.type === HTMLTokenType.START_TAG || t.type === HTMLTokenType.END_TAG) && t.tagName === "b");
+    assertEquals(bTags.length, 0);
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - style content treated as RAWTEXT",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<style>body { color: red; }</style>");
+    const startTag = tokens.find((t) => t.type === HTMLTokenType.START_TAG && t.tagName === "style");
+    const endTag = tokens.find((t) => t.type === HTMLTokenType.END_TAG && t.tagName === "style");
+    assertExists(startTag);
+    assertExists(endTag);
+    // CSS content should be character tokens
+    const charTokens = tokens.filter((t) => t.type === HTMLTokenType.CHARACTER);
+    const text = charTokens.map((t) => t.data).join("");
+    assertEquals(text, "body { color: red; }");
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - style with HTML-like content stays as RAWTEXT",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<style>div > p { color: blue; }</style>");
+    // The > and < chars should be character tokens, not tag delimiters
+    const startTags = tokens.filter((t) => t.type === HTMLTokenType.START_TAG);
+    assertEquals(startTags.length, 1); // only <style>
+    const endTags = tokens.filter((t) => t.type === HTMLTokenType.END_TAG);
+    assertEquals(endTags.length, 1); // only </style>
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - textarea preserves content after end tag",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<textarea>value</textarea><div>after</div>");
+    const divTag = tokens.find((t) => t.type === HTMLTokenType.START_TAG && t.tagName === "div");
+    assertExists(divTag);
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - RCDATA does not match wrong end tag",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<textarea></div>content</textarea>");
+    // </div> should NOT close the textarea — it should be character tokens
+    const divEndTags = tokens.filter((t) => t.type === HTMLTokenType.END_TAG && t.tagName === "div");
+    assertEquals(divEndTags.length, 0);
+    const textareaEndTag = tokens.find((t) => t.type === HTMLTokenType.END_TAG && t.tagName === "textarea");
+    assertExists(textareaEndTag);
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - RCDATA mismatch emits characters without duplication",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<textarea>hello </div> world</textarea>");
+    // Collect all character token data between <textarea> start and </textarea> end
+    const startIdx = tokens.findIndex((t) => t.type === HTMLTokenType.START_TAG && t.tagName === "textarea");
+    const endIdx = tokens.findIndex((t) => t.type === HTMLTokenType.END_TAG && t.tagName === "textarea");
+    assert(startIdx >= 0, "textarea start tag must exist");
+    assert(endIdx > startIdx, "textarea end tag must follow start tag");
+    const charTokens = tokens.slice(startIdx + 1, endIdx).filter((t) => t.type === HTMLTokenType.CHARACTER);
+    const content = charTokens.map((t) => t.data).join("");
+    assertEquals(content, "hello </div> world");
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - RAWTEXT mismatch emits characters without duplication",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<style>body </div> { color: red }</style>");
+    const startIdx = tokens.findIndex((t) => t.type === HTMLTokenType.START_TAG && t.tagName === "style");
+    const endIdx = tokens.findIndex((t) => t.type === HTMLTokenType.END_TAG && t.tagName === "style");
+    assert(startIdx >= 0, "style start tag must exist");
+    assert(endIdx > startIdx, "style end tag must follow start tag");
+    const charTokens = tokens.slice(startIdx + 1, endIdx).filter((t) => t.type === HTMLTokenType.CHARACTER);
+    const content = charTokens.map((t) => t.data).join("");
+    assertEquals(content, "body </div> { color: red }");
+  },
+});
+
+Deno.test({
+  name: "HTMLTokenizer - SCRIPT_DATA mismatch emits characters without duplication",
+  fn() {
+    const tokenizer = new HTMLTokenizer();
+    const tokens = tokenizer.tokenize("<script>var x = '</div>'; alert(x);</script>");
+    const startIdx = tokens.findIndex((t) => t.type === HTMLTokenType.START_TAG && t.tagName === "script");
+    const endIdx = tokens.findIndex((t) => t.type === HTMLTokenType.END_TAG && t.tagName === "script");
+    assert(startIdx >= 0, "script start tag must exist");
+    assert(endIdx > startIdx, "script end tag must follow start tag");
+    const charTokens = tokens.slice(startIdx + 1, endIdx).filter((t) => t.type === HTMLTokenType.CHARACTER);
+    const content = charTokens.map((t) => t.data).join("");
+    assertEquals(content, "var x = '</div>'; alert(x);");
+  },
+});

@@ -27,6 +27,8 @@ import type {
     HighlightedRect,
     RGBA,
 } from "./overlay-types.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateHighlightNodeParams, validateHighlightRectParams, validateHighlightQuadParams, validateSetInspectModeParams, validateGetHighlightObjectForTestParams, validateHighlightFrameParams, validateSetShowGridOverlaysParams, validateSetShowFlexOverlaysParams } from "./overlay-validators.ts";
 
 /**
  * Default highlight colors matching Chrome DevTools conventions
@@ -73,15 +75,15 @@ export class OverlayDomain extends BaseDomain {
     protected setup(): void {
         // Register methods
         this.registerMethod("highlightNode", "Highlight a DOM node with box model overlay", async (params) => {
-            return await this.highlightNode(params as unknown as HighlightNodeParams);
+            return await this.highlightNode(validateParams(params, validateHighlightNodeParams) as HighlightNodeParams);
         });
 
         this.registerMethod("highlightRect", "Highlight an arbitrary rectangle", async (params) => {
-            return await this.highlightRect(params as unknown as HighlightRectParams);
+            return await this.highlightRect(validateParams(params, validateHighlightRectParams) as HighlightRectParams);
         });
 
         this.registerMethod("highlightQuad", "Highlight a quadrilateral region", async (params) => {
-            return await this.highlightQuad(params as unknown as HighlightQuadParams);
+            return await this.highlightQuad(validateParams(params, validateHighlightQuadParams) as HighlightQuadParams);
         });
 
         this.registerMethod("hideHighlight", "Clear all active highlights", async () => {
@@ -89,23 +91,23 @@ export class OverlayDomain extends BaseDomain {
         });
 
         this.registerMethod("setInspectMode", "Set the element inspect mode", async (params) => {
-            return await this.setInspectMode(params as unknown as SetInspectModeParams);
+            return await this.setInspectMode(validateParams(params, validateSetInspectModeParams) as SetInspectModeParams);
         });
 
         this.registerMethod("getHighlightObjectForTest", "Get highlight data for a node (testing)", async (params) => {
-            return await this.getHighlightObjectForTest(params as unknown as GetHighlightObjectForTestParams);
+            return await this.getHighlightObjectForTest(validateParams(params, validateGetHighlightObjectForTestParams) as GetHighlightObjectForTestParams);
         });
 
         this.registerMethod("highlightFrame", "Highlight an entire frame", async (params) => {
-            return await this.highlightFrame(params as unknown as HighlightFrameParams);
+            return await this.highlightFrame(validateParams(params, validateHighlightFrameParams) as HighlightFrameParams);
         });
 
         this.registerMethod("setShowGridOverlays", "Toggle CSS grid overlay visualization", async (params) => {
-            return await this.setShowGridOverlays(params as Record<string, unknown>);
+            return await this.setShowGridOverlays(validateParams(params, validateSetShowGridOverlaysParams) as Record<string, unknown>);
         });
 
         this.registerMethod("setShowFlexOverlays", "Toggle CSS flexbox overlay visualization", async (params) => {
-            return await this.setShowFlexOverlays(params as Record<string, unknown>);
+            return await this.setShowFlexOverlays(validateParams(params, validateSetShowFlexOverlaysParams) as Record<string, unknown>);
         });
 
         // Register events

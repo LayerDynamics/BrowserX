@@ -347,6 +347,7 @@ export interface MemberExpression extends ASTNode {
   object: Expression;
   property: string;
   computed: boolean; // true for obj[field], false for obj.field
+  computedProperty?: Expression; // dynamic expression for computed access (e.g., obj[variable])
 }
 
 /**

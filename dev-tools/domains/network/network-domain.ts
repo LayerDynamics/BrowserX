@@ -20,12 +20,17 @@ import type {
     NetworkResponseDescription,
     ResourceType,
 } from "./network-types.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateGetResponseBodyParams, validateGetCookiesParams, validateSetCookieParams } from "./network-validators.ts";
 
 /**
  * Network Domain - HTTP request/response monitoring
  */
 export class NetworkDomain extends BaseDomain {
     readonly name: DomainName = "Network";
+
+    /** Maximum number of tracked requests before eviction */
+    private static readonly MAX_TRACKED_REQUESTS = 1000;
 
     /** Tracked requests by ID */
     private trackedRequests: Map<RequestID, TrackedRequest> = new Map();
@@ -34,15 +39,15 @@ export class NetworkDomain extends BaseDomain {
 
     protected setup(): void {
         this.registerMethod("getResponseBody", "Get response body for a request", async (params) => {
-            return await this.getResponseBody(params as unknown as GetResponseBodyParams);
+            return await this.getResponseBody(validateParams(params, validateGetResponseBodyParams) as GetResponseBodyParams);
         });
 
         this.registerMethod("getCookies", "Get cookies for URLs", async (params) => {
-            return await this.getCookies(params as unknown as GetCookiesParams);
+            return await this.getCookies(validateParams(params, validateGetCookiesParams) as GetCookiesParams);
         });
 
         this.registerMethod("setCookie", "Set a cookie", async (params) => {
-            return await this.setCookie(params as unknown as SetCookieParams);
+            return await this.setCookie(validateParams(params, validateSetCookieParams) as SetCookieParams);
         });
 
         this.registerMethod("clearBrowserCache", "Clear browser cache", async () => {
@@ -108,7 +113,47 @@ export class NetworkDomain extends BaseDomain {
             });
         }
 
+        this.evictIfNeeded();
+
         return requestId;
+    }
+
+    /**
+     * Evict oldest completed requests when map exceeds capacity.
+     * Completed requests (those with endTime set) are evicted first, oldest first.
+     * If still over limit, oldest in-flight requests are evicted.
+     */
+    private evictIfNeeded(): void {
+        if (this.trackedRequests.size <= NetworkDomain.MAX_TRACKED_REQUESTS) {
+            return;
+        }
+
+        const toEvict = this.trackedRequests.size - NetworkDomain.MAX_TRACKED_REQUESTS;
+
+        // Collect completed requests sorted by endTime (oldest first)
+        const completed: RequestID[] = [];
+        for (const [id, tracked] of this.trackedRequests) {
+            if (tracked.endTime !== undefined) {
+                completed.push(id);
+            }
+        }
+        // Map iteration order is insertion order, so completed is already oldest-first
+
+        let evicted = 0;
+        for (const id of completed) {
+            if (evicted >= toEvict) break;
+            this.trackedRequests.delete(id);
+            evicted++;
+        }
+
+        // If still over limit, evict oldest in-flight requests
+        if (evicted < toEvict) {
+            for (const id of [...this.trackedRequests.keys()]) {
+                if (evicted >= toEvict) break;
+                this.trackedRequests.delete(id);
+                evicted++;
+            }
+        }
     }
 
     /**

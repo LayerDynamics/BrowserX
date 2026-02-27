@@ -147,6 +147,21 @@ export class DNSCache {
   }
 
   /**
+   * Dispose the DNS cache, stopping cleanup timer and clearing entries
+   */
+  dispose(): void {
+    this.stopAutoCleanup();
+    this.clear();
+  }
+
+  /**
+   * Symbol.dispose support for using declarations
+   */
+  [Symbol.dispose as symbol](): void {
+    this.dispose();
+  }
+
+  /**
    * Get number of entries in cache
    */
   getSize(): number {

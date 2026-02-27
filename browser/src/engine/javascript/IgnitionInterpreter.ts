@@ -100,6 +100,7 @@ export class IgnitionInterpreter {
   private frameStack: FrameInfo[] = [];
   private isRunning: boolean = false;
   private stats: InterpreterStats;
+  private maxInstructions: number = 10_000_000;
 
   /** Inline cache for GET_PROPERTY keyed by bytecode offset */
   private propertyCache = new Map<
@@ -132,6 +133,21 @@ export class IgnitionInterpreter {
   }
 
   /**
+   * Set the maximum number of instructions per execution.
+   * Prevents infinite loops in user scripts from blocking the event loop.
+   */
+  setMaxInstructions(max: number): void {
+    this.maxInstructions = max;
+  }
+
+  /**
+   * Get the current instruction budget.
+   */
+  getMaxInstructions(): number {
+    return this.maxInstructions;
+  }
+
+  /**
    * Execute bytecode
    */
   execute(bytecode: Uint8Array, constantPool: unknown[] = []): JSValue {
@@ -140,11 +156,18 @@ export class IgnitionInterpreter {
     this.isRunning = true;
 
     const startTime = performance.now();
+    let instructionsThisExecution = 0;
 
     try {
       while (this.isRunning && this.programCounter < bytecode.length) {
+        if (instructionsThisExecution >= this.maxInstructions) {
+          throw new Error(
+            `Script exceeded instruction budget of ${this.maxInstructions} instructions (possible infinite loop)`,
+          );
+        }
         this.executeInstruction(bytecode);
         this.stats.instructionsExecuted++;
+        instructionsThisExecution++;
       }
 
       const endTime = performance.now();
@@ -643,6 +666,7 @@ export class IgnitionInterpreter {
    */
   private executeCALL(bytecode: Uint8Array): void {
     const argCount = this.readOperand(bytecode);
+    const firstArgReg = this.readOperand(bytecode);
     const func = this.accumulator;
 
     if (func.type !== JSValueType.FUNCTION) {
@@ -652,20 +676,12 @@ export class IgnitionInterpreter {
 
     const fn = func.value as JSFunction;
 
-    // Collect arguments from registers
-    // Convention: compiler stores func in rN, args in rN+1..rN+argCount
-    // Find the highest non-undefined register to locate arg base
-    let maxUsed = -1;
-    for (let i = this.registers.length - 1; i >= 0; i--) {
-      if (this.registers[i] && this.registers[i].type !== JSValueType.UNDEFINED) {
-        maxUsed = i;
-        break;
-      }
-    }
-    const argBase = maxUsed - argCount + 1;
+    // Collect arguments from consecutive registers starting at firstArgReg.
+    // The compiler guarantees args are in registers firstArgReg..firstArgReg+argCount-1
+    // by copying evaluated arg values into consecutive slots after all temps.
     const args: JSValue[] = [];
     for (let i = 0; i < argCount; i++) {
-      const reg = argBase + i;
+      const reg = firstArgReg + i;
       args.push(
         reg >= 0 && reg < this.registers.length
           ? (this.registers[reg] || createUndefined())
@@ -769,6 +785,7 @@ export class IgnitionInterpreter {
    */
   private executeCONSTRUCT(bytecode: Uint8Array): void {
     const argCount = this.readOperand(bytecode);
+    const firstArgReg = this.readOperand(bytecode);
     const func = this.accumulator;
 
     if (func.type !== JSValueType.FUNCTION) {
@@ -778,10 +795,15 @@ export class IgnitionInterpreter {
 
     const fn = func.value as JSFunction;
 
-    // Collect arguments
+    // Collect arguments from consecutive registers starting at firstArgReg
     const args: JSValue[] = [];
     for (let i = 0; i < argCount; i++) {
-      args.push(this.registers[this.registers.length - argCount + i] || createUndefined());
+      const reg = firstArgReg + i;
+      args.push(
+        reg >= 0 && reg < this.registers.length
+          ? (this.registers[reg] || createUndefined())
+          : createUndefined(),
+      );
     }
 
     // Create new object with constructor's prototype

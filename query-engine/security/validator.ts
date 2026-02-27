@@ -171,7 +171,7 @@ export class SecurityValidator {
         );
       }
     } catch (error) {
-      if (error instanceof SecurityError) {
+      if (error instanceof SecurityError || error instanceof PermissionError) {
         throw error;
       }
       throw new SecurityError(`Invalid URL: ${url}`, "INVALID_URL");

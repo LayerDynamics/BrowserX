@@ -22,6 +22,33 @@ import { BrowserPage, DOMElement } from "../../src/api/BrowserPage.ts";
 // TEST UTILITIES
 // ============================================================================
 
+/** Helper to install a mock fetch that returns token responses */
+function installMockFetch(responseBody: Record<string, unknown> = {}, status = 200): void {
+  const defaultBody = {
+    access_token: "real_access_token",
+    refresh_token: "real_refresh_token",
+    expires_in: 3600,
+    token_type: "Bearer",
+    ...responseBody,
+  };
+  (globalThis as Record<string, unknown>)._originalFetch = globalThis.fetch;
+  globalThis.fetch = ((_input: string | URL | Request, _init?: RequestInit) => {
+    return Promise.resolve(new Response(JSON.stringify(defaultBody), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    }));
+  }) as typeof fetch;
+}
+
+/** Restore original fetch */
+function restoreFetch(): void {
+  const orig = (globalThis as Record<string, unknown>)._originalFetch;
+  if (orig) {
+    globalThis.fetch = orig as typeof fetch;
+    delete (globalThis as Record<string, unknown>)._originalFetch;
+  }
+}
+
 /**
  * Create a mock BrowserPage for testing
  */
@@ -384,54 +411,63 @@ Deno.test({
 Deno.test({
   name: "AuthenticationManager - oauth2ClientCredentials creates session",
   async fn() {
-    const page = createMockPage();
-    const authManager = new AuthenticationManager(page);
+    installMockFetch({ access_token: "real_access_token" });
+    try {
+      const page = createMockPage();
+      const authManager = new AuthenticationManager(page);
 
-    const credentials: OAuth2Credentials = {
-      type: "oauth2",
-      grantType: "client_credentials",
-      clientId: "my-client-id",
-      clientSecret: "my-client-secret",
-      tokenUrl: "https://auth.example.com/oauth/token",
-      accessToken: "provided_access_token",
-    };
+      const credentials: OAuth2Credentials = {
+        type: "oauth2",
+        grantType: "client_credentials",
+        clientId: "my-client-id",
+        clientSecret: "my-client-secret",
+        tokenUrl: "https://auth.example.com/oauth/token",
+      };
 
-    const result = await authManager.authenticate(credentials);
+      const result = await authManager.authenticate(credentials);
 
-    assert(result.success);
-    assertExists(result.session);
-    assertEquals(result.session.type, "oauth2");
-    assertEquals(result.session.accessToken, "provided_access_token");
-    assertExists(result.session.expiresAt);
-    assertEquals(result.session.headers?.["Authorization"], "Bearer provided_access_token");
+      assert(result.success);
+      assertExists(result.session);
+      assertEquals(result.session.type, "oauth2");
+      assertEquals(result.session.accessToken, "real_access_token");
+      assertExists(result.session.expiresAt);
+      assertEquals(result.session.headers?.["Authorization"], "Bearer real_access_token");
+    } finally {
+      restoreFetch();
+    }
   },
 });
 
 Deno.test({
   name: "AuthenticationManager - oauth2ClientCredentials sets expiration",
   async fn() {
-    const page = createMockPage();
-    const authManager = new AuthenticationManager(page);
+    installMockFetch({ expires_in: 3600 });
+    try {
+      const page = createMockPage();
+      const authManager = new AuthenticationManager(page);
 
-    const before = Date.now();
+      const before = Date.now();
 
-    const credentials: OAuth2Credentials = {
-      type: "oauth2",
-      grantType: "client_credentials",
-      clientId: "client-id",
-      tokenUrl: "https://auth.example.com/token",
-    };
+      const credentials: OAuth2Credentials = {
+        type: "oauth2",
+        grantType: "client_credentials",
+        clientId: "client-id",
+        tokenUrl: "https://auth.example.com/token",
+      };
 
-    const result = await authManager.authenticate(credentials);
+      const result = await authManager.authenticate(credentials);
 
-    const after = Date.now();
+      const after = Date.now();
 
-    assert(result.success);
-    assertExists(result.session?.expiresAt);
-    // Should expire in ~1 hour
-    const expiresAtTime = result.session!.expiresAt!.getTime();
-    assert(expiresAtTime > before + 3500 * 1000);
-    assert(expiresAtTime < after + 3700 * 1000);
+      assert(result.success);
+      assertExists(result.session?.expiresAt);
+      // Should expire in ~1 hour
+      const expiresAtTime = result.session!.expiresAt!.getTime();
+      assert(expiresAtTime > before + 3500 * 1000);
+      assert(expiresAtTime < after + 3700 * 1000);
+    } finally {
+      restoreFetch();
+    }
   },
 });
 
@@ -464,26 +500,31 @@ Deno.test({
 Deno.test({
   name: "AuthenticationManager - oauth2Password creates session with refresh token",
   async fn() {
-    const page = createMockPage();
-    const authManager = new AuthenticationManager(page);
+    installMockFetch();
+    try {
+      const page = createMockPage();
+      const authManager = new AuthenticationManager(page);
 
-    const credentials: OAuth2Credentials = {
-      type: "oauth2",
-      grantType: "password",
-      clientId: "my-client-id",
-      tokenUrl: "https://auth.example.com/token",
-      username: "user@example.com",
-      password: "secret123",
-    };
+      const credentials: OAuth2Credentials = {
+        type: "oauth2",
+        grantType: "password",
+        clientId: "my-client-id",
+        tokenUrl: "https://auth.example.com/token",
+        username: "user@example.com",
+        password: "secret123",
+      };
 
-    const result = await authManager.authenticate(credentials);
+      const result = await authManager.authenticate(credentials);
 
-    assert(result.success);
-    assertExists(result.session);
-    assertEquals(result.session.type, "oauth2");
-    assertExists(result.session.accessToken);
-    assertExists(result.session.refreshToken);
-    assertExists(result.session.expiresAt);
+      assert(result.success);
+      assertExists(result.session);
+      assertEquals(result.session.type, "oauth2");
+      assertExists(result.session.accessToken);
+      assertExists(result.session.refreshToken);
+      assertExists(result.session.expiresAt);
+    } finally {
+      restoreFetch();
+    }
   },
 });
 
@@ -516,23 +557,29 @@ Deno.test({
 Deno.test({
   name: "AuthenticationManager - oauth2RefreshToken generates new access token",
   async fn() {
-    const page = createMockPage();
-    const authManager = new AuthenticationManager(page);
+    installMockFetch({ access_token: "new_real_access_token" });
+    try {
+      const page = createMockPage();
+      const authManager = new AuthenticationManager(page);
 
-    const credentials: OAuth2Credentials = {
-      type: "oauth2",
-      grantType: "refresh_token",
-      clientId: "my-client-id",
-      tokenUrl: "https://auth.example.com/token",
-      refreshToken: "my-refresh-token",
-    };
+      const credentials: OAuth2Credentials = {
+        type: "oauth2",
+        grantType: "refresh_token",
+        clientId: "my-client-id",
+        tokenUrl: "https://auth.example.com/token",
+        refreshToken: "my-refresh-token",
+      };
 
-    const result = await authManager.authenticate(credentials);
+      const result = await authManager.authenticate(credentials);
 
-    assert(result.success);
-    assertExists(result.session);
-    assertEquals(result.session.accessToken, "new_simulated_access_token");
-    assertEquals(result.session.refreshToken, "my-refresh-token");
+      assert(result.success);
+      assertExists(result.session);
+      assertEquals(result.session.accessToken, "new_real_access_token");
+      // refresh_token from mock response is used; falls back to original if not present
+      assertExists(result.session.refreshToken);
+    } finally {
+      restoreFetch();
+    }
   },
 });
 
@@ -565,57 +612,87 @@ Deno.test({
 Deno.test({
   name: "AuthenticationManager - oauth2AuthorizationCode navigates to auth URL",
   async fn() {
-    let navigatedUrl = "";
-    const page = createMockPage({
-      navigate: async (url: string, _options?: { waitFor?: string; timeout?: number }) => {
-        navigatedUrl = url;
-      },
-    });
-    const authManager = new AuthenticationManager(page);
+    installMockFetch();
+    try {
+      let navigatedUrl = "";
+      let callCount = 0;
+      const page = createMockPage({
+        navigate: async (url: string, _options?: { waitFor?: string; timeout?: number }) => {
+          navigatedUrl = url;
+        },
+        getCurrentURL: () => {
+          callCount++;
+          // After first poll, simulate redirect back with code
+          if (callCount >= 2) {
+            return "https://myapp.com/callback?code=auth_code_123";
+          }
+          return "https://auth.example.com/authorize";
+        },
+      });
+      const authManager = new AuthenticationManager(page);
 
-    const credentials: OAuth2Credentials = {
-      type: "oauth2",
-      grantType: "authorization_code",
-      clientId: "my-client-id",
-      tokenUrl: "https://auth.example.com/token",
-      authorizationUrl: "https://auth.example.com/authorize",
-      redirectUri: "https://myapp.com/callback",
-      scopes: ["read", "write"],
-    };
+      const credentials: OAuth2Credentials = {
+        type: "oauth2",
+        grantType: "authorization_code",
+        clientId: "my-client-id",
+        tokenUrl: "https://auth.example.com/token",
+        authorizationUrl: "https://auth.example.com/authorize",
+        redirectUri: "https://myapp.com/callback",
+        scopes: ["read", "write"],
+      };
 
-    const result = await authManager.authenticate(credentials);
+      const result = await authManager.authenticate(credentials);
 
-    assert(result.success);
-    assert(navigatedUrl.includes("https://auth.example.com/authorize"));
-    assert(navigatedUrl.includes("client_id=my-client-id"));
-    assert(navigatedUrl.includes("redirect_uri="));
-    assert(navigatedUrl.includes("response_type=code"));
-    assert(navigatedUrl.includes("scope=read+write"));
+      assert(result.success);
+      const parsed = new URL(navigatedUrl);
+      assertEquals(parsed.origin, "https://auth.example.com");
+      assertEquals(parsed.pathname, "/authorize");
+      assertEquals(parsed.searchParams.get("client_id"), "my-client-id");
+      assert(parsed.searchParams.has("redirect_uri"));
+      assertEquals(parsed.searchParams.get("response_type"), "code");
+      assertEquals(parsed.searchParams.get("scope"), "read write");
+    } finally {
+      restoreFetch();
+    }
   },
 });
 
 Deno.test({
   name: "AuthenticationManager - oauth2AuthorizationCode creates session with tokens",
   async fn() {
-    const page = createMockPage();
-    const authManager = new AuthenticationManager(page);
+    installMockFetch();
+    try {
+      let callCount = 0;
+      const page = createMockPage({
+        getCurrentURL: () => {
+          callCount++;
+          if (callCount >= 2) {
+            return "https://myapp.com/callback?code=auth_code_456";
+          }
+          return "https://auth.example.com/authorize";
+        },
+      });
+      const authManager = new AuthenticationManager(page);
 
-    const credentials: OAuth2Credentials = {
-      type: "oauth2",
-      grantType: "authorization_code",
-      clientId: "my-client-id",
-      tokenUrl: "https://auth.example.com/token",
-      authorizationUrl: "https://auth.example.com/authorize",
-      redirectUri: "https://myapp.com/callback",
-    };
+      const credentials: OAuth2Credentials = {
+        type: "oauth2",
+        grantType: "authorization_code",
+        clientId: "my-client-id",
+        tokenUrl: "https://auth.example.com/token",
+        authorizationUrl: "https://auth.example.com/authorize",
+        redirectUri: "https://myapp.com/callback",
+      };
 
-    const result = await authManager.authenticate(credentials);
+      const result = await authManager.authenticate(credentials);
 
-    assert(result.success);
-    assertExists(result.session);
-    assertExists(result.session.accessToken);
-    assertExists(result.session.refreshToken);
-    assertExists(result.session.expiresAt);
+      assert(result.success);
+      assertExists(result.session);
+      assertExists(result.session.accessToken);
+      assertExists(result.session.refreshToken);
+      assertExists(result.session.expiresAt);
+    } finally {
+      restoreFetch();
+    }
   },
 });
 
@@ -641,24 +718,29 @@ Deno.test({
 Deno.test({
   name: "AuthenticationManager - isAuthenticated returns false for expired session",
   async fn() {
-    const page = createMockPage();
-    const authManager = new AuthenticationManager(page);
+    installMockFetch();
+    try {
+      const page = createMockPage();
+      const authManager = new AuthenticationManager(page);
 
-    // Create a session that's already expired
-    await authManager.authenticate({
-      type: "oauth2",
-      grantType: "client_credentials",
-      clientId: "client-id",
-      tokenUrl: "https://auth.example.com/token",
-    });
+      // Create a session that's already expired
+      await authManager.authenticate({
+        type: "oauth2",
+        grantType: "client_credentials",
+        clientId: "client-id",
+        tokenUrl: "https://auth.example.com/token",
+      });
 
-    // Manually set expiration to past
-    const session = authManager.getSession();
-    if (session) {
-      session.expiresAt = new Date(Date.now() - 1000);
+      // Manually set expiration to past
+      const session = authManager.getSession();
+      if (session) {
+        session.expiresAt = new Date(Date.now() - 1000);
+      }
+
+      assertEquals(authManager.isAuthenticated(), false);
+    } finally {
+      restoreFetch();
     }
-
-    assertEquals(authManager.isAuthenticated(), false);
   },
 });
 
@@ -731,22 +813,27 @@ Deno.test({
 Deno.test({
   name: "AuthenticationManager - emits refreshed event on token refresh",
   async fn() {
-    const page = createMockPage();
-    const authManager = new AuthenticationManager(page);
+    installMockFetch();
+    try {
+      const page = createMockPage();
+      const authManager = new AuthenticationManager(page);
 
-    const events: AuthStateChangeEvent[] = [];
-    authManager.setOnStateChange((event) => events.push(event));
+      const events: AuthStateChangeEvent[] = [];
+      authManager.setOnStateChange((event) => events.push(event));
 
-    await authManager.authenticate({
-      type: "oauth2",
-      grantType: "refresh_token",
-      clientId: "client-id",
-      tokenUrl: "https://auth.example.com/token",
-      refreshToken: "my-refresh-token",
-    });
+      await authManager.authenticate({
+        type: "oauth2",
+        grantType: "refresh_token",
+        clientId: "client-id",
+        tokenUrl: "https://auth.example.com/token",
+        refreshToken: "my-refresh-token",
+      });
 
-    assertEquals(events.length, 1);
-    assertEquals(events[0].type, "refreshed");
+      assertEquals(events.length, 1);
+      assertEquals(events[0].type, "refreshed");
+    } finally {
+      restoreFetch();
+    }
   },
 });
 
@@ -790,24 +877,29 @@ Deno.test({
 Deno.test({
   name: "AuthenticationManager - refresh works for oauth2 with refresh token",
   async fn() {
-    const page = createMockPage();
-    const authManager = new AuthenticationManager(page);
+    installMockFetch();
+    try {
+      const page = createMockPage();
+      const authManager = new AuthenticationManager(page);
 
-    // First authenticate with password grant (gets refresh token)
-    await authManager.authenticate({
-      type: "oauth2",
-      grantType: "password",
-      clientId: "client-id",
-      tokenUrl: "https://auth.example.com/token",
-      username: "user",
-      password: "pass",
-    });
+      // First authenticate with password grant (gets refresh token)
+      await authManager.authenticate({
+        type: "oauth2",
+        grantType: "password",
+        clientId: "client-id",
+        tokenUrl: "https://auth.example.com/token",
+        username: "user",
+        password: "pass",
+      });
 
-    const result = await authManager.refresh();
+      const result = await authManager.refresh();
 
-    assert(result.success);
-    assertExists(result.session);
-    assertEquals(result.session.accessToken, "new_simulated_access_token");
+      assert(result.success);
+      assertExists(result.session);
+      assertExists(result.session.accessToken);
+    } finally {
+      restoreFetch();
+    }
   },
 });
 

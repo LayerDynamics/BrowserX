@@ -41,12 +41,30 @@ import {
 import { QueryID } from "../types/primitives.ts";
 import { EvaluationContext, ExpressionEvaluator } from "./expression-evaluator.ts";
 import { BrowserController } from "../controllers/browser/browser-controller.ts";
-import { setCurrentBrowserController, clearBrowserContext, withBrowserContext } from "../controllers/browser/browser-context.ts";
+import { clearBrowserContext, setCurrentBrowserController, withBrowserContext } from "../controllers/browser/browser-context.ts";
 import { ProxyController } from "../controllers/proxy/proxy-controller.ts";
 import { ExecutionContextManager, StateManager } from "../state/mod.ts";
-import { type DependencyGraph, topologicalSort } from "../utils/mod.ts";
+import { type DependencyGraph, toBoolean, topologicalSort } from "../utils/mod.ts";
 import { isSafeRegex } from "../utils/string-utils.ts";
 import { BrowserEngine } from "@browserx/browser";
+
+/** Dangerous header keys that could cause prototype pollution */
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * Sanitize headers by filtering out prototype pollution keys
+ */
+function sanitizeHeaders(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([key]) => !DANGEROUS_KEYS.has(key))
+  );
+}
+
+/** Maximum number of loop iterations (default) */
+export const MAX_ITERATIONS = 10000;
+
+/** Maximum result set size */
+export const MAX_RESULT_SIZE = 100000;
 
 /**
  * Execution options
@@ -54,6 +72,21 @@ import { BrowserEngine } from "@browserx/browser";
 export interface ExecutionOptions {
   /** AbortSignal for cancellation support */
   signal?: AbortSignal;
+  /** Maximum iterations for FOR loops (default: MAX_ITERATIONS) */
+  maxIterations?: number;
+  /** Maximum result set rows (default: MAX_RESULT_SIZE) */
+  maxResultSize?: number;
+}
+
+/**
+ * Per-execution state — isolated per execute() call to avoid shared mutable state
+ * when concurrent callers invoke execute() on the same QueryExecutor instance.
+ */
+interface PerExecutionState {
+  signal?: AbortSignal;
+  maxIterations: number;
+  maxResultSize: number;
+  contextManager?: ExecutionContextManager;
 }
 
 /**
@@ -81,9 +114,6 @@ export class QueryExecutor {
   private browserController?: BrowserController;
   private proxyController?: ProxyController;
   private stateManager: StateManager;
-  private currentContextManager?: ExecutionContextManager;
-  /** Abort signal for cancellation support */
-  private signal?: AbortSignal;
 
   constructor(
     browserController?: BrowserController,
@@ -102,8 +132,12 @@ export class QueryExecutor {
     const startTime = performance.now();
     const signal = options.signal;
 
-    // Store signal as instance property for use in step handlers
-    this.signal = signal;
+    // Per-execution state — isolated from other concurrent execute() calls
+    const execState: PerExecutionState = {
+      signal,
+      maxIterations: options.maxIterations ?? MAX_ITERATIONS,
+      maxResultSize: options.maxResultSize ?? MAX_RESULT_SIZE,
+    };
 
     // Check if already aborted
     if (signal?.aborted) {
@@ -111,10 +145,10 @@ export class QueryExecutor {
     }
 
     // Create execution context using StateManager
-    this.currentContextManager = this.stateManager.createExecutionContext(plan.id);
-
+    const contextManager = this.stateManager.createExecutionContext(plan.id);
+    execState.contextManager = contextManager;
     // Convert to legacy format for backward compatibility
-    const context: ExecutionContext = this.currentContextManager.toLegacyContext();
+    const context: ExecutionContext = contextManager.toLegacyContext();
 
     // Execute the query body, wrapping in AsyncLocalStorage-based browser context
     // if a browser controller is available (concurrency-safe isolation).
@@ -160,7 +194,7 @@ export class QueryExecutor {
           }
 
           // Execute step
-          const result = await this.executeStep(step, context);
+          const result = await this.executeStep(step, context, execState);
           context.stepResults.set(stepId, result);
 
           // Store in cache if cacheable
@@ -233,12 +267,14 @@ export class QueryExecutor {
   private async executeStep(
     step: ExecutionStep,
     context: ExecutionContext,
+    execState?: PerExecutionState,
   ): Promise<StepResult> {
     const startTime = performance.now();
+    const signal = execState?.signal;
 
     // Check if aborted before executing step
-    if (this.signal?.aborted) {
-      throw this.signal.reason || new Error("Query aborted during execution");
+    if (signal?.aborted) {
+      throw signal.reason || new Error("Query aborted during execution");
     }
 
     try {
@@ -246,35 +282,35 @@ export class QueryExecutor {
 
       switch (step.type) {
         case ExecutionStepType.NAVIGATE:
-          data = await this.executeNavigate(step as NavigateStep, context, { signal: this.signal });
+          data = await this.executeNavigate(step as NavigateStep, context, { signal });
           break;
 
         case ExecutionStepType.DOM_QUERY:
-          data = await this.executeDOMQuery(step as DOMQueryStep, context, { signal: this.signal });
+          data = await this.executeDOMQuery(step as DOMQueryStep, context, { signal }, execState);
           break;
 
         case ExecutionStepType.CLICK:
-          data = await this.executeClick(step as ClickStep, context, { signal: this.signal });
+          data = await this.executeClick(step as ClickStep, context, { signal });
           break;
 
         case ExecutionStepType.TYPE:
-          data = await this.executeType(step as TypeStep, context, { signal: this.signal });
+          data = await this.executeType(step as TypeStep, context, { signal });
           break;
 
         case ExecutionStepType.WAIT:
-          data = await this.executeWait(step as WaitStep, context, { signal: this.signal });
+          data = await this.executeWait(step as WaitStep, context, { signal });
           break;
 
         case ExecutionStepType.SCREENSHOT:
-          data = await this.executeScreenshot(step as ScreenshotStep, context, { signal: this.signal });
+          data = await this.executeScreenshot(step as ScreenshotStep, context, { signal });
           break;
 
         case ExecutionStepType.PDF:
-          data = await this.executePDF(step as PDFStep, context, { signal: this.signal });
+          data = await this.executePDF(step as PDFStep, context, { signal });
           break;
 
         case ExecutionStepType.EVALUATE_JS:
-          data = await this.executeEvaluateJS(step as EvaluateJSStep, context, { signal: this.signal });
+          data = await this.executeEvaluateJS(step as EvaluateJSStep, context, { signal });
           break;
 
         case ExecutionStepType.INTERCEPT_REQUEST:
@@ -298,11 +334,11 @@ export class QueryExecutor {
           break;
 
         case ExecutionStepType.FILTER:
-          data = await this.executeFilter(step as FilterStep, context);
+          data = await this.executeFilter(step as FilterStep, context, execState);
           break;
 
         case ExecutionStepType.MAP:
-          data = await this.executeMap(step as MapStep, context);
+          data = await this.executeMap(step as MapStep, context, execState);
           break;
 
         case ExecutionStepType.REDUCE:
@@ -310,7 +346,7 @@ export class QueryExecutor {
           break;
 
         case ExecutionStepType.JOIN:
-          data = await this.executeJoin(step as JoinStep, context);
+          data = await this.executeJoin(step as JoinStep, context, execState);
           break;
 
         case ExecutionStepType.SORT:
@@ -322,19 +358,19 @@ export class QueryExecutor {
           break;
 
         case ExecutionStepType.BRANCH:
-          data = await this.executeBranch(step as BranchStep, context);
+          data = await this.executeBranch(step as BranchStep, context, execState);
           break;
 
         case ExecutionStepType.LOOP:
-          data = await this.executeLoop(step as LoopStep, context);
+          data = await this.executeLoop(step as LoopStep, context, execState);
           break;
 
         case ExecutionStepType.PARALLEL:
-          data = await this.executeParallel(step as ParallelStep, context);
+          data = await this.executeParallel(step as ParallelStep, context, execState);
           break;
 
         case ExecutionStepType.SEQUENTIAL:
-          data = await this.executeSequential(step as SequentialStep, context);
+          data = await this.executeSequential(step as SequentialStep, context, execState);
           break;
 
         case ExecutionStepType.ASSIGN:
@@ -396,8 +432,7 @@ export class QueryExecutor {
     // Use browser controller to execute navigation
     if (!this.browserController) {
       // Create browser controller on demand if not provided
-      const browserEngine = new BrowserEngine();
-      this.browserController = new BrowserController(browserEngine);
+      throw new Error("Browser engine not configured - call setBrowserController() before executing browser operations");
     }
 
     // Evaluate URL at runtime if it's an expression
@@ -417,10 +452,6 @@ export class QueryExecutor {
     // Store the page reference in context for subsequent operations
     context.currentBrowser = this.browserController;
 
-    // Set global browser context for utility functions (SCREENSHOT, PDF, etc.)
-    // This is set BEFORE navigation so context is available even if navigation fails
-    setCurrentBrowserController(this.browserController);
-
     const result = await this.browserController.executeNavigate(resolvedStep, options);
 
     return result;
@@ -433,18 +464,27 @@ export class QueryExecutor {
     step: DOMQueryStep,
     context: ExecutionContext,
     options?: { signal?: AbortSignal },
+    execState?: PerExecutionState,
   ): Promise<unknown> {
+    const maxResultSize = execState?.maxResultSize ?? MAX_RESULT_SIZE;
     // Use browser controller to execute DOM query
     if (!this.browserController) {
       // Create browser controller on demand if not provided
-      const browserEngine = new BrowserEngine();
-      this.browserController = new BrowserController(browserEngine);
+      throw new Error("Browser engine not configured - call setBrowserController() before executing browser operations");
     }
-    setCurrentBrowserController(this.browserController);
 
     // Execute the DOM query step which returns extracted data
     const results = await this.browserController.executeDOMQuery(step, options);
 
+    // Enforce result set size limit
+    if (Array.isArray(results) && results.length > maxResultSize) {
+      throw new Error(
+        `Result set size limit exceeded: ${results.length} rows, maximum is ${maxResultSize}`,
+      );
+    }
+
+    // Store results in execution context for downstream steps
+    context.variables.set("__lastQueryResult", results);
     return results;
   }
 
@@ -454,6 +494,7 @@ export class QueryExecutor {
   private async executeFilter(
     step: FilterStep,
     context: ExecutionContext,
+    execState?: PerExecutionState,
   ): Promise<unknown> {
     const input = context.variables.get(step.inputVariable);
 
@@ -470,18 +511,19 @@ export class QueryExecutor {
     const evaluator = new ExpressionEvaluator(evalContext);
 
     // Filter array by evaluating predicate for each item
-    const filtered = [];
+    const filtered: unknown[] = [];
     for (const item of input) {
       // Set current item as the row being evaluated
       evaluator.setContext({ currentRow: item as Record<string, unknown> });
 
       // Evaluate predicate and convert to boolean
       const result = await evaluator.evaluate(step.predicate);
-      if (result === true || result === 1 || (typeof result === "string" && result.length > 0)) {
+      if (toBoolean(result)) {
         filtered.push(item);
       }
     }
 
+    this.enforceResultSizeLimit(filtered, execState);
     context.variables.set(step.outputVariable, filtered);
     return filtered;
   }
@@ -574,6 +616,7 @@ export class QueryExecutor {
   private async executeBranch(
     step: BranchStep,
     context: ExecutionContext,
+    execState?: PerExecutionState,
   ): Promise<unknown> {
     // Create evaluation context
     const evalContext: EvaluationContext = {
@@ -586,19 +629,15 @@ export class QueryExecutor {
     // Evaluate condition expression
     const conditionResult = await evaluator.evaluate(step.condition);
 
-    // Convert to boolean (truthy/falsy logic)
-    const conditionValue = conditionResult === true ||
-      conditionResult === 1 ||
-      (typeof conditionResult === "string" && conditionResult.length > 0) ||
-      (typeof conditionResult === "number" && conditionResult !== 0) ||
-      (Array.isArray(conditionResult) && conditionResult.length > 0);
+    // Convert to boolean using centralized toBoolean() for consistent semantics
+    const conditionValue = toBoolean(conditionResult);
 
     const stepsToExecute = conditionValue ? step.thenSteps : (step.elseSteps || []);
 
     let result: unknown = null;
 
     for (const branchStep of stepsToExecute) {
-      const stepResult = await this.executeStep(branchStep, context);
+      const stepResult = await this.executeStep(branchStep, context, execState);
       context.stepResults.set(branchStep.id, stepResult);
       result = stepResult.data;
 
@@ -616,6 +655,7 @@ export class QueryExecutor {
   private async executeLoop(
     step: LoopStep,
     context: ExecutionContext,
+    execState?: PerExecutionState,
   ): Promise<unknown> {
     // First try to get collection from variables, then evaluate expression
     let collection = context.variables.get(step.collectionVariable);
@@ -637,24 +677,40 @@ export class QueryExecutor {
       throw new Error(`Loop collection must be an array`);
     }
 
+    const maxIterations = execState?.maxIterations ?? MAX_ITERATIONS;
+    const ctxManager = execState?.contextManager;
+
+    if (collection.length > maxIterations) {
+      throw new Error(
+        `FOR loop iteration limit exceeded: collection has ${collection.length} items, maximum is ${maxIterations}`,
+      );
+    }
+
     const results: unknown[] = [];
+    let iterationCount = 0;
 
     for (const item of collection) {
+      iterationCount++;
+      if (iterationCount > maxIterations) {
+        throw new Error(
+          `FOR loop iteration limit exceeded: ${maxIterations} iterations`,
+        );
+      }
       // Push new scope for loop iteration (enables variable shadowing)
-      if (this.currentContextManager) {
-        this.currentContextManager.pushScope();
+      if (ctxManager) {
+        ctxManager.pushScope();
       }
 
       context.variables.set(step.iteratorVariable, item);
 
       for (const loopStep of step.bodySteps) {
-        const stepResult = await this.executeStep(loopStep, context);
+        const stepResult = await this.executeStep(loopStep, context, execState);
         context.stepResults.set(loopStep.id, stepResult);
 
         if (!stepResult.success) {
           // Pop scope before throwing
-          if (this.currentContextManager) {
-            this.currentContextManager.popScope();
+          if (ctxManager) {
+            ctxManager.popScope();
           }
           throw stepResult.error || new Error(`Loop step ${loopStep.id} failed`);
         }
@@ -663,8 +719,8 @@ export class QueryExecutor {
       results.push(context.variables.get(step.iteratorVariable));
 
       // Pop scope after loop iteration
-      if (this.currentContextManager) {
-        this.currentContextManager.popScope();
+      if (ctxManager) {
+        ctxManager.popScope();
       }
     }
 
@@ -703,11 +759,11 @@ export class QueryExecutor {
   ): Promise<unknown> {
     // Use browser controller to execute click
     if (!this.browserController) {
-      const browserEngine = new BrowserEngine();
-      this.browserController = new BrowserController(browserEngine);
+      throw new Error("Browser engine not configured - call setBrowserController() before executing browser operations");
     }
 
     await this.browserController.executeClick(step, options);
+    context.variables.set("__lastAction", "click");
     return { clicked: true, selector: step.selector };
   }
 
@@ -721,11 +777,11 @@ export class QueryExecutor {
   ): Promise<unknown> {
     // Use browser controller to execute type
     if (!this.browserController) {
-      const browserEngine = new BrowserEngine();
-      this.browserController = new BrowserController(browserEngine);
+      throw new Error("Browser engine not configured - call setBrowserController() before executing browser operations");
     }
 
     await this.browserController.executeType(step, options);
+    context.variables.set("__lastAction", "type");
     return { typed: true, selector: step.selector, text: step.text };
   }
 
@@ -739,11 +795,11 @@ export class QueryExecutor {
   ): Promise<unknown> {
     // Use browser controller to execute wait
     if (!this.browserController) {
-      const browserEngine = new BrowserEngine();
-      this.browserController = new BrowserController(browserEngine);
+      throw new Error("Browser engine not configured - call setBrowserController() before executing browser operations");
     }
 
     await this.browserController.executeWait(step, options);
+    context.variables.set("__lastAction", "wait");
     return { waited: true, waitType: step.waitType };
   }
 
@@ -757,11 +813,11 @@ export class QueryExecutor {
   ): Promise<unknown> {
     // Use browser controller to execute screenshot
     if (!this.browserController) {
-      const browserEngine = new BrowserEngine();
-      this.browserController = new BrowserController(browserEngine);
+      throw new Error("Browser engine not configured - call setBrowserController() before executing browser operations");
     }
 
     const screenshot = await this.browserController.executeScreenshot(step, options);
+    context.variables.set("__lastScreenshot", screenshot);
     return screenshot;
   }
 
@@ -775,11 +831,11 @@ export class QueryExecutor {
   ): Promise<unknown> {
     // Use browser controller to execute PDF generation
     if (!this.browserController) {
-      const browserEngine = new BrowserEngine();
-      this.browserController = new BrowserController(browserEngine);
+      throw new Error("Browser engine not configured - call setBrowserController() before executing browser operations");
     }
 
     const pdf = await this.browserController.executePDF(step, options);
+    context.variables.set("__lastPDF", pdf);
     return pdf;
   }
 
@@ -793,11 +849,11 @@ export class QueryExecutor {
   ): Promise<unknown> {
     // Use browser controller to execute JavaScript
     if (!this.browserController) {
-      const browserEngine = new BrowserEngine();
-      this.browserController = new BrowserController(browserEngine);
+      throw new Error("Browser engine not configured - call setBrowserController() before executing browser operations");
     }
 
     const result = await this.browserController.executeEvaluateJS(step, options);
+    context.variables.set("__lastEvalResult", result);
     return result;
   }
 
@@ -815,6 +871,7 @@ export class QueryExecutor {
     }
 
     const cached = await this.proxyController.executeCacheLookup(step);
+    context.variables.set(step.cacheKey, cached);
     return cached;
   }
 
@@ -832,6 +889,7 @@ export class QueryExecutor {
     }
 
     const cached = await this.proxyController.executeCacheRetrieve(step);
+    context.variables.set(step.cacheKey, cached);
     return cached;
   }
 
@@ -848,8 +906,9 @@ export class QueryExecutor {
       return { stored: false, reason: "No proxy controller configured" };
     }
 
+    const value = context.variables.get(step.cacheKey);
     await this.proxyController.executeCacheStore(step);
-    return { stored: true, cacheKey: step.cacheKey };
+    return { stored: true, cacheKey: step.cacheKey, hadValue: value !== undefined };
   }
 
   /**
@@ -858,6 +917,7 @@ export class QueryExecutor {
   private async executeMap(
     step: MapStep,
     context: ExecutionContext,
+    execState?: PerExecutionState,
   ): Promise<unknown> {
     const input = context.variables.get(step.inputVariable);
 
@@ -884,6 +944,7 @@ export class QueryExecutor {
       }),
     );
 
+    this.enforceResultSizeLimit(mapped, execState);
     context.variables.set(step.outputVariable, mapped);
     return mapped;
   }
@@ -894,16 +955,36 @@ export class QueryExecutor {
   private async executeParallel(
     step: ParallelStep,
     context: ExecutionContext,
+    execState?: PerExecutionState,
   ): Promise<unknown> {
-    // Execute all steps in parallel using Promise.all
-    const promises = step.steps.map((parallelStep) => this.executeStep(parallelStep, context));
+    // Create shallow clones of context for each sub-step to prevent
+    // concurrent writes to context.variables from racing with each other.
+    const clonedContexts = step.steps.map(() => ({
+      ...context,
+      variables: new Map(context.variables),
+      stepResults: new Map(context.stepResults),
+    }));
+
+    // Execute all steps in parallel, each with its own isolated context clone
+    const promises = step.steps.map((parallelStep, i) =>
+      this.executeStep(parallelStep, clonedContexts[i], execState)
+    );
 
     const results = await Promise.all(promises);
 
-    // Store all step results
+    // Merge results back into the original context
     for (let i = 0; i < step.steps.length; i++) {
       const parallelStep = step.steps[i];
       const result = results[i];
+      const clonedCtx = clonedContexts[i];
+
+      // Merge variables written by this sub-step back into the parent context
+      for (const [key, value] of clonedCtx.variables) {
+        if (!context.variables.has(key) || context.variables.get(key) !== value) {
+          context.variables.set(key, value);
+        }
+      }
+
       context.stepResults.set(parallelStep.id, result);
 
       if (!result.success) {
@@ -921,12 +1002,13 @@ export class QueryExecutor {
   private async executeSequential(
     step: SequentialStep,
     context: ExecutionContext,
+    execState?: PerExecutionState,
   ): Promise<unknown> {
     let lastResult: unknown = null;
 
     // Execute steps one by one in order
     for (const seqStep of step.steps) {
-      const result = await this.executeStep(seqStep, context);
+      const result = await this.executeStep(seqStep, context, execState);
       context.stepResults.set(seqStep.id, result);
       lastResult = result.data;
 
@@ -980,7 +1062,7 @@ export class QueryExecutor {
                 ...request,
                 url: step.modifications.url || request.url,
                 method: step.modifications.method || request.method,
-                headers: { ...request.headers, ...step.modifications.headers },
+                headers: { ...request.headers, ...sanitizeHeaders(step.modifications.headers || {}) },
                 body: step.modifications.body !== undefined
                   ? step.modifications.body
                   : request.body,
@@ -998,6 +1080,7 @@ export class QueryExecutor {
     };
 
     this.proxyController.addRequestInterceptor(interceptor);
+    context.variables.set("__lastInterceptor", { action: step.action, urlPattern: step.urlPattern });
     return { interceptorAdded: true, action: step.action };
   }
 
@@ -1020,7 +1103,7 @@ export class QueryExecutor {
           ...request,
           url: step.modifications.url || request.url,
           method: step.modifications.method || request.method,
-          headers: { ...request.headers, ...step.modifications.headers },
+          headers: { ...request.headers, ...sanitizeHeaders(step.modifications.headers || {}) },
           body: step.modifications.body !== undefined ? step.modifications.body : request.body,
         };
       }
@@ -1028,6 +1111,7 @@ export class QueryExecutor {
     };
 
     this.proxyController.addRequestInterceptor(interceptor);
+    context.variables.set("__lastModifiedRequest", step.requestId);
     return { modified: true, requestId: step.requestId };
   }
 
@@ -1078,6 +1162,7 @@ export class QueryExecutor {
   private async executeJoin(
     step: JoinStep,
     context: ExecutionContext,
+    execState?: PerExecutionState,
   ): Promise<unknown> {
     const leftData = context.variables.get(step.leftVariable);
     const rightData = context.variables.get(step.rightVariable);
@@ -1182,6 +1267,7 @@ export class QueryExecutor {
       }
     }
 
+    this.enforceResultSizeLimit(results, execState);
     context.variables.set(step.outputVariable, results);
     return results;
   }
@@ -1223,6 +1309,18 @@ export class QueryExecutor {
 
     context.variables.set(step.variable, value);
     return value;
+  }
+
+  /**
+   * Enforce result set size limit on an array
+   */
+  private enforceResultSizeLimit(results: unknown[], execState?: PerExecutionState): void {
+    const maxResultSize = execState?.maxResultSize ?? MAX_RESULT_SIZE;
+    if (results.length > maxResultSize) {
+      throw new Error(
+        `Result set size limit exceeded: ${results.length} rows, maximum is ${maxResultSize}`,
+      );
+    }
   }
 
   /**
@@ -1270,10 +1368,13 @@ export class QueryExecutor {
   }
 
   /**
-   * Get current execution context manager
+   * Get the execution context manager for a given execution.
+   * Context managers are now per-execution (via execState.contextManager)
+   * and no longer stored as shared instance state.
+   * @deprecated Use execState.contextManager within execute() instead.
    */
   getCurrentContextManager(): ExecutionContextManager | undefined {
-    return this.currentContextManager;
+    return undefined;
   }
 }
 

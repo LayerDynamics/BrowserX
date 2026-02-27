@@ -172,18 +172,27 @@ export class BrowserPage {
       throw new Error(signal.reason?.message || "Operation aborted");
     }
 
-    this.currentURL = url;
-    await this.browser.navigate(url);
+    const previousURL = this.currentURL;
+    try {
+      await this.browser.navigate(url);
 
-    // Store the rendering result for later access
-    const renderingPipeline = this.browser.getRenderingPipeline();
-    if (renderingPipeline.lastRenderResult) {
-      this.currentRenderingResult = renderingPipeline.lastRenderResult;
-    }
+      // Check if aborted after navigation — don't update URL if aborted
+      if (signal?.aborted) {
+        throw new Error(signal.reason?.message || "Operation aborted");
+      }
 
-    // Check if aborted after navigation
-    if (signal?.aborted) {
-      throw new Error(signal.reason?.message || "Operation aborted");
+      // Navigation succeeded and not aborted — update currentURL
+      this.currentURL = url;
+
+      // Store the rendering result for later access
+      const renderingPipeline = this.browser.getRenderingPipeline();
+      if (renderingPipeline.lastRenderResult) {
+        this.currentRenderingResult = renderingPipeline.lastRenderResult;
+      }
+    } catch (error) {
+      // Navigation failed — restore previous URL
+      this.currentURL = previousURL;
+      throw error;
     }
 
     // Handle waitFor option
@@ -1868,7 +1877,7 @@ export class BrowserPage {
    * @param format - Output format (png or jpeg)
    * @param quality - Quality for JPEG (1-100)
    */
-  private encodeScreenshot(
+  encodeScreenshot(
     imageData: Uint8ClampedArray,
     width: number,
     height: number,
@@ -1886,7 +1895,7 @@ export class BrowserPage {
    * Encode RGBA pixel data to PNG format
    * Implements PNG specification (RFC 2083)
    */
-  private encodePNG(pixels: Uint8ClampedArray, width: number, height: number): Uint8Array {
+  encodePNG(pixels: Uint8ClampedArray, width: number, height: number): Uint8Array {
     // PNG signature
     const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -2073,7 +2082,7 @@ export class BrowserPage {
    * Encode RGBA pixel data to JPEG format
    * Implements basic JPEG encoding with DCT
    */
-  private encodeJPEG(
+  encodeJPEG(
     pixels: Uint8ClampedArray,
     width: number,
     height: number,
@@ -2804,7 +2813,7 @@ export class BrowserPage {
   /**
    * Encode image data using DCT and Huffman coding
    */
-  private encodeJPEGImageData(
+  encodeJPEGImageData(
     pixels: Uint8ClampedArray,
     width: number,
     height: number,

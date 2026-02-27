@@ -175,49 +175,14 @@ export class Validator {
         );
       }
 
-      // Check for localhost/private IPs
-      // Security policy determines if this is allowed
-      if (this.isPrivateIP(parsed.hostname)) {
-        // Will be checked by SecurityValidator
-      }
+      // Private IP enforcement is handled by SecurityValidator in the
+      // semantic analysis pipeline (Phase 4), which respects SecurityPolicy.blockPrivateIPs
     } catch (error) {
       if (error instanceof ValidationError) {
         throw error;
       }
       throw new ValidationError(`Invalid URL: ${url}`);
     }
-  }
-
-  /**
-   * Check if hostname is a private IP
-   */
-  private isPrivateIP(hostname: string): boolean {
-    // Check for localhost
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return true;
-    }
-
-    // Check for private IPv4 ranges
-    const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-    const match = hostname.match(ipv4Regex);
-
-    if (match) {
-      const [, a, b, c, d] = match.map(Number);
-
-      // 10.0.0.0/8
-      if (a === 10) return true;
-
-      // 172.16.0.0/12
-      if (a === 172 && b >= 16 && b <= 31) return true;
-
-      // 192.168.0.0/16
-      if (a === 192 && b === 168) return true;
-
-      // 169.254.0.0/16 (link-local)
-      if (a === 169 && b === 254) return true;
-    }
-
-    return false;
   }
 
   /**

@@ -254,7 +254,10 @@ export class ExpressionEvaluator {
       throw new EvaluationError(`Cannot access property of null or undefined`);
     }
 
-    const property = expr.property; // property is always a string in the AST
+    // For computed access with dynamic keys, evaluate the expression at runtime
+    const property = expr.computedProperty
+      ? String(await this.evaluate(expr.computedProperty))
+      : expr.property;
 
     if (typeof object !== "object") {
       throw new EvaluationError(`Cannot access property of non-object type`);

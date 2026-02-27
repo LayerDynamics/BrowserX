@@ -23,8 +23,8 @@ import {
 } from "../feedback/mod.ts";
 import { ToolRateLimiter } from "./ToolRateLimiter.ts";
 
-const evaluateRateLimiter = new ToolRateLimiter({ maxRequests: 100, windowMs: 60000 });
-const toolRateLimiter = new ToolRateLimiter({ maxRequests: 200, windowMs: 60000 });
+export const evaluateRateLimiter = new ToolRateLimiter({ maxRequests: 100, windowMs: 60000 });
+export const toolRateLimiter = new ToolRateLimiter({ maxRequests: 200, windowMs: 60000 });
 
 /**
  * Register browser automation tools with the MCP server
@@ -59,7 +59,7 @@ export function registerBrowserTools(
       "browser_navigate",
       async ({ url, sessionId, waitUntil, timeout, signal }, ctx) => {
         context.permissionGuard.checkToolPermission("browser_navigate");
-        toolRateLimiter.check(sessionId as string || crypto.randomUUID());
+        toolRateLimiter.check(sessionId as string || "__anonymous__");
 
         // Track operation
         const opId = context.visibilityService.operationTracker.startOperation(

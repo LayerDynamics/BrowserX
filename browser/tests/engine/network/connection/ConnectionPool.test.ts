@@ -552,3 +552,91 @@ Deno.test({
     await pool.closeAll();
   },
 });
+
+// ============================================================================
+// Mutex Serialization Tests
+// ============================================================================
+
+Deno.test({
+  name: "ConnectionPool - concurrent acquires for same key are serialized (no TOCTOU race)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    // We test that the mutex properly serializes access by tracking
+    // how many callers are concurrently inside acquireInternal.
+    // With the old broken lock, concurrent callers could overlap.
+    const pool = new ConnectionPool();
+
+    let concurrentCount = 0;
+    let maxConcurrent = 0;
+
+    // Monkey-patch acquireInternal to track concurrent entries
+    const originalAcquireInternal = (pool as any).acquireInternal.bind(pool);
+    (pool as any).acquireInternal = async function (...args: any[]) {
+      concurrentCount++;
+      if (concurrentCount > maxConcurrent) {
+        maxConcurrent = concurrentCount;
+      }
+      // Add a small delay to widen the window for races
+      await new Promise((r) => setTimeout(r, 10));
+      try {
+        return await originalAcquireInternal(...args);
+      } finally {
+        concurrentCount--;
+      }
+    };
+
+    // Fire 3 concurrent acquires for the SAME host:port
+    const results = await Promise.allSettled([
+      pool.acquire("mutex-test.local", 443 as any, false),
+      pool.acquire("mutex-test.local", 443 as any, false),
+      pool.acquire("mutex-test.local", 443 as any, false),
+    ]);
+
+    // All will fail (no real server), but the mutex should still serialize them
+    // The key assertion: maxConcurrent should be 1 (serialized)
+    assertEquals(maxConcurrent, 1, "Mutex should serialize concurrent acquires for the same key");
+
+    pool.stopAutoCleanup();
+    await pool.closeAll();
+  },
+});
+
+Deno.test({
+  name: "ConnectionPool - concurrent acquires for DIFFERENT keys run in parallel",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const pool = new ConnectionPool();
+
+    let concurrentCount = 0;
+    let maxConcurrent = 0;
+
+    const originalAcquireInternal = (pool as any).acquireInternal.bind(pool);
+    (pool as any).acquireInternal = async function (...args: any[]) {
+      concurrentCount++;
+      if (concurrentCount > maxConcurrent) {
+        maxConcurrent = concurrentCount;
+      }
+      await new Promise((r) => setTimeout(r, 10));
+      try {
+        return await originalAcquireInternal(...args);
+      } finally {
+        concurrentCount--;
+      }
+    };
+
+    // Fire 3 concurrent acquires for DIFFERENT hosts
+    const results = await Promise.allSettled([
+      pool.acquire("host-a.local", 443 as any, false),
+      pool.acquire("host-b.local", 443 as any, false),
+      pool.acquire("host-c.local", 443 as any, false),
+    ]);
+
+    // Different keys should NOT be serialized — they can run concurrently
+    assert(maxConcurrent > 1, "Different keys should allow concurrent access");
+
+    pool.stopAutoCleanup();
+    await pool.closeAll();
+  },
+});

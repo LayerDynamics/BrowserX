@@ -85,24 +85,39 @@ function checkRateLimit(ip: string): boolean {
 
 /**
  * Get client IP from request headers.
+ *
+ * Checks trusted proxy/CDN headers first, falling back to less reliable ones.
+ * Reliability depends on deployment infrastructure — headers like x-forwarded-for
+ * can be spoofed by clients in environments without a trusted reverse proxy.
+ *
  * @param request Astro API request
  * @returns Client IP address
  */
 function getClientIp(request: Request): string {
-  // Check x-forwarded-for header first (for proxies/load balancers)
+  // Cloudflare-injected header — cannot be spoofed by client
+  const cfIp = request.headers.get('cf-connecting-ip');
+  if (cfIp) {
+    return cfIp.trim();
+  }
+
+  // CDN-injected header — cannot be spoofed by client
+  const trueClientIp = request.headers.get('true-client-ip');
+  if (trueClientIp) {
+    return trueClientIp.trim();
+  }
+
+  // nginx-injected header
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) {
+    return realIp.trim();
+  }
+
+  // x-forwarded-for as last resort — client-controllable, use rightmost IP
   const forwardedFor = request.headers.get('x-forwarded-for');
   if (forwardedFor) {
-    // x-forwarded-for can contain multiple IPs, use the last (rightmost) one added by trusted proxy
     return forwardedFor.split(',').map(s => s.trim()).pop()!;
   }
 
-  // Fallback to x-real-ip
-  const realIp = request.headers.get('x-real-ip');
-  if (realIp) {
-    return realIp;
-  }
-
-  // Fallback to a default (shouldn't happen in production with proper proxy setup)
   return 'unknown';
 }
 

@@ -61,13 +61,12 @@ export class TCPHealthChecker implements HealthChecker {
   async check(server: UpstreamServer): Promise<HealthCheckResult> {
     const startTime = Date.now();
 
+    const socket = new Socket(server.host, server.port);
     try {
-      const socket = new Socket(server.host, server.port);
       await socket.connect(this.config.timeout);
 
       // Test if socket is writable
       const writable = await socket.isWritable();
-      socket.close();
 
       const responseTime = Date.now() - startTime;
 
@@ -86,6 +85,8 @@ export class TCPHealthChecker implements HealthChecker {
         checkedAt: startTime,
         error: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      socket.close();
     }
   }
 
@@ -105,8 +106,8 @@ export class HTTPHealthChecker implements HealthChecker {
     const startTime = Date.now();
     const path = this.config.httpPath || "/health";
 
+    const socket = new Socket(server.host, server.port);
     try {
-      const socket = new Socket(server.host, server.port);
       await socket.connect(this.config.timeout);
 
       const client = new HTTP11Client(socket);
@@ -119,8 +120,6 @@ export class HTTPHealthChecker implements HealthChecker {
           connection: "close",
         },
       });
-
-      socket.close();
 
       const responseTime = Date.now() - startTime;
       const healthy = response.statusCode >= 200 && response.statusCode < 300;
@@ -141,6 +140,8 @@ export class HTTPHealthChecker implements HealthChecker {
         checkedAt: startTime,
         error: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      socket.close();
     }
   }
 
@@ -159,12 +160,9 @@ export class PingHealthChecker implements HealthChecker {
   async check(server: UpstreamServer): Promise<HealthCheckResult> {
     const startTime = Date.now();
 
+    const socket = new Socket(server.host, server.port);
     try {
-      const socket = new Socket(server.host, server.port);
       await socket.connect(this.config.timeout);
-
-      // Just check if connection succeeds
-      socket.close();
 
       const responseTime = Date.now() - startTime;
 
@@ -183,6 +181,8 @@ export class PingHealthChecker implements HealthChecker {
         checkedAt: startTime,
         error: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      socket.close();
     }
   }
 
@@ -210,11 +210,18 @@ export function createHealthChecker(config: HealthCheckConfig): HealthChecker {
 /**
  * Health monitor manages health checks for multiple servers
  */
+/**
+ * Maximum health check backoff interval (5 minutes)
+ */
+const MAX_HEALTH_CHECK_BACKOFF = 300000;
+
 export class HealthMonitor {
   private checker: HealthChecker;
   private states: Map<string, ServerHealthState> = new Map();
   private intervalId?: number;
   private running = false;
+  private nextCheckTime: Map<string, number> = new Map();
+  private initialCheckComplete = false;
 
   constructor(private config: HealthCheckConfig) {
     this.checker = createHealthChecker(config);
@@ -237,8 +244,10 @@ export class HealthMonitor {
       }
     }
 
-    // Perform initial check
-    this.checkAllServers(servers);
+    // Perform initial check (mark complete when done)
+    this.checkAllServers(servers).then(() => {
+      this.initialCheckComplete = true;
+    });
 
     // Schedule periodic checks
     this.intervalId = setInterval(() => {
@@ -266,11 +275,31 @@ export class HealthMonitor {
   }
 
   /**
-   * Check a single server
+   * Check a single server (with exponential backoff for failed servers)
    */
   private async checkServer(server: UpstreamServer): Promise<void> {
+    // Apply exponential backoff: skip this check if not yet time
+    const now = Date.now();
+    const nextTime = this.nextCheckTime.get(server.id) ?? 0;
+    if (now < nextTime) {
+      return; // Skip — backoff period not yet elapsed
+    }
+
     const result = await this.checker.check(server);
     this.updateState(result);
+
+    // Schedule next check time based on consecutive failures
+    const state = this.states.get(server.id);
+    if (state && state.consecutiveFailures > 0) {
+      const backoff = Math.min(
+        this.config.interval * Math.pow(2, state.consecutiveFailures),
+        MAX_HEALTH_CHECK_BACKOFF,
+      );
+      this.nextCheckTime.set(server.id, now + backoff);
+    } else {
+      // Healthy — use normal interval (no extra delay)
+      this.nextCheckTime.delete(server.id);
+    }
   }
 
   /**
@@ -327,7 +356,10 @@ export class HealthMonitor {
   isHealthy(serverOrId: string | UpstreamServer): boolean {
     const serverId = typeof serverOrId === "string" ? serverOrId : serverOrId.id;
     const state = this.states.get(serverId);
-    return state ? state.healthy : true; // Default to healthy if not checked
+    if (!state) return false;
+    // Optimistic during startup: assume healthy until first check completes
+    if (!this.initialCheckComplete && state.totalChecks === 0) return true;
+    return state.healthy;
   }
 
   /**
@@ -343,7 +375,7 @@ export class HealthMonitor {
   private createInitialState(serverId: string): ServerHealthState {
     return {
       serverId,
-      healthy: true, // Assume healthy initially
+      healthy: false, // Unhealthy until first check passes
       consecutiveSuccesses: 0,
       consecutiveFailures: 0,
       lastCheckAt: 0,
@@ -356,10 +388,19 @@ export class HealthMonitor {
   }
 
   /**
+   * Get the next scheduled check time for a server (used for backoff)
+   */
+  getNextCheckTime(serverId: string): number | undefined {
+    return this.nextCheckTime.get(serverId);
+  }
+
+  /**
    * Reset all health states
    */
   reset(): void {
     this.states.clear();
+    this.nextCheckTime.clear();
+    this.initialCheckComplete = false;
   }
 
   /**
@@ -381,6 +422,13 @@ export class HealthMonitor {
    */
   getIntervalId(): number | undefined {
     return this.intervalId;
+  }
+
+  /**
+   * Check if the initial health check round has completed
+   */
+  isReady(): boolean {
+    return this.initialCheckComplete;
   }
 
   /**

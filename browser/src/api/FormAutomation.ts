@@ -689,14 +689,46 @@ export class FormAutomation {
   private async fillSelectField(selector: string, value: string | string[]): Promise<void> {
     const values = Array.isArray(value) ? value : [value];
 
-    // For each value, find and select the option
-    for (const val of values) {
-      try {
-        await this.page.click(`${selector} option[value="${val}"]`);
-      } catch {
-        // Try selecting by text content
-        // This is a simplification - real implementation would need more robust option selection
+    // Set the select element's value and dispatch change event via JavaScript
+    const selectScript = `
+      (function() {
+        const select = document.querySelector(${JSON.stringify(selector)});
+        if (!select) return { success: false, error: 'Select element not found' };
+
+        const values = ${JSON.stringify(values)};
+        const isMultiple = select.multiple;
+
+        if (isMultiple) {
+          // For multi-select, set selected on matching options
+          for (const option of select.options) {
+            option.selected = values.includes(option.value);
+          }
+        } else {
+          // For single select, set the value
+          select.value = values[0];
+        }
+
+        // Dispatch change event
+        const changeEvent = new Event('change', { bubbles: true });
+        select.dispatchEvent(changeEvent);
+
+        // Dispatch input event for compatibility
+        const inputEvent = new Event('input', { bubbles: true });
+        select.dispatchEvent(inputEvent);
+
+        return { success: true };
+      })()
+    `;
+
+    try {
+      const result = await this.page.evaluate(selectScript) as { success: boolean; error?: string };
+      if (!result.success) {
+        throw new Error(result.error || "Failed to set select value");
       }
+    } catch (error) {
+      throw new Error(
+        `Failed to fill select field: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -838,7 +870,7 @@ export class FormAutomation {
    */
   private async waitForNavigationOrTimeout(timeout: number): Promise<void> {
     // Simplified - in real implementation, would use page navigation events
-    await new Promise((resolve) => setTimeout(resolve, Math.min(timeout, 1000)));
+    await new Promise((resolve) => setTimeout(resolve, Math.max(timeout, 100)));
   }
 
   /**
@@ -916,7 +948,7 @@ export class FormAutomation {
     // This creates a synthetic File object and sets it on the input
     const uploadScript = `
       (function() {
-        const input = document.querySelector('${this.escapeSelector(fieldSelector)}');
+        const input = document.querySelector(${JSON.stringify(this.escapeString(fieldSelector))});
         if (!input) return { success: false, error: 'Input not found' };
 
         // Create a DataTransfer to hold the file
@@ -924,8 +956,8 @@ export class FormAutomation {
 
         // Create a File object from the provided data
         const fileContent = new Uint8Array([${Array.from(fileContent).join(",")}]);
-        const file = new File([fileContent], '${this.escapeString(fileData.name)}', {
-          type: '${this.escapeString(fileData.type)}',
+        const file = new File([fileContent], ${JSON.stringify(fileData.name)}, {
+          type: ${JSON.stringify(fileData.type)},
           lastModified: ${fileData.lastModified}
         });
 
@@ -1127,7 +1159,14 @@ export class FormAutomation {
    * Escape selector string for use in JavaScript
    */
   private escapeSelector(selector: string): string {
-    return selector.replace(/'/g, "\\'").replace(/"/g, '\\"');
+    return selector
+      .replace(/\\/g, "\\\\")
+      .replace(/\0/g, "")
+      .replace(/'/g, "\\'")
+      .replace(/"/g, '\\"')
+      .replace(/`/g, "\\`")
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r");
   }
 
   /**

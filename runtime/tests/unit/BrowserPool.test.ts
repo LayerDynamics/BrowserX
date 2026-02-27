@@ -610,9 +610,56 @@ Deno.test({
 
     pool.release(instance.id);
 
+    // Allow async closeInstance to complete (release fire-and-forgets it)
+    await new Promise((r) => setTimeout(r, 50));
+
     // Instance should be closed, not returned to pool
     assertEquals(pool.hasInstance(instance.id), false);
 
+    await pool.stop();
+  },
+});
+
+// ============================================================================
+// Race Condition Tests
+// ============================================================================
+
+Deno.test({
+  name: "BrowserPool - release to waiter marks instance in_use before resolving (no double-spend)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const config = createTestPoolConfig({ maxInstances: 1 });
+    const pool = new BrowserPool(config);
+
+    await pool.start();
+
+    // Acquire the only instance
+    const instance1 = await pool.acquire({ timeout: 5000 });
+    const instanceId = instance1.id;
+
+    // Start a second acquire that will wait
+    const acquire2Promise = pool.acquire({ timeout: 5000 });
+
+    // Release instance1 - the waiter should get it with state already "in_use"
+    pool.release(instanceId);
+
+    // Before the waiter's microtask runs, the instance should already be in_use
+    // (not idle), preventing a concurrent acquire from grabbing it
+    const instanceNow = pool.getInstance(instanceId);
+    assertExists(instanceNow);
+    assertEquals(instanceNow.state, "in_use");
+
+    // The waiter should resolve successfully
+    const instance2 = await acquire2Promise;
+    assertEquals(instance2.id, instanceId);
+    assertEquals(instance2.state, "in_use");
+
+    // Verify only one instance exists (no double-spend created a second)
+    const stats = pool.getStats();
+    assertEquals(stats.totalInstances, 1);
+
+    pool.release(instance2.id);
     await pool.stop();
   },
 });

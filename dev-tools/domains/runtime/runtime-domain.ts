@@ -7,6 +7,8 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateEvaluateParams, validateGetPropertiesParams, validateReleaseObjectParams, validateReleaseObjectGroupParams } from "./runtime-validators.ts";
 import type { ScriptExecutor} from "../../../browser/src/engine/javascript/ScriptExecutor.ts";
 import type {
     RemoteObject,
@@ -39,19 +41,19 @@ export class RuntimeDomain extends BaseDomain {
 
     protected setup(): void {
         this.registerMethod("evaluate", "Evaluate JavaScript expression", async (params) => {
-            return await this.evaluate(params as unknown as EvaluateParams);
+            return await this.evaluate(validateParams(params, validateEvaluateParams) as EvaluateParams);
         });
 
         this.registerMethod("getProperties", "Get properties of a remote object", async (params) => {
-            return await this.getProperties(params as unknown as GetPropertiesParams);
+            return await this.getProperties(validateParams(params, validateGetPropertiesParams) as GetPropertiesParams);
         });
 
         this.registerMethod("releaseObject", "Release a remote object reference", async (params) => {
-            return await this.releaseObject(params as unknown as ReleaseObjectParams);
+            return await this.releaseObject(validateParams(params, validateReleaseObjectParams) as ReleaseObjectParams);
         });
 
         this.registerMethod("releaseObjectGroup", "Release all objects in a group", async (params) => {
-            return await this.releaseObjectGroup(params as unknown as ReleaseObjectGroupParams);
+            return await this.releaseObjectGroup(validateParams(params, validateReleaseObjectGroupParams) as ReleaseObjectGroupParams);
         });
 
         this.registerMethod("getHeapUsage", "Get heap usage statistics", async () => {

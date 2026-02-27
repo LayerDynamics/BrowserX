@@ -10,14 +10,16 @@ import type { CacheConfig, CacheEntryMetadata, CacheStats, EvictionPolicy } from
  */
 class CacheEntry<T = unknown> {
   value: T;
+  key: string;
   metadata: CacheEntryMetadata;
 
   // For LRU doubly-linked list
   prev: CacheEntry<T> | null = null;
   next: CacheEntry<T> | null = null;
 
-  constructor(value: T, ttl: DurationMs, size: Bytes) {
-    const now = Date.now();
+  constructor(key: string, value: T, ttl: DurationMs, size: Bytes) {
+    this.key = key;
+    const now: Timestamp = Date.now();
     this.value = value;
     this.metadata = {
       createdAt: now,
@@ -159,7 +161,7 @@ export class QueryCacheManager {
     }
 
     // Create and add entry
-    const entry = new CacheEntry(value, entryTTL, size);
+    const entry = new CacheEntry(key, value, entryTTL, size);
     this.entries.set(key, entry);
     this.stats.currentSize += size;
     this.stats.entryCount = this.entries.size;
@@ -267,9 +269,9 @@ export class QueryCacheManager {
 
     switch (this.config.evictionPolicy) {
       case "LRU":
-        // Evict tail (least recently used)
+        // Evict tail (least recently used) — O(1) via stored key
         if (this.tail) {
-          keyToEvict = this.findKeyForEntry(this.tail);
+          keyToEvict = this.tail.key;
         }
         break;
 
@@ -288,16 +290,6 @@ export class QueryCacheManager {
       this.delete(keyToEvict);
       this.stats.evictions++;
     }
-  }
-
-  /**
-   * Find key for given entry (reverse lookup)
-   */
-  private findKeyForEntry(entry: CacheEntry): string | null {
-    for (const [key, e] of this.entries) {
-      if (e === entry) return key;
-    }
-    return null;
   }
 
   /**

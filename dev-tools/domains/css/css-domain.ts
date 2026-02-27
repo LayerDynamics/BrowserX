@@ -27,6 +27,8 @@ import type {
     GetAllStyleSheetsResult,
     ForcePseudoStateParams,
 } from "./css-types.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateGetComputedStyleParams, validateGetMatchedStylesParams, validateGetStyleSheetTextParams, validateForcePseudoStateParams } from "./css-validators.ts";
 
 /**
  * CSS Domain - stylesheet and computed style inspection
@@ -41,15 +43,15 @@ export class CSSDomain extends BaseDomain {
 
     protected setup(): void {
         this.registerMethod("getComputedStyleForNode", "Get computed style for a node", async (params) => {
-            return await this.getComputedStyleForNode(params as unknown as GetComputedStyleParams);
+            return await this.getComputedStyleForNode(validateParams(params, validateGetComputedStyleParams) as GetComputedStyleParams);
         });
 
         this.registerMethod("getMatchedStylesForNode", "Get matched CSS rules for a node", async (params) => {
-            return await this.getMatchedStylesForNode(params as unknown as GetMatchedStylesParams);
+            return await this.getMatchedStylesForNode(validateParams(params, validateGetMatchedStylesParams) as GetMatchedStylesParams);
         });
 
         this.registerMethod("getStyleSheetText", "Get stylesheet text", async (params) => {
-            return await this.getStyleSheetText(params as unknown as GetStyleSheetTextParams);
+            return await this.getStyleSheetText(validateParams(params, validateGetStyleSheetTextParams) as GetStyleSheetTextParams);
         });
 
         this.registerMethod("getAllStyleSheets", "Get all stylesheet headers", async () => {
@@ -57,7 +59,7 @@ export class CSSDomain extends BaseDomain {
         });
 
         this.registerMethod("forcePseudoState", "Force pseudo state on element", async (params) => {
-            return await this.forcePseudoState(params as unknown as ForcePseudoStateParams);
+            return await this.forcePseudoState(validateParams(params, validateForcePseudoStateParams) as ForcePseudoStateParams);
         });
 
         // Register events

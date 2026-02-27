@@ -270,6 +270,50 @@ Deno.test("EventCoordinator - stats reflect correct state when disabled", async 
 // Edge Cases
 // ============================================================================
 
+Deno.test({
+  name: "EventCoordinator - stop() awaits proxy loop promise before completing (race condition fix)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const config = createTestEventLoopConfig({ enabled: false });
+    const coordinator = new EventCoordinator(config);
+
+    await coordinator.start();
+
+    // Inject a mock proxy event loop and promise to simulate the race
+    let loopResolved = false;
+    let stopCalled = false;
+
+    const mockProxyEventLoop = {
+      run: () => new Promise<void>(() => {}), // never resolves on its own
+      stop: () => { stopCalled = true; },
+      isRunning: () => !stopCalled,
+      getStats: () => ({}),
+      queueMacroTask: () => 0,
+      queueMicroTask: () => 0,
+    };
+
+    // Create a promise that resolves after a short delay (simulating loop finishing after stop)
+    const loopPromise = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        loopResolved = true;
+        resolve();
+      }, 50);
+    });
+
+    // Set private fields directly to simulate an active proxy loop
+    (coordinator as any).proxyEventLoop = mockProxyEventLoop;
+    (coordinator as any).proxyLoopPromise = loopPromise;
+
+    // stop() should await the loop promise before returning
+    await coordinator.stop();
+
+    // The loop promise should have resolved because stop() waited for it
+    assertEquals(loopResolved, true, "stop() should have awaited the proxy loop promise");
+    assertEquals(stopCalled, true, "stop() should have called proxyEventLoop.stop()");
+  },
+});
+
 Deno.test("EventCoordinator - handles various priority levels for tasks", () => {
   const config = createTestEventLoopConfig({ enabled: false });
   const coordinator = new EventCoordinator(config);

@@ -310,6 +310,8 @@ export class HARRecorder {
   private options: RecordingOptions = {};
   private currentPageId: string | null = null;
   private pageIdCounter: number = 0;
+  private compiledIncludePatterns: RegExp[] = [];
+  private compiledExcludePatterns: RegExp[] = [];
 
   constructor(page: BrowserPage) {
     this.page = page;
@@ -338,6 +340,10 @@ export class HARRecorder {
     this.pendingRequests.clear();
     this.currentPageId = null;
     this.pageIdCounter = 0;
+
+    // Pre-compile regex patterns for shouldRecord()
+    this.compiledIncludePatterns = (this.options.includePatterns || []).map((p) => new RegExp(p));
+    this.compiledExcludePatterns = (this.options.excludePatterns || []).map((p) => new RegExp(p));
   }
 
   /**
@@ -654,19 +660,17 @@ export class HARRecorder {
    * Check if URL should be recorded based on filters
    */
   private shouldRecord(url: string): boolean {
-    // Check exclude patterns
-    if (this.options.excludePatterns) {
-      for (const pattern of this.options.excludePatterns) {
-        if (new RegExp(pattern).test(url)) {
-          return false;
-        }
+    // Check exclude patterns using pre-compiled regexes
+    for (const regex of this.compiledExcludePatterns) {
+      if (regex.test(url)) {
+        return false;
       }
     }
 
-    // Check include patterns
-    if (this.options.includePatterns && this.options.includePatterns.length > 0) {
-      for (const pattern of this.options.includePatterns) {
-        if (new RegExp(pattern).test(url)) {
+    // Check include patterns using pre-compiled regexes
+    if (this.compiledIncludePatterns.length > 0) {
+      for (const regex of this.compiledIncludePatterns) {
+        if (regex.test(url)) {
           return true;
         }
       }

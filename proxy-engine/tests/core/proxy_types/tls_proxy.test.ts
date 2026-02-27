@@ -372,8 +372,12 @@ Deno.test({
       },
     };
     const proxy = new TLSProxy(route, { mode: "termination" });
-    const response = await proxy.handleRequest(createTestRequest(), createTestContext());
-    assertEquals(response.statusCode, 502);
+    try {
+      const response = await proxy.handleRequest(createTestRequest(), createTestContext());
+      assertEquals(response.statusCode, 502);
+    } finally {
+      await proxy.close();
+    }
   },
 });
 
@@ -395,8 +399,12 @@ Deno.test({
       },
     };
     const proxy = new TLSProxy(route, { mode: "termination" });
-    await proxy.handleRequest(createTestRequest(), createTestContext());
-    assertEquals(proxy.getStats().connectionErrors, 1);
+    try {
+      await proxy.handleRequest(createTestRequest(), createTestContext());
+      assertEquals(proxy.getStats().connectionErrors, 1);
+    } finally {
+      await proxy.close();
+    }
   },
 });
 
@@ -470,8 +478,12 @@ Deno.test({
       },
     };
     const proxy = new TLSProxy(route, { mode: "termination" });
-    await proxy.handleRequest(createTestRequest(), createTestContext());
-    assertEquals(proxy.getStats().tlsTerminations, 1);
+    try {
+      await proxy.handleRequest(createTestRequest(), createTestContext());
+      assertEquals(proxy.getStats().tlsTerminations, 1);
+    } finally {
+      await proxy.close();
+    }
   },
 });
 
@@ -539,9 +551,13 @@ Deno.test({
       },
     };
     const proxy = new TLSProxy(route, { mode: "termination" });
-    await proxy.handleRequest(createTestRequest(), createTestContext());
-    await proxy.handleRequest(createTestRequest(), createTestContext());
-    assertEquals(proxy.getStats().totalConnections, 2);
+    try {
+      await proxy.handleRequest(createTestRequest(), createTestContext());
+      await proxy.handleRequest(createTestRequest(), createTestContext());
+      assertEquals(proxy.getStats().totalConnections, 2);
+    } finally {
+      await proxy.close();
+    }
   },
 });
 
@@ -619,12 +635,17 @@ Deno.test({
     const proxy1 = new TLSProxy(route1);
     const proxy2 = new TLSProxy(route2);
 
-    await proxy1.handleRequest(createTestRequest(), createTestContext());
-    await proxy1.handleRequest(createTestRequest(), createTestContext());
-    await proxy2.handleRequest(createTestRequest(), createTestContext());
+    try {
+      await proxy1.handleRequest(createTestRequest(), createTestContext());
+      await proxy1.handleRequest(createTestRequest(), createTestContext());
+      await proxy2.handleRequest(createTestRequest(), createTestContext());
 
-    assertEquals(proxy1.getStats().totalConnections, 2);
-    assertEquals(proxy2.getStats().totalConnections, 1);
+      assertEquals(proxy1.getStats().totalConnections, 2);
+      assertEquals(proxy2.getStats().totalConnections, 1);
+    } finally {
+      await proxy1.close();
+      await proxy2.close();
+    }
   },
 });
 

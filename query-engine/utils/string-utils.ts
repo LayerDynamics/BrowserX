@@ -55,6 +55,35 @@ export function unescapeString(str: string): string {
 }
 
 /**
+ * Escape a CSS selector for safe interpolation into JavaScript strings
+ * passed to querySelector/querySelectorAll. Prevents injection when
+ * selectors are embedded in template strings like: `document.querySelector('${selector}')`.
+ *
+ * This escapes JS string special characters (quotes, backslashes, newlines)
+ * and rejects null bytes and XSS patterns.
+ */
+export function escapeSelector(selector: string): string {
+  // Reject null bytes
+  if (selector.includes("\0")) {
+    throw new Error("Selector must not contain null bytes");
+  }
+  // Reject XSS patterns
+  if (/<script|javascript:|on\w+=/gi.test(selector)) {
+    throw new Error("Selector contains dangerous content");
+  }
+  // Escape JS string special characters to prevent breaking out of quotes
+  return selector
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+/**
  * Escape special characters for use in regular expressions
  */
 export function escapeRegex(str: string): string {
@@ -202,7 +231,14 @@ export function repeat(str: string, count: number): string {
  * Reverse string
  */
 export function reverse(str: string): string {
-  return str.split("").reverse().join("");
+  try {
+    // deno-lint-ignore no-explicit-any
+    const segmenter = new (Intl as any).Segmenter(undefined, { granularity: "grapheme" });
+    return [...segmenter.segment(str)].map((s: { segment: string }) => s.segment).reverse().join("");
+  } catch {
+    // Fallback for environments without Intl.Segmenter — handles surrogate pairs but not grapheme clusters
+    return [...str].reverse().join("");
+  }
 }
 
 /**
@@ -259,15 +295,27 @@ export function matchesLike(
   pattern: string,
   caseInsensitive: boolean = false,
 ): boolean {
+  // Handle escape sequences before regex conversion
+  // Replace \_ and \% with placeholders
+  const ESCAPED_UNDERSCORE = "\x00";
+  const ESCAPED_PERCENT = "\x01";
+
+  let processed = pattern
+    .replace(/\\\\/g, "\x02") // Preserve escaped backslashes first
+    .replace(/\\%/g, ESCAPED_PERCENT)
+    .replace(/\\_/g, ESCAPED_UNDERSCORE);
+
   // Convert SQL LIKE pattern to regex
   // % = .* (any characters)
   // _ = . (single character)
-  const regexPattern = pattern
+  const regexPattern = processed
     .split("%")
     .map(escapeRegex)
     .join(".*")
-    .replace(/\\_/g, ".")
-    .replace(/_/g, ".");
+    .replace(/_/g, ".")
+    .replace(/\x00/g, "_") // Restore escaped underscore as literal
+    .replace(/\x01/g, "%") // Restore escaped percent as literal
+    .replace(/\x02/g, "\\\\"); // Restore escaped backslash
 
   const flags = caseInsensitive ? "i" : "";
   return new RegExp(`^${regexPattern}$`, flags).test(text);

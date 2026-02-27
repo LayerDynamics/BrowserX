@@ -12,11 +12,13 @@
 import type { HTTPRequest, HTTPResponse } from "../network/transport/http/http.ts";
 import { HTTP11Client } from "../network/transport/http/http.ts";
 import { HTTPSClient } from "../network/transport/http/https.ts";
+import { Socket } from "../network/transport/socket/socket.ts";
 import type { Route, UpstreamServer } from "../../gateway/router/request_router.ts";
 import type { LoadBalancer } from "../../gateway/router/load_balancer/types.ts";
 import { createLoadBalancer } from "../../gateway/router/load_balancer/factory.ts";
 import { HealthMonitor } from "../connection/health_check.ts";
 import {
+  ConnectionState,
   DEFAULT_CONNECTION_POOL_CONFIG,
   UpstreamConnectionManager,
 } from "../connection/connection_manager.ts";
@@ -198,23 +200,32 @@ export class TLSProxy {
   private async handleTermination(
     request: HTTPRequest,
     server: UpstreamServer,
-    context: RequestContext,
+    _context: RequestContext,
   ): Promise<HTTPResponse> {
     this.stats.tlsTerminations++;
 
-    // Forward as plain HTTP
-    const client = new HTTP11Client({
-      host: server.host,
-      port: server.port,
-      timeout: this.config.timeout,
-    });
+    // Acquire pooled connection to upstream
+    const pooledConn = await this.connectionManager.getConnection(
+      server,
+      this.config.timeout,
+    );
 
-    await client.connect();
     try {
+      // Wrap pooled TCP connection in Socket → HTTP11Client
+      const socket = Socket.fromConn(pooledConn.conn);
+      const client = new HTTP11Client(socket);
       const response = await client.sendRequest(request);
       return response;
+    } catch (error) {
+      // Connection failed — remove from pool so it's not reused
+      const pool = this.connectionManager.getPool(server.host, server.port);
+      pool.remove(pooledConn);
+      throw error;
     } finally {
-      await client.close();
+      // Release back to pool for reuse (only if not removed above)
+      if (pooledConn.state !== ConnectionState.CLOSED) {
+        this.connectionManager.releaseConnection(pooledConn);
+      }
     }
   }
 

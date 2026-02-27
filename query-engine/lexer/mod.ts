@@ -6,4 +6,4 @@
 export { createToken, getKeywordType, isKeyword, type Token, TokenType } from "./token.ts";
 
 // Export from tokenizer.ts
-export * from "./tokenizer.ts";
+export { Lexer, MAX_TOKENS } from "./tokenizer.ts";

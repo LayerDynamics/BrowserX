@@ -196,6 +196,7 @@ pub fn http3_send_request(conn_handle: u64, headers_json: &str, body: &str, fin:
             set_last_error(&TransportXError::Http3Error {
                 message: format!("Failed to send request body: {}", e),
             });
+            return -1;
         }
     }
 

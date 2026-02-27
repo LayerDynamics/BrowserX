@@ -8,6 +8,7 @@ import { assert, assertEquals, assertExists } from "@std/assert";
 import {
   type CertificateValidationResult,
   checkRevocationStatus,
+  derEncodeDistinguishedName,
   validateCertificate,
 } from "../../../../src/engine/network/security/Certificate.ts";
 import type { Certificate } from "../../../../src/types/network.ts";
@@ -375,5 +376,103 @@ Deno.test({
       assertEquals(result.valid, false);
       assertEquals(result.reason, scenario.expectedReason);
     }
+  },
+});
+
+// ============================================================================
+// DER Encoding of Distinguished Names (RFC 6960 OCSP fix)
+// ============================================================================
+
+Deno.test({
+  name: "derEncodeDistinguishedName - encodes single RDN (CN only)",
+  fn() {
+    const der = derEncodeDistinguishedName("CN=Example CA");
+    // Should produce a valid DER SEQUENCE
+    assertEquals(der[0], 0x30); // SEQUENCE tag
+    // Should contain SET > SEQUENCE > OID(CN) + PrintableString
+    assert(der.length > 10);
+    // Verify OID for CN (2.5.4.3) = [55 04 03]
+    const derStr = Array.from(der).map(b => b.toString(16).padStart(2, "0")).join("");
+    assert(derStr.includes("55040313"), "Should contain CN OID followed by PrintableString tag");
+  },
+});
+
+Deno.test({
+  name: "derEncodeDistinguishedName - encodes multiple RDNs",
+  fn() {
+    const der = derEncodeDistinguishedName("CN=Test CA, O=Test Inc, C=US");
+    assertEquals(der[0], 0x30); // outer SEQUENCE
+    // Should contain 3 SETs (one per RDN)
+    let setCount = 0;
+    let i = 1;
+    // Skip outer SEQUENCE length
+    if (der[i] >= 0x80) i += (der[i] & 0x7f) + 1; else i++;
+    while (i < der.length) {
+      if (der[i] === 0x31) setCount++; // SET tag
+      i++;
+    }
+    assertEquals(setCount, 3);
+  },
+});
+
+Deno.test({
+  name: "derEncodeDistinguishedName - produces deterministic output",
+  fn() {
+    const der1 = derEncodeDistinguishedName("CN=Example, O=Org");
+    const der2 = derEncodeDistinguishedName("CN=Example, O=Org");
+    assertEquals(der1, der2);
+  },
+});
+
+Deno.test({
+  name: "derEncodeDistinguishedName - different DNs produce different DER",
+  fn() {
+    const der1 = derEncodeDistinguishedName("CN=CA One");
+    const der2 = derEncodeDistinguishedName("CN=CA Two");
+    assert(der1.length > 0);
+    assert(der2.length > 0);
+    // They should differ
+    const str1 = Array.from(der1).join(",");
+    const str2 = Array.from(der2).join(",");
+    assert(str1 !== str2);
+  },
+});
+
+Deno.test({
+  name: "derEncodeDistinguishedName - SHA-1 hash differs from text encoding",
+  async fn() {
+    const dn = "CN=Example CA, O=Example Inc";
+    const derBytes = derEncodeDistinguishedName(dn);
+    const textBytes = new TextEncoder().encode(dn);
+
+    const derHash = new Uint8Array(await crypto.subtle.digest("SHA-1", derBytes));
+    const textHash = new Uint8Array(await crypto.subtle.digest("SHA-1", textBytes));
+
+    // DER encoding and text encoding should produce different hashes
+    const derHex = Array.from(derHash).map(b => b.toString(16).padStart(2, "0")).join("");
+    const textHex = Array.from(textHash).map(b => b.toString(16).padStart(2, "0")).join("");
+    assert(derHex !== textHex, "DER hash should differ from text hash");
+  },
+});
+
+Deno.test({
+  name: "checkRevocationStatus - uses issuerRaw DER bytes when available",
+  async fn() {
+    // Create a cert with issuerRaw field (simulating parsed DER certificate)
+    const issuerRawBytes = derEncodeDistinguishedName("CN=Test CA");
+    const cert = createMockCertificate({
+      issuer: "CN=Test CA",
+    });
+    // Attach issuerRaw
+    (cert as Certificate & { issuerRaw?: Uint8Array }).issuerRaw = issuerRawBytes;
+
+    const issuerCert = createMockCertificate({
+      subject: "CN=Test CA",
+      issuer: "CN=Test CA",
+    });
+
+    // Should not throw - no OCSP URL so returns false (soft-fail)
+    const revoked = await checkRevocationStatus(cert, issuerCert);
+    assertEquals(revoked, false);
   },
 });

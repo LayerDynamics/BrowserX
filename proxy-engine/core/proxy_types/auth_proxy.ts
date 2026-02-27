@@ -15,10 +15,12 @@ import type { LoadBalancer } from "../../gateway/router/load_balancer/types.ts";
 import { createLoadBalancer } from "../../gateway/router/load_balancer/factory.ts";
 import { HealthMonitor } from "../connection/health_check.ts";
 import {
+  ConnectionState,
   DEFAULT_CONNECTION_POOL_CONFIG,
   UpstreamConnectionManager,
 } from "../connection/connection_manager.ts";
 import { HTTP11Client } from "../network/transport/http/http.ts";
+import { Socket } from "../network/transport/socket/socket.ts";
 
 /**
  * Authentication method
@@ -252,10 +254,7 @@ export class AuthProxy {
     // Create load balancer
     this.loadBalancer = createLoadBalancer(route.upstream.loadBalancingStrategy);
 
-    // Create connection manager
-    // TODO: connectionManager is created but forwardToUpstream() bypasses it by creating
-    // raw HTTP11Client connections. Full pool wiring requires refactoring to use
-    // acquire()/release() from the pool instead of direct HTTP11Client instantiation.
+    // Create connection manager for pooled upstream connections
     this.connectionManager = new UpstreamConnectionManager(DEFAULT_CONNECTION_POOL_CONFIG);
 
     // Create health monitor if health check config provided
@@ -477,35 +476,42 @@ export class AuthProxy {
     // Build upstream request
     const upstreamRequest = this.buildUpstreamRequest(request, server, context, user);
 
-    // Forward request with retries
+    // Forward request with retries using connection pool
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
-      try {
-        const client = new HTTP11Client({
-          host: server.host,
-          port: server.port,
-          timeout: this.config.timeout,
-        });
+      const pooledConn = await this.connectionManager.getConnection(
+        server,
+        this.config.timeout,
+      );
 
-        await client.connect();
+      try {
+        // Wrap pooled TCP connection in Socket → HTTP11Client
+        const socket = Socket.fromConn(pooledConn.conn);
+        const client = new HTTP11Client(socket);
         const response = await client.sendRequest(upstreamRequest);
-        await client.close();
 
         // Only retry on 5xx server errors; return 4xx and other responses immediately
         if (response.statusCode >= 500) {
           lastError = new Error(`Upstream returned ${response.statusCode}`);
           console.error(`[Auth Proxy] Forward attempt ${attempt + 1} got ${response.statusCode}`);
+          this.connectionManager.releaseConnection(pooledConn);
           if (attempt < this.config.maxRetries - 1) {
             await new Promise((resolve) => setTimeout(resolve, this.config.retryDelay));
           }
           continue;
         }
 
+        // Success — release connection back to pool
+        this.connectionManager.releaseConnection(pooledConn);
         return response;
       } catch (error) {
         lastError = error as Error;
         console.error(`[Auth Proxy] Forward attempt ${attempt + 1} failed:`, error);
+
+        // Connection failed — remove from pool so it's not reused
+        const pool = this.connectionManager.getPool(server.host, server.port);
+        pool.remove(pooledConn);
 
         if (attempt < this.config.maxRetries - 1) {
           await new Promise((resolve) => setTimeout(resolve, this.config.retryDelay));

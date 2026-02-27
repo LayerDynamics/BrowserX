@@ -53,6 +53,7 @@ import {
   WaitStep,
 } from "./plan.ts";
 import { DependencyGraphBuilder } from "./dependency-graph.ts";
+import { escapeSelector } from "../utils/string-utils.ts";
 
 /**
  * Escape a string for safe use in JavaScript string literals
@@ -106,7 +107,7 @@ function sanitizeSelector(selector: string): string {
     throw new Error('Invalid selector: unbalanced brackets');
   }
 
-  return escapeJsString(selector);
+  return escapeSelector(selector);
 }
 
 /**
@@ -171,7 +172,28 @@ export class ExecutionPlanner {
     // Find parallel execution opportunities
     const parallelGroups = this.dependencyGraphBuilder.findParallelGroups(dependencies);
 
-    // Estimate total cost
+    // Wrap multi-step parallel groups as ParallelStep nodes for the executor
+    for (const group of parallelGroups) {
+      if (group.length > 1) {
+        const groupSteps = group
+          .map((id: string) => this.currentSteps.find((s) => s.id === id))
+          .filter((s): s is ExecutionStep => s !== undefined);
+        if (groupSteps.length > 1) {
+          const pStep = this.createParallelStep(groupSteps, []);
+          // Replace the individual steps with the parallel wrapper
+          const firstIdx = this.currentSteps.indexOf(groupSteps[0]);
+          if (firstIdx >= 0) {
+            // Remove individual steps and insert parallel wrapper at first position
+            for (const gs of groupSteps) {
+              const idx = this.currentSteps.indexOf(gs);
+              if (idx >= 0) this.currentSteps.splice(idx, 1);
+            }
+            this.currentSteps.splice(firstIdx, 0, pStep);
+          }
+        }
+      }
+    }
+
     const estimatedCost = this.estimateTotalCost(this.currentSteps, dependencies);
 
     // Calculate resource requirements
@@ -450,8 +472,11 @@ export class ExecutionPlanner {
     // Temporarily generate body steps
     this.generateSteps(stmt.body, []);
 
-    // Extract body steps
+    // Extract body steps and track their IDs
     const bodySteps = this.currentSteps.splice(savedSteps);
+    for (const step of bodySteps) {
+      bodyStepIds.push(step.id);
+    }
 
     const loopStep: LoopStep = {
       id: this.generateStepId(),
@@ -463,7 +488,7 @@ export class ExecutionPlanner {
       estimatedCost: bodySteps.reduce((sum, s) => sum + s.estimatedCost, 0) * 10, // Assume 10 iterations
       dependencies,
       cacheable: false,
-      parallel: false, // Can be set to true if body has no cross-iteration dependencies
+      parallel: false, // Conservative: no cross-iteration parallelism by default (bodyStepIds tracked for future optimization)
     };
 
     this.currentSteps.push(loopStep);
@@ -759,9 +784,12 @@ export class ExecutionPlanner {
             // MATCHES uses regex directly
             if (binary.right.type === "LITERAL") {
               const pattern = String((binary.right as Literal).value);
-              return `(new RegExp(${JSON.stringify(pattern)}).test(String(${left})))`;
+              if (pattern.length > 1000) {
+                return `(false)`;
+              }
+              return `((s => { const t = String(s); return t.length > 10000 ? false : new RegExp(${JSON.stringify(pattern)}).test(t); })(${left}))`;
             }
-            return `(new RegExp(${right}).test(String(${left})))`;
+            return `((v => { try { const p = String(v); if (p.length > 1000) return false; const t = String(${left}); if (t.length > 10000) return false; return new RegExp(p).test(t); } catch { return false; } })(${right}))`;
           }
 
           case "CONTAINS": {
@@ -904,7 +932,11 @@ export class ExecutionPlanner {
       "TO_JSON": "JSON.stringify",
     };
 
-    return mapping[funcName.toUpperCase()] || funcName.toLowerCase();
+    const mapped = mapping[funcName.toUpperCase()];
+    if (!mapped) {
+      throw new Error(`Unknown function: ${funcName}`);
+    }
+    return mapped;
   }
 
   /**
@@ -1025,14 +1057,33 @@ export class ExecutionPlanner {
   }
 
   /**
+   * Create a parallel execution step wrapping a group of independent steps
+   */
+  private createParallelStep(stepGroup: ExecutionStep[], dependencies: string[]): ParallelStep {
+    return {
+      id: this.generateStepId(),
+      type: ExecutionStepType.PARALLEL,
+      steps: stepGroup,
+      estimatedCost: Math.max(...stepGroup.map((s) => s.estimatedCost)),
+      dependencies,
+      cacheable: false,
+    };
+  }
+
+  /**
    * Estimate total execution cost
    */
   private estimateTotalCost(
     steps: ExecutionStep[],
     _dependencies: any,
   ): number {
-    // Use parallel execution time if available
-    return this.dependencyGraphBuilder.estimateParallelExecutionTime(_dependencies);
+    // Use parallel execution time if available, fall back to sum of step costs
+    const parallelEstimate = this.dependencyGraphBuilder.estimateParallelExecutionTime(_dependencies);
+    if (parallelEstimate > 0) {
+      return parallelEstimate;
+    }
+    // Fallback: sum individual step estimated costs
+    return steps.reduce((total, step) => total + (step.estimatedCost || 1), 0);
   }
 
   /**

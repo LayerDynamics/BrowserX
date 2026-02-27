@@ -603,24 +603,31 @@ export class CompositorThread {
       throw new Error("[CompositorThread] Compositor not initialized");
     }
 
-    const width = this.canvas.width;
-    const height = this.canvas.height;
-
     // CPU rendering mode - extract pixels from Canvas 2D
     if (this.cpuRenderMode) {
       if (!this.cpuCanvas) {
-        throw new Error(
-          "[CompositorThread] CPU mode but no canvas available - call composite() first",
-        );
+        // No composite() was called yet — attempt one now if we have a render tree
+        if (this.lastRenderObject) {
+          this.composite();
+        }
+        if (!this.cpuCanvas) {
+          throw new Error(
+            "[CompositorThread] CPU mode but no canvas available - call composite() first",
+          );
+        }
       }
+
+      // Use cpuCanvas dimensions (the actual painted canvas), not the stub canvas
+      const cpuWidth = this.cpuCanvas.width;
+      const cpuHeight = this.cpuCanvas.height;
 
       const context = this.cpuCanvas.getContext("2d");
       if (!context) {
         throw new Error("[CompositorThread] Failed to get 2D context from CPU canvas");
       }
 
-      // Extract pixels - let errors propagate
-      const imageData = context.getImageData(0, 0, width, height);
+      // Extract pixels from the painted canvas using its own dimensions
+      const imageData = context.getImageData(0, 0, cpuWidth, cpuHeight);
       return imageData.data;
     }
 
@@ -629,6 +636,8 @@ export class CompositorThread {
       throw new Error("[CompositorThread] WebGL context not available and CPU mode not enabled");
     }
 
+    const width = this.canvas!.width;
+    const height = this.canvas!.height;
     const pixels = new Uint8ClampedArray(width * height * 4);
     this.gl.readPixels(0, 0, width, height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, pixels);
 

@@ -361,6 +361,22 @@ export class IDBFactory {
   }
 
   /**
+   * Clear all databases
+   */
+  async clearAll(): Promise<void> {
+    for (const db of this.databases.values()) {
+      if (!db.isClosed()) {
+        try {
+          db.close();
+        } catch {
+          // Ignore close errors (e.g., active transactions) during cleanup
+        }
+      }
+    }
+    this.databases.clear();
+  }
+
+  /**
    * Compare versions
    */
   cmp(a: unknown, b: unknown): number {

@@ -51,13 +51,18 @@ export interface EventCoordinatorStats {
  *
  * Manages all event loops in the BrowserX runtime.
  */
+/** Maximum number of queued events before dropping oldest */
+const MAX_QUEUE_DEPTH = 10000;
+
 export class EventCoordinator {
   private proxyEventLoop: ProxyEventLoop | null = null;
   private browserEventLoops: Map<string, BrowserEventLoopHandle> = new Map();
   private eventListeners: RuntimeEventListener[] = [];
+  private eventQueue: RuntimeEvent[] = [];
   private config: EventLoopConfig;
   private started = false;
   private proxyLoopPromise: Promise<void> | null = null;
+  private droppedEventCount = 0;
 
   constructor(config: EventLoopConfig) {
     this.config = config;
@@ -239,18 +244,24 @@ export class EventCoordinator {
     }
     this.browserEventLoops.clear();
 
+    // Capture the proxy loop promise before stopping (stopProxyEventLoop nulls it)
+    const pendingProxyLoop = this.proxyLoopPromise;
+
     // Stop proxy event loop
     this.stopProxyEventLoop();
 
-    // Wait for proxy loop to finish if running
-    if (this.proxyLoopPromise) {
+    // Wait for proxy loop to finish if it was running
+    if (pendingProxyLoop) {
       try {
         await Promise.race([
-          this.proxyLoopPromise,
+          pendingProxyLoop,
           new Promise((resolve) => setTimeout(resolve, 1000)), // 1s timeout
         ]);
-      } catch {
-        // Ignore errors during shutdown
+      } catch (error) {
+        // Log proxy loop errors for debugging rather than silently discarding
+        if (error instanceof Error && error.message !== "Proxy event loop stop timeout") {
+          console.warn("[EventCoordinator] Proxy event loop error during shutdown:", error.message);
+        }
       }
     }
 
@@ -378,9 +389,27 @@ export class EventCoordinator {
   }
 
   /**
-   * Emit event to all listeners
+   * Get the number of events dropped due to backpressure
+   */
+  getDroppedEventCount(): number {
+    return this.droppedEventCount;
+  }
+
+  /**
+   * Emit event to all listeners with backpressure
    */
   private emitEvent(event: RuntimeEvent): void {
+    // Backpressure: if queue exceeds max depth, drop oldest events
+    this.eventQueue.push(event);
+    if (this.eventQueue.length > MAX_QUEUE_DEPTH) {
+      const dropped = this.eventQueue.length - MAX_QUEUE_DEPTH;
+      this.eventQueue.splice(0, dropped);
+      this.droppedEventCount += dropped;
+      console.warn(
+        `[EventCoordinator] Backpressure: dropped ${dropped} oldest events (total dropped: ${this.droppedEventCount})`,
+      );
+    }
+
     for (const listener of this.eventListeners) {
       try {
         listener(event);

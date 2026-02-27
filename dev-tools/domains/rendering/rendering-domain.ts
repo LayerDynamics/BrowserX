@@ -25,6 +25,8 @@ import type {
     SetShowFPSCounterParams,
 } from "./rendering-types.ts";
 import type { RenderObject, PaintCommand, CompositorLayerData } from "../../../browser/src/types/rendering.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateSetShowPaintRectsParams, validateSetShowLayoutBordersParams, validateSetShowFPSCounterParams } from "./rendering-validators.ts";
 
 /**
  * Rendering Domain - render tree, layout, paint, and compositor inspection
@@ -60,15 +62,15 @@ export class RenderingDomain extends BaseDomain {
         });
 
         this.registerMethod("setShowPaintRects", "Toggle paint rectangle visualization", async (params) => {
-            return await this.setShowPaintRects(params as unknown as SetShowPaintRectsParams);
+            return await this.setShowPaintRects(validateParams(params, validateSetShowPaintRectsParams) as SetShowPaintRectsParams);
         });
 
         this.registerMethod("setShowLayoutBorders", "Toggle layout border visualization", async (params) => {
-            return await this.setShowLayoutBorders(params as unknown as SetShowLayoutBordersParams);
+            return await this.setShowLayoutBorders(validateParams(params, validateSetShowLayoutBordersParams) as SetShowLayoutBordersParams);
         });
 
         this.registerMethod("setShowFPSCounter", "Toggle FPS counter overlay", async (params) => {
-            return await this.setShowFPSCounter(params as unknown as SetShowFPSCounterParams);
+            return await this.setShowFPSCounter(validateParams(params, validateSetShowFPSCounterParams) as SetShowFPSCounterParams);
         });
 
         // Register events

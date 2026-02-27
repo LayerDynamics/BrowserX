@@ -14,6 +14,7 @@ use winit::event_loop::{EventLoop, ActiveEventLoop, ControlFlow};
 use winit::platform::pump_events::EventLoopExtPumpEvents;
 use winit::window::WindowId as WinitWindowId;
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -23,9 +24,16 @@ use std::cell::RefCell;
 // GLOBAL STATE
 // ============================================================================
 
+/// Maximum number of events held in the queue. When the queue is full,
+/// high-frequency events (MouseMoved, MouseWheel, RedrawRequested) are
+/// coalesced per-window, and if still at capacity the oldest non-critical
+/// event is dropped. Critical events (CloseRequested, Destroyed) are never
+/// dropped.
+const EVENT_QUEUE_CAPACITY: usize = 4096;
+
 lazy_static! {
     /// Event queue for FFI polling
-    static ref EVENT_QUEUE: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
+    static ref EVENT_QUEUE: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::with_capacity(EVENT_QUEUE_CAPACITY));
 
     /// Pending window creation request
     static ref PENDING_WINDOW: Mutex<Option<WindowConfig>> = Mutex::new(None);
@@ -90,13 +98,12 @@ impl ApplicationHandler for PixpaneApp {
         // Pass event to egui first (but not CloseRequested - that's always for the app)
         let egui_consumed = if !matches!(event, WinitWindowEvent::CloseRequested) {
             crate::window::system::with_window_mut(id, |window| {
-                // Get window pointer before mutable borrow
-                let winit_window = window.inner() as *const winit::window::Window;
+                // Clone the Arc to get an independent handle — avoids aliasing
+                // between the shared winit window ref and &mut render_state
+                let winit_window = Arc::clone(&window.inner);
 
                 if let Some(render_state) = &mut window.render_state {
-                    // SAFETY: We know the window is valid for the duration of this closure
-                    let winit_window_ref = unsafe { &*winit_window };
-                    render_state.egui_state.handle_event(winit_window_ref, &event)
+                    render_state.egui_state.handle_event(&winit_window, &event)
                 } else {
                     false
                 }
@@ -193,12 +200,9 @@ impl ApplicationHandler for PixpaneApp {
         };
 
         // Queue event if it's critical or egui didn't consume it
-        if let Some(event) = window_event {
+        if let Some(evt) = window_event {
             if is_critical || !egui_consumed {
-                EVENT_QUEUE.lock().push_back(Event {
-                    window_id: id,
-                    event,
-                });
+                enqueue_event(Event { window_id: id, event: evt });
             }
         }
 
@@ -208,6 +212,74 @@ impl ApplicationHandler for PixpaneApp {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
         self.process_pending_windows(event_loop);
     }
+}
+
+// ============================================================================
+// BOUNDED EVENT QUEUE
+// ============================================================================
+
+/// Returns true for high-frequency events that can be coalesced (only the
+/// latest value matters — intermediate positions/deltas are stale).
+fn is_coalescable(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::MouseMoved { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::RedrawRequested
+    )
+}
+
+/// Returns true for events that must never be dropped.
+fn is_critical_event(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::CloseRequested | WindowEvent::Destroyed
+    )
+}
+
+/// Returns true if two events are the same variant (ignoring payload).
+fn same_variant(a: &WindowEvent, b: &WindowEvent) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
+/// Push an event into EVENT_QUEUE with bounded capacity.
+///
+/// When the queue is at capacity:
+/// 1. For coalescable events, replace the last queued event of the same
+///    type for the same window (in-place update, no growth).
+/// 2. Otherwise, drop the oldest non-critical event to make room.
+/// 3. If the queue is entirely critical events (extremely unlikely at 4096),
+///    the new non-critical event is silently dropped.
+fn enqueue_event(event: Event) {
+    let mut queue = EVENT_QUEUE.lock();
+
+    if queue.len() < EVENT_QUEUE_CAPACITY {
+        queue.push_back(event);
+        return;
+    }
+
+    // Queue is full — try to coalesce if applicable
+    if is_coalescable(&event.event) {
+        // Walk backwards to find the latest same-variant event for this window
+        for existing in queue.iter_mut().rev() {
+            if existing.window_id == event.window_id
+                && same_variant(&existing.event, &event.event)
+            {
+                existing.event = event.event;
+                return;
+            }
+        }
+    }
+
+    // No coalescable match — drop the oldest non-critical event
+    if let Some(idx) = queue
+        .iter()
+        .position(|e| !is_critical_event(&e.event))
+    {
+        queue.remove(idx);
+        queue.push_back(event);
+    }
+    // else: queue is entirely critical events — drop the new event silently
 }
 
 // ============================================================================
@@ -296,4 +368,126 @@ pub fn poll_event() -> Option<Event> {
 /// after a window has been destroyed.
 pub fn drain_events_for_window(window_id: u64) {
     EVENT_QUEUE.lock().retain(|event| event.window_id != window_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mouse_moved(wid: u64, x: f64, y: f64) -> Event {
+        Event { window_id: wid, event: WindowEvent::MouseMoved { x, y } }
+    }
+
+    fn close_requested(wid: u64) -> Event {
+        Event { window_id: wid, event: WindowEvent::CloseRequested }
+    }
+
+    fn focused(wid: u64) -> Event {
+        Event { window_id: wid, event: WindowEvent::Focused { focused: true } }
+    }
+
+    fn redraw(wid: u64) -> Event {
+        Event { window_id: wid, event: WindowEvent::RedrawRequested }
+    }
+
+    /// Serialize all tests that touch the global EVENT_QUEUE.
+    static TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+    /// Run a closure with exclusive access to the global queue, clearing
+    /// it before and after.
+    fn with_clean_queue(f: impl FnOnce()) {
+        let _guard = TEST_LOCK.lock();
+        EVENT_QUEUE.lock().clear();
+        f();
+        EVENT_QUEUE.lock().clear();
+    }
+
+    #[test]
+    fn enqueue_within_capacity() {
+        with_clean_queue(|| {
+            for i in 0..100 {
+                enqueue_event(mouse_moved(1, i as f64, 0.0));
+            }
+            assert_eq!(EVENT_QUEUE.lock().len(), 100);
+        });
+    }
+
+    #[test]
+    fn coalescable_events_are_replaced_at_capacity() {
+        with_clean_queue(|| {
+            for _ in 0..EVENT_QUEUE_CAPACITY {
+                enqueue_event(focused(1));
+            }
+            assert_eq!(EVENT_QUEUE.lock().len(), EVENT_QUEUE_CAPACITY);
+
+            // Add a mouse-moved — drops oldest non-critical to make room
+            enqueue_event(mouse_moved(1, 10.0, 20.0));
+            assert_eq!(EVENT_QUEUE.lock().len(), EVENT_QUEUE_CAPACITY);
+
+            // Another mouse-moved for same window — should coalesce in-place
+            enqueue_event(mouse_moved(1, 99.0, 99.0));
+            assert_eq!(EVENT_QUEUE.lock().len(), EVENT_QUEUE_CAPACITY);
+
+            let queue = EVENT_QUEUE.lock();
+            let last_mm = queue.iter().rev().find(|e| {
+                e.window_id == 1 && matches!(e.event, WindowEvent::MouseMoved { .. })
+            });
+            match &last_mm.unwrap().event {
+                WindowEvent::MouseMoved { x, y } => {
+                    assert_eq!(*x, 99.0);
+                    assert_eq!(*y, 99.0);
+                }
+                _ => panic!("expected MouseMoved"),
+            }
+        });
+    }
+
+    #[test]
+    fn critical_events_never_dropped() {
+        with_clean_queue(|| {
+            for _ in 0..EVENT_QUEUE_CAPACITY {
+                enqueue_event(close_requested(1));
+            }
+            // Non-critical event when queue is all critical — silently dropped
+            enqueue_event(focused(1));
+            let queue = EVENT_QUEUE.lock();
+            assert_eq!(queue.len(), EVENT_QUEUE_CAPACITY);
+            assert!(queue.iter().all(|e| matches!(e.event, WindowEvent::CloseRequested)));
+        });
+    }
+
+    #[test]
+    fn coalesce_per_window() {
+        with_clean_queue(|| {
+            for _ in 0..EVENT_QUEUE_CAPACITY {
+                enqueue_event(focused(1));
+            }
+            enqueue_event(mouse_moved(1, 1.0, 1.0));
+            enqueue_event(mouse_moved(2, 2.0, 2.0));
+
+            let queue = EVENT_QUEUE.lock();
+            let mm_events: Vec<_> = queue.iter().filter(|e| {
+                matches!(e.event, WindowEvent::MouseMoved { .. })
+            }).collect();
+            assert_eq!(mm_events.len(), 2);
+            assert_eq!(mm_events[0].window_id, 1);
+            assert_eq!(mm_events[1].window_id, 2);
+        });
+    }
+
+    #[test]
+    fn redraw_coalesces() {
+        with_clean_queue(|| {
+            for _ in 0..EVENT_QUEUE_CAPACITY {
+                enqueue_event(focused(1));
+            }
+            enqueue_event(redraw(1));
+            enqueue_event(redraw(1)); // should coalesce
+            let queue = EVENT_QUEUE.lock();
+            let redraw_count = queue.iter().filter(|e| {
+                matches!(e.event, WindowEvent::RedrawRequested)
+            }).count();
+            assert_eq!(redraw_count, 1);
+        });
+    }
 }

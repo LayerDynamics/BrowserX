@@ -35,15 +35,31 @@ export interface ScreenshotEntry {
   size: number;
 }
 
+export interface ActivityTrackerOptions {
+  baseDir?: string;
+  maxActivities?: number;
+  maxScreenshots?: number;
+}
+
 export class ActivityTracker {
   private baseDir: string;
   private enabled: boolean = true;
   private activities: ActivityEntry[] = [];
   private screenshots: ScreenshotEntry[] = [];
   private initialized: boolean = false;
+  private maxActivities: number;
+  private maxScreenshots: number;
 
-  constructor(baseDir: string = ".browserx/usage_data") {
-    this.baseDir = baseDir;
+  constructor(baseDirOrOptions: string | ActivityTrackerOptions = ".browserx/usage_data") {
+    if (typeof baseDirOrOptions === "string") {
+      this.baseDir = baseDirOrOptions;
+      this.maxActivities = 10000;
+      this.maxScreenshots = 1000;
+    } else {
+      this.baseDir = baseDirOrOptions.baseDir ?? ".browserx/usage_data";
+      this.maxActivities = baseDirOrOptions.maxActivities ?? 10000;
+      this.maxScreenshots = baseDirOrOptions.maxScreenshots ?? 1000;
+    }
   }
 
   async initialize(): Promise<void> {
@@ -69,7 +85,7 @@ export class ActivityTracker {
       sessionId.startsWith("/") ||
       !/^[a-zA-Z0-9_-]+$/.test(sessionId)
     ) {
-      throw new Error(`Invalid sessionId: contains unsafe characters: ${sessionId}`);
+      throw new Error("Invalid sessionId: contains unsafe characters");
     }
     return sessionId;
   }
@@ -87,8 +103,8 @@ export class ActivityTracker {
     url: string,
     timing: { total: number; breakdown?: Record<string, number> }
   ): Promise<void> {
-    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return;
+    this.sanitizeSessionId(sessionId);
     await this.initialize();
 
     const entry: ActivityEntry = {
@@ -97,11 +113,12 @@ export class ActivityTracker {
       type: "navigate",
       sessionId,
       url,
-      data: { url },
+      data: {},
       timing,
     };
 
     this.activities.push(entry);
+    this.trimActivities();
     await this.appendLog(entry);
   }
 
@@ -115,8 +132,8 @@ export class ActivityTracker {
     width: number = 1920,
     height: number = 1080
   ): Promise<string> {
-    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return "";
+    this.sanitizeSessionId(sessionId);
     await this.initialize();
 
     const id = this.generateId();
@@ -144,6 +161,7 @@ export class ActivityTracker {
     };
 
     this.screenshots.push(entry);
+    this.trimScreenshots();
 
     // Also track as activity
     await this.trackActivity("screenshot", sessionId, url, {
@@ -168,6 +186,7 @@ export class ActivityTracker {
     timing?: { total: number; breakdown?: Record<string, number> }
   ): Promise<void> {
     if (!this.enabled) return;
+    if (sessionId) this.sanitizeSessionId(sessionId);
     await this.initialize();
 
     const entry: ActivityEntry = {
@@ -181,6 +200,7 @@ export class ActivityTracker {
     };
 
     this.activities.push(entry);
+    this.trimActivities();
     await this.appendLog(entry);
   }
 
@@ -221,11 +241,57 @@ export class ActivityTracker {
   }
 
   /**
-   * Append entry to daily log file
+   * Trim activities array to maxActivities, removing oldest entries
+   */
+  private trimActivities(): void {
+    if (this.activities.length > this.maxActivities) {
+      this.activities.splice(0, this.activities.length - this.maxActivities);
+    }
+  }
+
+  /**
+   * Trim screenshots array to maxScreenshots, removing oldest entries
+   */
+  private trimScreenshots(): void {
+    if (this.screenshots.length > this.maxScreenshots) {
+      this.screenshots.splice(0, this.screenshots.length - this.maxScreenshots);
+    }
+  }
+
+  getMaxActivities(): number {
+    return this.maxActivities;
+  }
+
+  getMaxScreenshots(): number {
+    return this.maxScreenshots;
+  }
+
+  /** Maximum log file size before rotation (50MB) */
+  private static readonly MAX_LOG_SIZE = 50 * 1024 * 1024;
+
+  /**
+   * Append entry to daily log file with rotation
    */
   private async appendLog(entry: ActivityEntry): Promise<void> {
     const datePath = this.getDatePath();
     const logPath = `${this.baseDir}/logs/${datePath}.jsonl`;
+
+    // Check file size and rotate if needed
+    try {
+      const stat = await Deno.stat(logPath);
+      if (stat.size >= ActivityTracker.MAX_LOG_SIZE) {
+        const backupPath = `${logPath}.1`;
+        try {
+          await Deno.remove(backupPath);
+        } catch {
+          // Backup may not exist
+        }
+        await Deno.rename(logPath, backupPath);
+        console.log(`[ActivityTracker] Rotated log file: ${logPath} -> ${backupPath}`);
+      }
+    } catch {
+      // File doesn't exist yet, no rotation needed
+    }
 
     const line = JSON.stringify(entry) + "\n";
     await Deno.writeTextFile(logPath, line, { append: true, create: true });
@@ -238,8 +304,8 @@ export class ActivityTracker {
     sessionId: string,
     metadata: Record<string, unknown>
   ): Promise<void> {
-    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return;
+    this.sanitizeSessionId(sessionId);
     await this.initialize();
 
     const filePath = `${this.baseDir}/metadata/${sessionId}.json`;
@@ -303,7 +369,12 @@ export function getActivityTracker(): ActivityTracker {
   return instance;
 }
 
-export function initActivityTracker(baseDir?: string): ActivityTracker {
-  instance = new ActivityTracker(baseDir);
+export function initActivityTracker(baseDirOrOptions?: string | ActivityTrackerOptions): ActivityTracker {
+  instance = new ActivityTracker(baseDirOrOptions);
   return instance;
+}
+
+/** Reset singleton — for testing only */
+export function resetActivityTracker(): void {
+  instance = null;
 }

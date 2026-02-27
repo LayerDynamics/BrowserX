@@ -509,19 +509,27 @@ pub fn close_connection(handle: u64, error_code: u64, reason: &str) -> u8 {
 
     qconn.state = ConnectionState::Draining;
 
-    // Flush outgoing close packets
+    // Collect outgoing close packets while holding CONNECTIONS write lock
     let socket_handle = qconn.socket_handle;
     let mut out = vec![0u8; 1350];
-    {
+    let mut outgoing_packets: Vec<(Vec<u8>, std::net::SocketAddr)> = Vec::new();
+    loop {
+        let (write, send_info) = match qconn.conn.send(&mut out) {
+            Ok(v) => v,
+            Err(quiche::Error::Done) => break,
+            Err(_) => break,
+        };
+        outgoing_packets.push((out[..write].to_vec(), send_info.to));
+    }
+    drop(conns);
+    // CONNECTIONS write lock is dropped here
+
+    // Flush close packets over UDP (only UDP_SOCKETS read lock, no CONNECTIONS lock)
+    if !outgoing_packets.is_empty() {
         let sockets = UDP_SOCKETS.read();
         if let Some(sock) = sockets.get(&socket_handle) {
-            loop {
-                let (write, send_info) = match qconn.conn.send(&mut out) {
-                    Ok(v) => v,
-                    Err(quiche::Error::Done) => break,
-                    Err(_) => break,
-                };
-                let _ = sock.socket.send_to(&out[..write], send_info.to);
+            for (data, dest) in &outgoing_packets {
+                let _ = sock.socket.send_to(data, *dest);
             }
         }
     }

@@ -216,7 +216,7 @@ export class Browser {
    * @returns Current browser configuration
    */
   getConfig(): Required<BrowserConfig> {
-    return this.config;
+    return { ...this.config };
   }
 
   /**
@@ -241,10 +241,13 @@ export class Browser {
   /**
    * Clear all browser data
    */
-  clearData(): void {
+  async clearData(): Promise<void> {
     console.log("Clearing browser data...");
     this.cookieManager.clearAll();
-    this.storageManager.clearAllSessionStorage();
+    await this.storageManager.clearAllSessionStorage();
+    await this.storageManager.clearAllLocalStorage();
+    await indexedDB.clearAll();
+    await cacheStorageManager.clearAllStorages();
     this.renderingPipeline.clearCache();
     this.quotaManager.clearAll();
     console.log("Browser data cleared");
@@ -508,7 +511,7 @@ export class Browser {
  */
 export async function main(): Promise<void> {
   console.log("=".repeat(60));
-  console.log("GeoProx Browser - Starting");
+  console.log("BrowserX - Starting");
   console.log("=".repeat(60));
 
   // Create browser instance

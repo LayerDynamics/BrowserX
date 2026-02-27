@@ -57,6 +57,14 @@ export class ContentSecurityPolicy {
     this.parse(headerValue);
   }
 
+  /** Check if strict-dynamic is present for script-src (or default-src fallback) */
+  private hasStrictDynamic(directive: CSPDirective): boolean {
+    if (directive !== "script-src" && directive !== "default-src") return false;
+    const sources = this.directives.get("script-src") ??
+      this.directives.get("default-src");
+    return sources?.includes("'strict-dynamic'" as CSPSourceExpression) ?? false;
+  }
+
   private parse(header: string): void {
     for (const part of header.split(";")) {
       const trimmed = part.trim();
@@ -72,6 +80,11 @@ export class ContentSecurityPolicy {
       this.directives.get("default-src");
     if (!sources) return true; // No policy = allow all
 
+    // CSP3: When strict-dynamic is present for script-src, host-based allowlists,
+    // scheme-sources, 'self', 'unsafe-inline', and '*' are ignored.
+    // Only nonce/hash-based trust (and dynamic script loading) applies.
+    const strictDynamic = this.hasStrictDynamic(directive);
+
     for (const expr of sources) {
       if (expr === "'none'") {
         const violation = new CSPViolation(
@@ -85,6 +98,20 @@ export class ContentSecurityPolicy {
         this.violations.push(violation);
         return this.reportOnly;
       }
+
+      // When strict-dynamic is active, skip host/scheme/'self'/'unsafe-inline'/*
+      if (strictDynamic) {
+        // Only nonce and hash sources are honored under strict-dynamic
+        if (expr === "'strict-dynamic'") continue;
+        if (expr === "'unsafe-inline'") continue;
+        if (expr === "'self'") continue;
+        if (expr === "*") continue;
+        // Skip host-source and scheme-source
+        if (expr.endsWith(":") || this.isHostSource(expr)) continue;
+        // Nonce/hash don't apply to external resource URL checks in allows()
+        continue;
+      }
+
       if (expr === "'self'" && this.isSameOrigin(source, pageOrigin)) return true;
       if (expr === "*") return true;
       if (this.matchesHostSource(source, expr)) return true;
@@ -112,8 +139,11 @@ export class ContentSecurityPolicy {
       this.directives.get("default-src");
     if (!sources) return true;
 
+    const strictDynamic = sources.includes("'strict-dynamic'" as CSPSourceExpression);
+
     for (const expr of sources) {
-      if (expr === "'unsafe-inline'") return true;
+      // CSP3: 'unsafe-inline' is ignored when strict-dynamic is present
+      if (expr === "'unsafe-inline'" && !strictDynamic) return true;
       if (nonce && expr === `'nonce-${nonce}'`) return true;
       if (
         hash &&
@@ -177,6 +207,11 @@ export class ContentSecurityPolicy {
     return this.reportOnly;
   }
 
+  /** Check if a dynamically-inserted script is allowed (CSP3 strict-dynamic propagation) */
+  allowsDynamicScript(): boolean {
+    return this.hasStrictDynamic("script-src");
+  }
+
   getViolations(): CSPViolation[] {
     return [...this.violations];
   }
@@ -199,6 +234,15 @@ export class ContentSecurityPolicy {
     } catch {
       return false;
     }
+  }
+
+  private isHostSource(expr: string): boolean {
+    // A host-source is a hostname, URL with scheme, or wildcard subdomain
+    if (expr.startsWith("*.")) return true;
+    if (expr.includes("://")) return true;
+    // Check if it looks like a hostname (not a keyword like 'self')
+    if (!expr.startsWith("'") && !expr.endsWith(":") && expr.includes(".")) return true;
+    return false;
   }
 
   private matchesHostSource(source: string, hostExpr: string): boolean {

@@ -32,6 +32,8 @@ export {
   ActivityTracker,
   getActivityTracker,
   initActivityTracker,
+  resetActivityTracker,
   type ActivityEntry,
   type ScreenshotEntry,
+  type ActivityTrackerOptions,
 } from "./ActivityTracker.ts";

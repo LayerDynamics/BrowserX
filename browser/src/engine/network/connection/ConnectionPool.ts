@@ -36,8 +36,8 @@ export class ConnectionPool {
   private cleanupInterval: number | null = null;
   // Track pending acquisitions to prevent race conditions
   private pendingAcquisitions: Map<string, number> = new Map();
-  // Lock to prevent race conditions in acquire
-  private acquireLock: Map<string, Promise<void>> = new Map();
+  // Per-key mutex queue: each key has a chain of promises ensuring serial access
+  private acquireMutex: Map<string, Promise<void>> = new Map();
   // Cached system CA certificates for TLS validation
   private systemCAs: Certificate[] | null = null;
   private systemCAsLoading: Promise<Certificate[]> | null = null;
@@ -89,22 +89,28 @@ export class ConnectionPool {
   ): Promise<PooledConnection> {
     const key = this.getConnectionKey(host, port, useTLS, hostname);
 
-    // Wait for any pending acquire operation on this key to complete
-    while (this.acquireLock.has(key)) {
-      await this.acquireLock.get(key);
-    }
+    // Chain this acquisition onto the per-key mutex queue.
+    // Each caller awaits all previous callers for the same key,
+    // ensuring strictly serialized access (no TOCTOU race).
+    const previous = this.acquireMutex.get(key) ?? Promise.resolve();
 
-    // Create a new lock for this acquisition
     let releaseLock: () => void;
-    const lockPromise = new Promise<void>((resolve) => {
+    const gate = new Promise<void>((resolve) => {
       releaseLock = resolve;
     });
-    this.acquireLock.set(key, lockPromise);
+    // Immediately register our gate so the next caller queues behind us
+    this.acquireMutex.set(key, gate);
+
+    // Wait for the previous holder to finish
+    await previous;
 
     try {
       return await this.acquireInternal(host, port, useTLS, hostname, key);
     } finally {
-      this.acquireLock.delete(key);
+      // If no one else queued behind us, clean up the map entry
+      if (this.acquireMutex.get(key) === gate) {
+        this.acquireMutex.delete(key);
+      }
       releaseLock!();
     }
   }

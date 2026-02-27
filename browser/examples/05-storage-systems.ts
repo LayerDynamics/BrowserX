@@ -50,7 +50,7 @@ const origins = storageManager.getAllOrigins();
 console.log(`✓ Origins with storage: ${origins.join(", ")}`);
 
 // Clear sessionStorage
-storageManager.clearAllSessionStorage();
+await storageManager.clearAllSessionStorage();
 console.log(`✓ Cleared all sessionStorage`);
 console.log(`  sessionStorage length after clear: ${sessionStorage.length}`);
 
@@ -297,7 +297,7 @@ console.log(
 
 // Cleanup
 console.log("\n7. Cleanup...");
-browser.clearData();
+await browser.clearData();
 console.log(`✓ Cleared all browser data`);
 
 await browser.close();

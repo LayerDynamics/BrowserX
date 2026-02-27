@@ -968,6 +968,44 @@ Deno.test({
 });
 
 Deno.test({
+  name: "CacheManager - store fails closed when encryption fails (no plaintext fallback)",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    // Create a key that cannot encrypt (wrong algorithm)
+    const badKey = await crypto.subtle.generateKey(
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    ) as CryptoKey;
+
+    const cache = new CacheManager(createTestConfig({
+      encryption: {
+        enabled: true,
+        key: badKey, // HMAC key cannot be used with AES-GCM → encrypt() will throw
+      },
+    }));
+
+    const key = "GET:https://example.com/secret";
+    const response = createTestResponse("Sensitive data", {
+      "cache-control": "max-age=3600",
+    });
+
+    const stored = await cache.store(key, response);
+
+    // store() should return false — entry NOT cached
+    assertEquals(stored, false);
+    // Cache should remain empty — no plaintext fallback
+    assertEquals(cache.getCache().size, 0);
+    assertEquals(cache.getCacheSize(), 0);
+    // Encryption failure stat should be incremented
+    assertEquals(cache.getStats().encryptionFailures, 1);
+
+    cache.destroy();
+  },
+});
+
+Deno.test({
   name: "CacheManager - returns null on decryption error",
   sanitizeResources: false,
   sanitizeOps: false,

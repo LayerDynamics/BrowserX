@@ -13,7 +13,7 @@ import { QueryEngine, type IQueryEngine } from "@browserx/query-engine";
 import {
   BrowserXRuntime,
   type BrowserXRuntimeConfig,
-  createTestConfig,
+  createDefaultConfig,
 } from "@browserx/runtime";
 import { SessionManager, type SessionManagerConfig } from "../session/session-manager.ts";
 import { withTimeout, TimeoutError } from "../../proxy-engine/core/network/utils/timeout.ts";
@@ -291,7 +291,7 @@ export class ServiceInitializer {
     console.error("[ServiceInitializer] Initializing BrowserX Runtime...");
     const startTime = Date.now();
 
-    const baseConfig = createTestConfig();
+    const baseConfig = createDefaultConfig();
     const runtime = new BrowserXRuntime({
       config: {
         ...baseConfig,

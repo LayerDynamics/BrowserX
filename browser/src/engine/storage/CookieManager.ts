@@ -6,6 +6,7 @@
  */
 
 import type { Cookie } from "../../types/storage.ts";
+import { isPublicSuffix, getRegistrableDomain } from "./public-suffix-list.ts";
 
 /**
  * Cookie storage key
@@ -117,7 +118,7 @@ export class CookieManager {
   /**
    * Get cookies for URL and SameSite context
    */
-  getCookiesForRequest(url: string, requestUrl: string, method: string = "GET"): Cookie[] {
+  getCookiesForRequest(url: string, requestUrl: string, method: string = "GET", requestType: "navigation" | "subresource" = "subresource"): Cookie[] {
     const cookies = this.getCookies(url);
     const isSameSite = this.isSameSiteRequest(url, requestUrl);
     const isSafeMethod = ["GET", "HEAD", "OPTIONS", "TRACE"].includes(method.toUpperCase());
@@ -130,7 +131,7 @@ export class CookieManager {
 
       // SameSite=Lax: Same-site or top-level navigation with safe method
       if (cookie.sameSite === "Lax") {
-        if (!isSameSite && !(isSafeMethod && this.isTopLevelNavigation(requestUrl))) {
+        if (!isSameSite && !(isSafeMethod && this.isTopLevelNavigation(requestType))) {
           return false;
         }
       }
@@ -213,8 +214,8 @@ export class CookieManager {
         return false;
       }
 
-      // Cannot set cookie for public suffix (simplified check)
-      if (this.isPublicSuffix(cookie.domain)) {
+      // Cannot set cookie for public suffix
+      if (isPublicSuffix(cookie.domain)) {
         return false;
       }
     }
@@ -293,41 +294,15 @@ export class CookieManager {
     const target = this.parseUrl(targetUrl);
     const request = this.parseUrl(requestUrl);
 
-    return this.getRegistrableDomain(target.hostname) ===
-      this.getRegistrableDomain(request.hostname);
+    return getRegistrableDomain(target.hostname) ===
+      getRegistrableDomain(request.hostname);
   }
 
   /**
    * Check if navigation is top-level
    */
-  private isTopLevelNavigation(url: string): boolean {
-    // Simplified: assume navigation if URL is provided
-    // In real implementation, would check if this is a main frame navigation
-    return true;
-  }
-
-  /**
-   * Get registrable domain (eTLD+1)
-   */
-  private getRegistrableDomain(hostname: string): string {
-    const parts = hostname.split(".");
-
-    // Simplified: return last two parts for .com, .org, etc.
-    // Real implementation would use Public Suffix List
-    if (parts.length >= 2) {
-      return parts.slice(-2).join(".");
-    }
-
-    return hostname;
-  }
-
-  /**
-   * Check if domain is public suffix
-   */
-  private isPublicSuffix(domain: string): boolean {
-    // Simplified check for common TLDs
-    const publicSuffixes = ["com", "org", "net", "edu", "gov", "mil", "co.uk", "co.jp"];
-    return publicSuffixes.includes(domain.toLowerCase());
+  private isTopLevelNavigation(requestType: "navigation" | "subresource"): boolean {
+    return requestType === "navigation";
   }
 
   /**
@@ -342,10 +317,10 @@ export class CookieManager {
         pathname: parsed.pathname,
       };
     } catch {
-      // Fallback for invalid URLs
+      // Fallback for invalid URLs — return empty hostname to safely fail matching
       return {
         protocol: "http:",
-        hostname: url,
+        hostname: "",
         pathname: "/",
       };
     }
@@ -392,5 +367,9 @@ export class CookieManager {
       this.cleanupInterval = null;
     }
     this.cookies.clear();
+  }
+
+  [Symbol.dispose as symbol](): void {
+    this.dispose();
   }
 }

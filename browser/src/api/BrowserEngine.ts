@@ -29,7 +29,7 @@ export class BrowserEngine implements IBrowserEngine {
       config || {
         width: 1024,
         height: 768,
-        enableJavaScript: false,
+        enableJavaScript: true,
         enableStorage: true,
       },
     );
@@ -40,6 +40,7 @@ export class BrowserEngine implements IBrowserEngine {
    */
   async newPage(): Promise<BrowserPage> {
     const page = new BrowserPage(this.browser);
+    this.pages.push(page);
     return page;
   }
 

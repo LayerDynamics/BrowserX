@@ -3,6 +3,11 @@
  *
  * Implements HTML5 tokenization state machine.
  * Converts raw HTML text into tokens for tree construction.
+ *
+ * Performance: Uses index-based slicing instead of per-character string
+ * concatenation (+=) in hot paths. Tag names, attribute names, and attribute
+ * values track start positions and use substring() when complete, avoiding
+ * thousands of intermediate string allocations.
  */
 
 export enum HTMLTokenType {
@@ -71,8 +76,18 @@ export class HTMLTokenizer {
   private currentAttributeName: string = "";
   private currentAttributeValue: string = "";
 
+  // Index-based slicing for hot-path string accumulation.
+  // Instead of per-character += (creating thousands of intermediate strings),
+  // we track start positions and use substring() when the token is complete.
+  private tagNameStart: number = -1;
+  private attrNameStart: number = -1;
+  private attrValueStart: number = -1;
+
   // Temporary buffer
   private temporaryBuffer: string = "";
+
+  // Last emitted start tag name — used for RCDATA/RAWTEXT end tag matching
+  private lastStartTagName: string = "";
 
   /**
    * Tokenize HTML string
@@ -83,6 +98,9 @@ export class HTMLTokenizer {
     this.tokens = [];
     this.state = HTMLTokenizerState.DATA;
     this.currentToken = null;
+    this.tagNameStart = -1;
+    this.attrNameStart = -1;
+    this.attrValueStart = -1;
 
     while (this.position < this.input.length) {
       this.consumeNextCharacter();
@@ -92,6 +110,36 @@ export class HTMLTokenizer {
     this.tokens.push({ type: HTMLTokenType.EOF });
 
     return this.tokens;
+  }
+
+  /**
+   * Flush the tag name from the index-based slice into currentToken.tagName
+   */
+  private flushTagName(): void {
+    if (this.tagNameStart >= 0) {
+      this.currentToken!.tagName = this.input.substring(this.tagNameStart, this.position).toLowerCase();
+      this.tagNameStart = -1;
+    }
+  }
+
+  /**
+   * Flush the attribute name from the index-based slice into currentAttributeName
+   */
+  private flushAttrName(): void {
+    if (this.attrNameStart >= 0) {
+      this.currentAttributeName = this.input.substring(this.attrNameStart, this.position).toLowerCase();
+      this.attrNameStart = -1;
+    }
+  }
+
+  /**
+   * Flush the attribute value from the index-based slice into currentAttributeValue
+   */
+  private flushAttrValue(): void {
+    if (this.attrValueStart >= 0) {
+      this.currentAttributeValue = this.input.substring(this.attrValueStart, this.position);
+      this.attrValueStart = -1;
+    }
   }
 
   /**
@@ -182,6 +230,30 @@ export class HTMLTokenizer {
       case HTMLTokenizerState.BOGUS_COMMENT:
         this.handleBogusCommentState(char);
         break;
+      case HTMLTokenizerState.RCDATA:
+        this.handleRcdataState(char);
+        break;
+      case HTMLTokenizerState.RCDATA_LESS_THAN_SIGN:
+        this.handleRcdataLessThanSignState(char);
+        break;
+      case HTMLTokenizerState.RCDATA_END_TAG_OPEN:
+        this.handleRcdataEndTagOpenState(char);
+        break;
+      case HTMLTokenizerState.RCDATA_END_TAG_NAME:
+        this.handleRcdataEndTagNameState(char);
+        break;
+      case HTMLTokenizerState.RAWTEXT:
+        this.handleRawtextState(char);
+        break;
+      case HTMLTokenizerState.RAWTEXT_LESS_THAN_SIGN:
+        this.handleRawtextLessThanSignState(char);
+        break;
+      case HTMLTokenizerState.RAWTEXT_END_TAG_OPEN:
+        this.handleRawtextEndTagOpenState(char);
+        break;
+      case HTMLTokenizerState.RAWTEXT_END_TAG_NAME:
+        this.handleRawtextEndTagNameState(char);
+        break;
       default:
         this.position++;
     }
@@ -194,6 +266,8 @@ export class HTMLTokenizer {
     if (char === "<") {
       this.state = HTMLTokenizerState.TAG_OPEN;
       this.position++;
+    } else if (char === "&") {
+      this.consumeCharacterReference();
     } else {
       this.emitCharacterToken(char);
       this.position++;
@@ -205,8 +279,15 @@ export class HTMLTokenizer {
    */
   private handleTagOpenState(char: string): void {
     if (char === "!") {
-      this.state = HTMLTokenizerState.COMMENT_START;
-      this.position++;
+      // Per HTML5 spec, check for DOCTYPE before comment
+      const upcoming = this.input.substring(this.position + 1, this.position + 8);
+      if (upcoming.toUpperCase() === "DOCTYPE") {
+        this.position += 8; // skip "!DOCTYPE"
+        this.state = HTMLTokenizerState.DOCTYPE;
+      } else {
+        this.state = HTMLTokenizerState.COMMENT_START;
+        this.position++;
+      }
     } else if (char === "/") {
       this.state = HTMLTokenizerState.END_TAG_OPEN;
       this.position++;
@@ -216,6 +297,7 @@ export class HTMLTokenizer {
         tagName: "",
         attributes: new Map(),
       };
+      this.tagNameStart = this.position;
       this.state = HTMLTokenizerState.TAG_NAME;
       // Don't advance position - reprocess in TAG_NAME state
     } else if (char === "?") {
@@ -238,6 +320,7 @@ export class HTMLTokenizer {
         type: HTMLTokenType.END_TAG,
         tagName: "",
       };
+      this.tagNameStart = this.position;
       this.state = HTMLTokenizerState.TAG_NAME;
     } else if (char === ">") {
       this.state = HTMLTokenizerState.DATA;
@@ -250,20 +333,24 @@ export class HTMLTokenizer {
 
   /**
    * TAG_NAME state
+   * Uses index-based slicing: tagNameStart tracks where the name began,
+   * flushTagName() extracts it via substring when leaving this state.
    */
   private handleTagNameState(char: string): void {
     if (this.isWhitespace(char)) {
+      this.flushTagName();
       this.state = HTMLTokenizerState.BEFORE_ATTRIBUTE_NAME;
       this.position++;
     } else if (char === "/") {
+      this.flushTagName();
       this.state = HTMLTokenizerState.SELF_CLOSING_START_TAG;
       this.position++;
     } else if (char === ">") {
+      this.flushTagName();
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
-      this.currentToken!.tagName! += char.toLowerCase();
+      // Just advance - tag name will be extracted via substring when we leave this state
       this.position++;
     }
   }
@@ -279,26 +366,31 @@ export class HTMLTokenizer {
     } else if (char === "=") {
       this.currentAttributeName = char;
       this.currentAttributeValue = "";
+      this.attrNameStart = -1;
       this.state = HTMLTokenizerState.ATTRIBUTE_NAME;
       this.position++;
     } else {
       this.currentAttributeName = "";
       this.currentAttributeValue = "";
+      this.attrNameStart = this.position;
       this.state = HTMLTokenizerState.ATTRIBUTE_NAME;
     }
   }
 
   /**
    * ATTRIBUTE_NAME state
+   * Uses index-based slicing: attrNameStart tracks where the name began.
    */
   private handleAttributeNameState(char: string): void {
     if (this.isWhitespace(char) || char === "/" || char === ">") {
+      this.flushAttrName();
       this.state = HTMLTokenizerState.AFTER_ATTRIBUTE_NAME;
     } else if (char === "=") {
+      this.flushAttrName();
       this.state = HTMLTokenizerState.BEFORE_ATTRIBUTE_VALUE;
       this.position++;
     } else {
-      this.currentAttributeName += char.toLowerCase();
+      // Just advance - attr name will be extracted via substring when we leave this state
       this.position++;
     }
   }
@@ -319,12 +411,12 @@ export class HTMLTokenizer {
     } else if (char === ">") {
       this.addCurrentAttribute();
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
       this.addCurrentAttribute();
       this.currentAttributeName = "";
       this.currentAttributeValue = "";
+      this.attrNameStart = this.position;
       this.state = HTMLTokenizerState.ATTRIBUTE_NAME;
     }
   }
@@ -336,62 +428,70 @@ export class HTMLTokenizer {
     if (this.isWhitespace(char)) {
       this.position++;
     } else if (char === '"') {
+      this.attrValueStart = this.position + 1;
       this.state = HTMLTokenizerState.ATTRIBUTE_VALUE_DOUBLE_QUOTED;
       this.position++;
     } else if (char === "'") {
+      this.attrValueStart = this.position + 1;
       this.state = HTMLTokenizerState.ATTRIBUTE_VALUE_SINGLE_QUOTED;
       this.position++;
     } else if (char === ">") {
       this.addCurrentAttribute();
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
+      this.attrValueStart = this.position;
       this.state = HTMLTokenizerState.ATTRIBUTE_VALUE_UNQUOTED;
     }
   }
 
   /**
    * ATTRIBUTE_VALUE_DOUBLE_QUOTED state
+   * Uses index-based slicing: attrValueStart tracks where the value began.
    */
   private handleAttributeValueDoubleQuotedState(char: string): void {
     if (char === '"') {
+      this.flushAttrValue();
       this.state = HTMLTokenizerState.AFTER_ATTRIBUTE_VALUE_QUOTED;
       this.position++;
     } else {
-      this.currentAttributeValue += char;
+      // Just advance - attr value will be extracted via substring when we leave this state
       this.position++;
     }
   }
 
   /**
    * ATTRIBUTE_VALUE_SINGLE_QUOTED state
+   * Uses index-based slicing: attrValueStart tracks where the value began.
    */
   private handleAttributeValueSingleQuotedState(char: string): void {
     if (char === "'") {
+      this.flushAttrValue();
       this.state = HTMLTokenizerState.AFTER_ATTRIBUTE_VALUE_QUOTED;
       this.position++;
     } else {
-      this.currentAttributeValue += char;
+      // Just advance - attr value will be extracted via substring when we leave this state
       this.position++;
     }
   }
 
   /**
    * ATTRIBUTE_VALUE_UNQUOTED state
+   * Uses index-based slicing: attrValueStart tracks where the value began.
    */
   private handleAttributeValueUnquotedState(char: string): void {
     if (this.isWhitespace(char)) {
+      this.flushAttrValue();
       this.addCurrentAttribute();
       this.state = HTMLTokenizerState.BEFORE_ATTRIBUTE_NAME;
       this.position++;
     } else if (char === ">") {
+      this.flushAttrValue();
       this.addCurrentAttribute();
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
-      this.currentAttributeValue += char;
+      // Just advance - attr value will be extracted via substring when we leave this state
       this.position++;
     }
   }
@@ -410,7 +510,6 @@ export class HTMLTokenizer {
       this.position++;
     } else if (char === ">") {
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
       this.state = HTMLTokenizerState.BEFORE_ATTRIBUTE_NAME;
@@ -424,7 +523,6 @@ export class HTMLTokenizer {
     if (char === ">") {
       this.currentToken!.selfClosing = true;
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
       this.state = HTMLTokenizerState.BEFORE_ATTRIBUTE_NAME;
@@ -503,7 +601,6 @@ export class HTMLTokenizer {
   private handleCommentEndState(char: string): void {
     if (char === ">") {
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else if (char === "-") {
       this.currentToken!.data! += "-";
@@ -536,7 +633,6 @@ export class HTMLTokenizer {
     } else if (char === ">") {
       this.currentToken = { type: HTMLTokenType.DOCTYPE, data: "" };
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
       this.currentToken = { type: HTMLTokenType.DOCTYPE, data: "" };
@@ -553,7 +649,6 @@ export class HTMLTokenizer {
       this.position++;
     } else if (char === ">") {
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
       this.currentToken!.data! += char;
@@ -569,7 +664,6 @@ export class HTMLTokenizer {
       this.position++;
     } else if (char === ">") {
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
       // Skip remaining doctype tokens
@@ -610,6 +704,7 @@ export class HTMLTokenizer {
   private handleScriptDataEndTagOpenState(char: string): void {
     if (this.isAlpha(char)) {
       this.currentToken = { type: HTMLTokenType.END_TAG, tagName: "" };
+      this.tagNameStart = this.position;
       this.state = HTMLTokenizerState.SCRIPT_DATA_END_TAG_NAME;
     } else {
       this.emitCharacterToken("<");
@@ -620,9 +715,12 @@ export class HTMLTokenizer {
 
   /**
    * SCRIPT_DATA_END_TAG_NAME state
+   * Note: temporaryBuffer still uses += here because it stores the raw
+   * (non-lowercased) characters and is only a few chars long ("script").
    */
   private handleScriptDataEndTagNameState(char: string): void {
     if (this.isWhitespace(char) || char === "/" || char === ">") {
+      this.flushTagName();
       if (this.currentToken!.tagName === "script") {
         this.state = char === ">"
           ? HTMLTokenizerState.DATA
@@ -640,10 +738,10 @@ export class HTMLTokenizer {
         this.state = HTMLTokenizerState.SCRIPT_DATA;
       }
     } else if (this.isAlpha(char)) {
-      this.currentToken!.tagName! += char.toLowerCase();
       this.temporaryBuffer += char;
       this.position++;
     } else {
+      this.flushTagName();
       this.emitCharacterToken("<");
       this.emitCharacterToken("/");
       for (const c of this.temporaryBuffer) {
@@ -659,11 +757,149 @@ export class HTMLTokenizer {
   private handleBogusCommentState(char: string): void {
     if (char === ">") {
       this.emitCurrentToken();
-      this.state = HTMLTokenizerState.DATA;
       this.position++;
     } else {
       this.currentToken!.data! += char;
       this.position++;
+    }
+  }
+
+  // ── RCDATA states (textarea, title) ──
+
+  private handleRcdataState(char: string): void {
+    if (char === "<") {
+      this.state = HTMLTokenizerState.RCDATA_LESS_THAN_SIGN;
+      this.position++;
+    } else if (char === "&") {
+      this.consumeCharacterReference();
+    } else {
+      this.emitCharacterToken(char);
+      this.position++;
+    }
+  }
+
+  private handleRcdataLessThanSignState(char: string): void {
+    if (char === "/") {
+      this.temporaryBuffer = "";
+      this.state = HTMLTokenizerState.RCDATA_END_TAG_OPEN;
+      this.position++;
+    } else {
+      this.emitCharacterToken("<");
+      this.state = HTMLTokenizerState.RCDATA;
+    }
+  }
+
+  private handleRcdataEndTagOpenState(char: string): void {
+    if (this.isAlpha(char)) {
+      this.currentToken = { type: HTMLTokenType.END_TAG, tagName: "" };
+      this.temporaryBuffer = "";
+      this.state = HTMLTokenizerState.RCDATA_END_TAG_NAME;
+    } else {
+      this.emitCharacterToken("<");
+      this.emitCharacterToken("/");
+      this.state = HTMLTokenizerState.RCDATA;
+    }
+  }
+
+  private handleRcdataEndTagNameState(char: string): void {
+    if (this.isWhitespace(char) || char === "/" || char === ">") {
+      const candidateName = this.temporaryBuffer.toLowerCase();
+      if (candidateName === this.lastStartTagName) {
+        this.currentToken!.tagName = candidateName;
+        if (char === ">") {
+          this.emitCurrentToken();
+          this.position++;
+        } else {
+          this.state = char === "/" ? HTMLTokenizerState.SELF_CLOSING_START_TAG : HTMLTokenizerState.BEFORE_ATTRIBUTE_NAME;
+          this.position++;
+        }
+      } else {
+        // Not matching end tag — emit buffered chars and return to RCDATA
+        this.emitCharacterToken("<");
+        this.emitCharacterToken("/");
+        for (const c of this.temporaryBuffer) {
+          this.emitCharacterToken(c);
+        }
+        this.state = HTMLTokenizerState.RCDATA;
+      }
+    } else if (this.isAlpha(char)) {
+      this.temporaryBuffer += char;
+      this.position++;
+    } else {
+      this.emitCharacterToken("<");
+      this.emitCharacterToken("/");
+      for (const c of this.temporaryBuffer) {
+        this.emitCharacterToken(c);
+      }
+      this.state = HTMLTokenizerState.RCDATA;
+    }
+  }
+
+  // ── RAWTEXT states (style, xmp, iframe, etc.) ──
+
+  private handleRawtextState(char: string): void {
+    if (char === "<") {
+      this.state = HTMLTokenizerState.RAWTEXT_LESS_THAN_SIGN;
+      this.position++;
+    } else {
+      this.emitCharacterToken(char);
+      this.position++;
+    }
+  }
+
+  private handleRawtextLessThanSignState(char: string): void {
+    if (char === "/") {
+      this.temporaryBuffer = "";
+      this.state = HTMLTokenizerState.RAWTEXT_END_TAG_OPEN;
+      this.position++;
+    } else {
+      this.emitCharacterToken("<");
+      this.state = HTMLTokenizerState.RAWTEXT;
+    }
+  }
+
+  private handleRawtextEndTagOpenState(char: string): void {
+    if (this.isAlpha(char)) {
+      this.currentToken = { type: HTMLTokenType.END_TAG, tagName: "" };
+      this.temporaryBuffer = "";
+      this.state = HTMLTokenizerState.RAWTEXT_END_TAG_NAME;
+    } else {
+      this.emitCharacterToken("<");
+      this.emitCharacterToken("/");
+      this.state = HTMLTokenizerState.RAWTEXT;
+    }
+  }
+
+  private handleRawtextEndTagNameState(char: string): void {
+    if (this.isWhitespace(char) || char === "/" || char === ">") {
+      const candidateName = this.temporaryBuffer.toLowerCase();
+      if (candidateName === this.lastStartTagName) {
+        this.currentToken!.tagName = candidateName;
+        if (char === ">") {
+          this.emitCurrentToken();
+          this.position++;
+        } else {
+          this.state = char === "/" ? HTMLTokenizerState.SELF_CLOSING_START_TAG : HTMLTokenizerState.BEFORE_ATTRIBUTE_NAME;
+          this.position++;
+        }
+      } else {
+        this.emitCharacterToken("<");
+        this.emitCharacterToken("/");
+        for (const c of this.temporaryBuffer) {
+          this.emitCharacterToken(c);
+        }
+        this.state = HTMLTokenizerState.RAWTEXT;
+      }
+    } else if (this.isAlpha(char)) {
+      this.temporaryBuffer += char;
+      this.position++;
+    } else {
+      this.emitCharacterToken("<");
+      this.emitCharacterToken("/");
+      for (const c of this.temporaryBuffer) {
+        this.emitCharacterToken(c);
+      }
+      this.state = HTMLTokenizerState.RAWTEXT;
     }
   }
 
@@ -683,14 +919,24 @@ export class HTMLTokenizer {
   private emitCurrentToken(): void {
     if (this.currentToken) {
       this.tokens.push(this.currentToken as HTMLToken);
+      const emitted = this.currentToken;
       this.currentToken = null;
 
-      // Switch to script data state if script tag
-      if (
-        this.tokens[this.tokens.length - 1].type === HTMLTokenType.START_TAG &&
-        this.tokens[this.tokens.length - 1].tagName === "script"
-      ) {
-        this.state = HTMLTokenizerState.SCRIPT_DATA;
+      // Default next state is DATA
+      this.state = HTMLTokenizerState.DATA;
+
+      // Switch to appropriate content state based on start tag name
+      if (emitted.type === HTMLTokenType.START_TAG) {
+        const tagName = emitted.tagName!;
+        this.lastStartTagName = tagName;
+
+        if (tagName === "script") {
+          this.state = HTMLTokenizerState.SCRIPT_DATA;
+        } else if (tagName === "textarea" || tagName === "title") {
+          this.state = HTMLTokenizerState.RCDATA;
+        } else if (tagName === "style" || tagName === "xmp" || tagName === "iframe" || tagName === "noembed" || tagName === "noframes" || tagName === "noscript") {
+          this.state = HTMLTokenizerState.RAWTEXT;
+        }
       }
     }
   }
@@ -709,6 +955,78 @@ export class HTMLTokenizer {
       );
       this.currentAttributeName = "";
       this.currentAttributeValue = "";
+    }
+  }
+
+  /**
+   * Consume a character reference (&#NNN; or &#xHHH; or &name;)
+   * Handles numeric character references with overflow protection per HTML5 spec.
+   */
+  private consumeCharacterReference(): void {
+    // Skip the '&'
+    this.position++;
+
+    if (this.position >= this.input.length) {
+      this.emitCharacterToken("&");
+      return;
+    }
+
+    const next = this.input[this.position];
+
+    if (next === "#") {
+      // Numeric character reference
+      this.position++;
+
+      if (this.position >= this.input.length) {
+        this.emitCharacterToken("&");
+        this.emitCharacterToken("#");
+        return;
+      }
+
+      let isHex = false;
+      if (this.input[this.position] === "x" || this.input[this.position] === "X") {
+        isHex = true;
+        this.position++;
+      }
+
+      let numStr = "";
+      while (this.position < this.input.length) {
+        const c = this.input[this.position];
+        if (c === ";") {
+          this.position++;
+          break;
+        }
+        if (isHex && /[0-9a-fA-F]/.test(c)) {
+          numStr += c;
+          this.position++;
+        } else if (!isHex && /[0-9]/.test(c)) {
+          numStr += c;
+          this.position++;
+        } else {
+          break;
+        }
+      }
+
+      if (numStr.length === 0) {
+        // Not a valid numeric ref, emit the consumed characters literally
+        this.emitCharacterToken("&");
+        this.emitCharacterToken("#");
+        if (isHex) this.emitCharacterToken("x");
+        return;
+      }
+
+      const codePoint = parseInt(numStr, isHex ? 16 : 10);
+
+      // If codePoint exceeds Unicode max (0x10FFFF), use replacement character U+FFFD
+      if (codePoint > 0x10FFFF || codePoint === 0) {
+        this.emitCharacterToken("\uFFFD");
+      } else {
+        this.emitCharacterToken(String.fromCodePoint(codePoint));
+      }
+    } else {
+      // Named character reference — emit '&' literally and let the rest be parsed normally
+      // (Full named entity support would require a large lookup table)
+      this.emitCharacterToken("&");
     }
   }
 

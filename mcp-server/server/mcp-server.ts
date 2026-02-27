@@ -201,5 +201,10 @@ export async function createMCPServerAsync(config: MCPServerConfig = {}): Promis
  * Shutdown the MCP server and cleanup resources
  */
 export async function shutdownMCPServer(context: MCPServerContext): Promise<void> {
+  // Destroy rate limiter intervals to prevent timer leaks
+  const { evaluateRateLimiter, toolRateLimiter } = await import("../tools/browser-tools.ts");
+  evaluateRateLimiter.destroy();
+  toolRateLimiter.destroy();
+
   await context.serviceInitializer.shutdown("MCP server shutdown");
 }

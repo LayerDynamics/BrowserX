@@ -16,6 +16,8 @@ export interface HttpServerConfig {
   corsOrigins?: string[];
   /** Disable bearer token auth (for tests only) */
   disableAuth?: boolean;
+  /** Maximum concurrent HTTP sessions (default: 100) */
+  maxSessions?: number;
 }
 
 /**
@@ -102,6 +104,7 @@ export async function startHttpServer(
 
   // Session storage for stateful connections with proper MCP routing
   const sessions = new Map<string, HttpSession>();
+  const maxSessions = config.maxSessions ?? 100;
 
   /**
    * Set up message handler for a session's client transport
@@ -207,6 +210,14 @@ export async function startHttpServer(
             }
             sessionId = clientSessionId;
           } else {
+            // Enforce max concurrent sessions to prevent resource exhaustion
+            if (sessions.size >= maxSessions) {
+              return new Response(
+                JSON.stringify({ error: "Too many active sessions", limit: maxSessions }),
+                { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json", "Retry-After": "60" } }
+              );
+            }
+
             // No session ID provided — create a new session with server-generated ID
             sessionId = crypto.randomUUID();
 

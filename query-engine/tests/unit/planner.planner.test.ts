@@ -1442,3 +1442,260 @@ Deno.test({
     assertEquals(domStep.selector, "div > p");
   },
 });
+
+// ============================================================================
+// MATCHES Injection Prevention Tests
+// ============================================================================
+
+Deno.test({
+  name: "ExecutionPlanner - MATCHES with non-literal RHS wraps value safely to prevent injection",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const compile = (planner as any).expressionToJavaScript.bind(planner);
+
+    // Non-literal MATCHES: RHS is an IDENTIFIER (dynamic value)
+    const expr: BinaryExpression = {
+      type: "BINARY",
+      operator: "MATCHES",
+      left: { type: "IDENTIFIER", name: "name" } as Identifier,
+      right: { type: "IDENTIFIER", name: "pattern" } as Identifier,
+    };
+
+    const result: string = compile(expr);
+
+    // Should use the safe IIFE wrapper pattern that evaluates RHS as a value
+    assert(result.includes("try"), "Non-literal MATCHES should use try/catch wrapper");
+    assert(result.includes("String(v)"), "Non-literal MATCHES should convert value via String(v)");
+    assert(result.includes("catch"), "Non-literal MATCHES should catch invalid regex");
+    // Should NOT directly embed the variable as a RegExp argument without wrapping
+    assert(!result.includes("new RegExp(pattern)"), "Should not embed RHS directly into RegExp constructor");
+  },
+});
+
+Deno.test({
+  name: "ExecutionPlanner - MATCHES with literal RHS uses JSON.stringify safely",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const compile = (planner as any).expressionToJavaScript.bind(planner);
+
+    const expr: BinaryExpression = {
+      type: "BINARY",
+      operator: "MATCHES",
+      left: { type: "IDENTIFIER", name: "title" } as Identifier,
+      right: { type: "LITERAL", value: "^hello.*", dataType: DataType.STRING } as Literal,
+    };
+
+    const result: string = compile(expr);
+
+    // Literal path should use JSON.stringify for safe embedding
+    assert(result.includes("new RegExp"), "Should use RegExp");
+    assert(result.includes('"^hello.*"'), "Literal pattern should be JSON-stringified");
+    // Should NOT have the IIFE wrapper since it's the literal path
+    assert(!result.includes("try"), "Literal MATCHES should not need try/catch");
+  },
+});
+
+Deno.test({
+  name: "ExecutionPlanner - MATCHES non-literal returns false for invalid regex instead of throwing",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const compile = (planner as any).expressionToJavaScript.bind(planner);
+
+    const expr: BinaryExpression = {
+      type: "BINARY",
+      operator: "MATCHES",
+      left: { type: "LITERAL", value: "test", dataType: DataType.STRING } as Literal,
+      right: { type: "IDENTIFIER", name: "userInput" } as Identifier,
+    };
+
+    const result: string = compile(expr);
+
+    // The generated code should gracefully handle invalid regex via catch returning false
+    assert(result.includes("return false"), "Should return false on invalid regex");
+
+    // Verify the generated JS is valid and evaluates correctly
+    // Simulate: userInput = "[invalid" (unclosed bracket = invalid regex)
+    const testFn = new Function("userInput", `return ${result}`);
+    assertEquals(testFn("[invalid"), false, "Invalid regex should return false, not throw");
+
+    // Simulate: userInput = "^test$" (valid regex that matches)
+    assertEquals(testFn("^test$"), true, "Valid matching regex should return true");
+
+    // Simulate: userInput = "^nomatch$" (valid regex that doesn't match)
+    assertEquals(testFn("^nomatch$"), false, "Valid non-matching regex should return false");
+  },
+});
+
+// ============================================================================
+// MATCHES ReDoS Protection Tests
+// ============================================================================
+
+Deno.test({
+  name: "ExecutionPlanner - MATCHES literal rejects pattern exceeding 1000 chars",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const compile = (planner as any).expressionToJavaScript.bind(planner);
+
+    const longPattern = "a".repeat(1001);
+    const expr: BinaryExpression = {
+      type: "BINARY",
+      operator: "MATCHES",
+      left: { type: "IDENTIFIER", name: "title" } as Identifier,
+      right: { type: "LITERAL", value: longPattern, dataType: DataType.STRING } as Literal,
+    };
+
+    const result: string = compile(expr);
+    assertEquals(result, "(false)", "Pattern over 1000 chars should compile to false");
+  },
+});
+
+Deno.test({
+  name: "ExecutionPlanner - MATCHES literal allows pattern at 1000 chars",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const compile = (planner as any).expressionToJavaScript.bind(planner);
+
+    const pattern = "a".repeat(1000);
+    const expr: BinaryExpression = {
+      type: "BINARY",
+      operator: "MATCHES",
+      left: { type: "LITERAL", value: "aaa", dataType: DataType.STRING } as Literal,
+      right: { type: "LITERAL", value: pattern, dataType: DataType.STRING } as Literal,
+    };
+
+    const result: string = compile(expr);
+    assert(result.includes("new RegExp"), "Pattern at exactly 1000 chars should still use RegExp");
+  },
+});
+
+Deno.test({
+  name: "ExecutionPlanner - MATCHES non-literal rejects long pattern at runtime",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const compile = (planner as any).expressionToJavaScript.bind(planner);
+
+    const expr: BinaryExpression = {
+      type: "BINARY",
+      operator: "MATCHES",
+      left: { type: "LITERAL", value: "test", dataType: DataType.STRING } as Literal,
+      right: { type: "IDENTIFIER", name: "userPattern" } as Identifier,
+    };
+
+    const result: string = compile(expr);
+    const testFn = new Function("userPattern", `return ${result}`);
+
+    // Long pattern should return false
+    assertEquals(testFn("a".repeat(1001)), false, "Pattern over 1000 chars should return false at runtime");
+
+    // Normal pattern should still work
+    assertEquals(testFn("^test$"), true, "Normal pattern should still match");
+  },
+});
+
+Deno.test({
+  name: "ExecutionPlanner - MATCHES literal limits test string length to 10000",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const compile = (planner as any).expressionToJavaScript.bind(planner);
+
+    const expr: BinaryExpression = {
+      type: "BINARY",
+      operator: "MATCHES",
+      left: { type: "IDENTIFIER", name: "content" } as Identifier,
+      right: { type: "LITERAL", value: "a", dataType: DataType.STRING } as Literal,
+    };
+
+    const result: string = compile(expr);
+    const testFn = new Function("content", `return ${result}`);
+
+    // String over 10000 chars should return false
+    assertEquals(testFn("a".repeat(10001)), false, "Test string over 10000 chars should return false");
+
+    // Normal string should still work
+    assertEquals(testFn("abc"), true, "Normal string should still match");
+  },
+});
+
+Deno.test({
+  name: "ExecutionPlanner - MATCHES non-literal limits test string length to 10000",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const compile = (planner as any).expressionToJavaScript.bind(planner);
+
+    const expr: BinaryExpression = {
+      type: "BINARY",
+      operator: "MATCHES",
+      left: { type: "IDENTIFIER", name: "content" } as Identifier,
+      right: { type: "IDENTIFIER", name: "pat" } as Identifier,
+    };
+
+    const result: string = compile(expr);
+    const testFn = new Function("content", "pat", `return ${result}`);
+
+    // Long test string should return false
+    assertEquals(testFn("a".repeat(10001), "a"), false, "Test string over 10000 should return false");
+
+    // Normal strings should work
+    assertEquals(testFn("hello", "^he"), true, "Normal match should work");
+  },
+});
+
+// ============================================================================
+// mapFunctionToJS Tests
+// ============================================================================
+
+Deno.test({
+  name: "ExecutionPlanner - mapFunctionToJS maps known functions correctly",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const mapFn = (planner as any).mapFunctionToJS.bind(planner);
+
+    assertEquals(mapFn("UPPER"), "String.prototype.toUpperCase.call");
+    assertEquals(mapFn("LOWER"), "String.prototype.toLowerCase.call");
+    assertEquals(mapFn("TRIM"), "String.prototype.trim.call");
+    assertEquals(mapFn("ABS"), "Math.abs");
+    assertEquals(mapFn("ROUND"), "Math.round");
+    assertEquals(mapFn("FLOOR"), "Math.floor");
+    assertEquals(mapFn("COUNT"), "(arr => Array.isArray(arr) ? arr.length : 0)");
+    assertEquals(mapFn("TO_STRING"), "String");
+    assertEquals(mapFn("TO_NUMBER"), "Number");
+    assertEquals(mapFn("PARSE_JSON"), "JSON.parse");
+    assertEquals(mapFn("TO_JSON"), "JSON.stringify");
+  },
+});
+
+Deno.test({
+  name: "ExecutionPlanner - mapFunctionToJS is case-insensitive for known functions",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const mapFn = (planner as any).mapFunctionToJS.bind(planner);
+
+    assertEquals(mapFn("upper"), "String.prototype.toUpperCase.call");
+    assertEquals(mapFn("Lower"), "String.prototype.toLowerCase.call");
+    assertEquals(mapFn("abs"), "Math.abs");
+  },
+});
+
+Deno.test({
+  name: "ExecutionPlanner - mapFunctionToJS throws on unknown function",
+  fn() {
+    const planner = new ExecutionPlanner();
+    // deno-lint-ignore no-explicit-any
+    const mapFn = (planner as any).mapFunctionToJS.bind(planner);
+
+    assertThrows(() => mapFn("EVAL"), Error, "Unknown function: EVAL");
+    assertThrows(() => mapFn("exec"), Error, "Unknown function: exec");
+    assertThrows(() => mapFn("require"), Error, "Unknown function: require");
+    assertThrows(() => mapFn("__import__"), Error, "Unknown function: __import__");
+  },
+});

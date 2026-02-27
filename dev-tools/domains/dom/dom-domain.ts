@@ -7,6 +7,8 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateQuerySelectorParams, validateGetDocumentParams, validateQuerySelectorAllParams, validateGetOuterHTMLParams, validateSetAttributeValueParams, validateRemoveAttributeParams, validateRemoveNodeParams, validateGetBoxModelParams, validateRequestChildNodesParams, validatePerformSearchParams, validateGetSearchResultsParams } from "./dom-validators.ts";
 import { domToGraph } from "./dom-graph.ts";
 import { type DOMNode, type DOMElement, DOMNodeType } from "../../../browser/src/types/dom.ts";
 import type { NodeID } from "../../../browser/src/types/identifiers.ts";
@@ -48,54 +50,59 @@ export class DOMDomain extends BaseDomain {
     /** Dirty flag — when true, nodeMap must be rebuilt before use */
     private nodeMapDirty: boolean = true;
 
-    /** Search results cache */
+    /** Search results cache (searchId -> nodeIds) */
     private searchResults: Map<string, NodeID[]> = new Map();
     private searchIdCounter: number = 0;
+
+    /** Query-keyed search cache (query -> nodeIds). Invalidated on DOM mutations via nodeMapDirty. */
+    private querySearchCache: Map<string, NodeID[]> = new Map();
+    /** Tracks whether the query search cache is valid (reset when nodeMapDirty is set) */
+    private querySearchCacheDirty: boolean = true;
 
     protected setup(): void {
         // Register methods
         this.registerMethod("getDocument", "Returns the root DOM node", async (params) => {
-            return await this.getDocument(params as unknown as GetDocumentParams);
+            return await this.getDocument(validateParams(params, validateGetDocumentParams) as GetDocumentParams);
         });
 
         this.registerMethod("querySelector", "Execute querySelector on a node", async (params) => {
-            return await this.querySelector(params as unknown as QuerySelectorParams);
+            return await this.querySelector(validateParams(params, validateQuerySelectorParams) as QuerySelectorParams);
         });
 
         this.registerMethod("querySelectorAll", "Execute querySelectorAll on a node", async (params) => {
-            return await this.querySelectorAll(params as unknown as QuerySelectorAllParams);
+            return await this.querySelectorAll(validateParams(params, validateQuerySelectorAllParams) as QuerySelectorAllParams);
         });
 
         this.registerMethod("getOuterHTML", "Get outer HTML of a node", async (params) => {
-            return await this.getOuterHTML(params as unknown as GetOuterHTMLParams);
+            return await this.getOuterHTML(validateParams(params, validateGetOuterHTMLParams) as GetOuterHTMLParams);
         });
 
         this.registerMethod("setAttributeValue", "Set an attribute on an element", async (params) => {
-            return await this.setAttributeValue(params as unknown as SetAttributeValueParams);
+            return await this.setAttributeValue(validateParams(params, validateSetAttributeValueParams) as SetAttributeValueParams);
         });
 
         this.registerMethod("removeAttribute", "Remove an attribute from an element", async (params) => {
-            return await this.removeAttribute(params as unknown as RemoveAttributeParams);
+            return await this.removeAttribute(validateParams(params, validateRemoveAttributeParams) as RemoveAttributeParams);
         });
 
         this.registerMethod("removeNode", "Remove a node from the DOM", async (params) => {
-            return await this.removeNode(params as unknown as RemoveNodeParams);
+            return await this.removeNode(validateParams(params, validateRemoveNodeParams) as RemoveNodeParams);
         });
 
         this.registerMethod("getBoxModel", "Get box model for a node", async (params) => {
-            return await this.getBoxModel(params as unknown as GetBoxModelParams);
+            return await this.getBoxModel(validateParams(params, validateGetBoxModelParams) as GetBoxModelParams);
         });
 
         this.registerMethod("requestChildNodes", "Request children for a node", async (params) => {
-            return await this.requestChildNodes(params as unknown as RequestChildNodesParams);
+            return await this.requestChildNodes(validateParams(params, validateRequestChildNodesParams) as RequestChildNodesParams);
         });
 
         this.registerMethod("performSearch", "Search the DOM tree", async (params) => {
-            return await this.performSearch(params as unknown as PerformSearchParams);
+            return await this.performSearch(validateParams(params, validatePerformSearchParams) as PerformSearchParams);
         });
 
         this.registerMethod("getSearchResults", "Get search results by range", async (params) => {
-            return await this.getSearchResults(params as unknown as GetSearchResultsParams);
+            return await this.getSearchResults(validateParams(params, validateGetSearchResultsParams) as GetSearchResultsParams);
         });
 
         this.registerMethod("getGraphVisualization", "Get DOM tree as GraphX visualization", async (_params) => {
@@ -300,6 +307,21 @@ export class DOMDomain extends BaseDomain {
 
     // ---- Method implementations ----
 
+    /**
+     * Ensure the nodeMap is up-to-date by rebuilding from the DOM if dirty.
+     * Must be called before any nodeMap read operation.
+     */
+    private ensureNodeMapFresh(): void {
+        if (this.nodeMapDirty) {
+            const dom = this.getCurrentDOM();
+            if (dom) {
+                this.nodeMap.clear();
+                this.buildNodeMap(dom);
+                this.nodeMapDirty = false;
+            }
+        }
+    }
+
     async getDocument(params: GetDocumentParams): Promise<GetDocumentResult> {
         const dom = this.getCurrentDOM();
         if (!dom) {
@@ -318,17 +340,14 @@ export class DOMDomain extends BaseDomain {
         }
 
         // Rebuild node map only when dirty
-        if (this.nodeMapDirty) {
-            this.nodeMap.clear();
-            this.buildNodeMap(dom);
-            this.nodeMapDirty = false;
-        }
+        this.ensureNodeMapFresh();
 
         const depth = params.depth ?? 2;
         return { root: this.serializeNode(dom, depth) };
     }
 
     async querySelector(params: QuerySelectorParams): Promise<QuerySelectorResult> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node) {
             throw new Error(`Node ${params.nodeId} not found`);
@@ -344,6 +363,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async querySelectorAll(params: QuerySelectorAllParams): Promise<QuerySelectorAllResult> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node) {
             throw new Error(`Node ${params.nodeId} not found`);
@@ -357,6 +377,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async getOuterHTML(params: GetOuterHTMLParams): Promise<GetOuterHTMLResult> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node) {
             throw new Error(`Node ${params.nodeId} not found`);
@@ -365,6 +386,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async setAttributeValue(params: SetAttributeValueParams): Promise<Record<string, unknown>> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node || node.nodeType !== DOMNodeType.ELEMENT) {
             throw new Error(`Element ${params.nodeId} not found`);
@@ -372,6 +394,7 @@ export class DOMDomain extends BaseDomain {
         const element = node as unknown as DOMElement;
         element.setAttribute(params.name, params.value);
         this.nodeMapDirty = true;
+        this.querySearchCacheDirty = true;
         if (this.enabled) {
             this.emitEvent("attributeModified", {
                 nodeId: params.nodeId,
@@ -383,6 +406,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async removeAttribute(params: RemoveAttributeParams): Promise<Record<string, unknown>> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node || node.nodeType !== DOMNodeType.ELEMENT) {
             throw new Error(`Element ${params.nodeId} not found`);
@@ -390,6 +414,7 @@ export class DOMDomain extends BaseDomain {
         const element = node as unknown as DOMElement;
         element.removeAttribute(params.name);
         this.nodeMapDirty = true;
+        this.querySearchCacheDirty = true;
         if (this.enabled) {
             this.emitEvent("attributeRemoved", {
                 nodeId: params.nodeId,
@@ -408,6 +433,7 @@ export class DOMDomain extends BaseDomain {
         node.parentNode.removeChild(node);
         this.nodeMap.delete(params.nodeId);
         this.nodeMapDirty = true;
+        this.querySearchCacheDirty = true;
         this.emitEvent("childNodeRemoved", {
             parentNodeId: parentId,
             nodeId: params.nodeId,
@@ -416,6 +442,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async getBoxModel(params: GetBoxModelParams): Promise<GetBoxModelResult> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node || node.nodeType !== DOMNodeType.ELEMENT) {
             throw new Error(`Element ${params.nodeId} not found`);
@@ -470,6 +497,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async requestChildNodes(params: RequestChildNodesParams): Promise<Record<string, unknown>> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node) {
             throw new Error(`Node ${params.nodeId} not found`);
@@ -496,7 +524,19 @@ export class DOMDomain extends BaseDomain {
             return { searchId: "0", resultCount: 0 };
         }
 
-        const results = this.searchDOM(dom, params.query);
+        // Invalidate query search cache on DOM mutations
+        if (this.querySearchCacheDirty) {
+            this.querySearchCache.clear();
+            this.querySearchCacheDirty = false;
+        }
+
+        // Use cached results if available for this query
+        let results = this.querySearchCache.get(params.query);
+        if (!results) {
+            results = this.searchDOM(dom, params.query);
+            this.querySearchCache.set(params.query, results);
+        }
+
         const searchId = String(++this.searchIdCounter);
 
         // Cap search results cache to prevent unbounded growth
@@ -522,6 +562,7 @@ export class DOMDomain extends BaseDomain {
      * Used by sibling domains (CSS, Overlay) for explicit cross-domain resolution.
      */
     getNodeById(nodeId: NodeID): DOMNode | null {
+        this.ensureNodeMapFresh();
         return this.nodeMap.get(nodeId) ?? null;
     }
 
@@ -529,12 +570,14 @@ export class DOMDomain extends BaseDomain {
      * Get the node map (for use by other domains like CSS, Overlay)
      */
     getNodeMap(): Map<NodeID, DOMNode> {
+        this.ensureNodeMapFresh();
         return this.nodeMap;
     }
 
     override dispose(): void {
         this.nodeMap.clear();
         this.searchResults.clear();
+        this.querySearchCache.clear();
         super.dispose();
     }
 }

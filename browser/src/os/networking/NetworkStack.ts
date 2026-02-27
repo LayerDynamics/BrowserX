@@ -45,6 +45,11 @@ export class NetworkStack {
    */
   async connect(socket: OSSocket, host: string, port: number): Promise<void> {
     if (socket.type === "tcp") {
+      // Close existing connection if present to avoid leak
+      if (socket.conn) {
+        try { socket.conn.close(); } catch { /* already closed */ }
+        socket.conn = null;
+      }
       // Use Deno.connect for TCP connections
       const conn = await Deno.connect({
         hostname: host,
@@ -53,6 +58,11 @@ export class NetworkStack {
       });
       socket.conn = conn;
     } else if (socket.type === "udp") {
+      // Close existing datagram connection if present to avoid leak
+      if (socket.datagramConn) {
+        try { socket.datagramConn.close(); } catch { /* already closed */ }
+        socket.datagramConn = null;
+      }
       // For UDP, create a datagram socket bound to ephemeral port (0)
       // Deno's UDP sockets use listenDatagram with port 0 for clients
       // Note: listenDatagram requires --unstable-net flag in Deno

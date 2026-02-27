@@ -80,6 +80,8 @@ export interface Certificate {
   signatureAlgorithm: string;
   /** Raw TBS (To-Be-Signed) certificate data for signature verification */
   tbsCertificate?: ByteBuffer;
+  /** Raw DER-encoded issuer Distinguished Name for OCSP request hashing (RFC 6960) */
+  issuerRaw?: ByteBuffer;
 }
 
 /**

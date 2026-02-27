@@ -13,10 +13,10 @@ pub struct BuddyAllocator {
 }
 
 impl BuddyAllocator {
-    pub fn new(size: u64, min_block_size: u64) -> Self {
-        assert!(size.is_power_of_two(), "Size must be power of 2");
-        assert!(min_block_size.is_power_of_two(), "Min block size must be power of 2");
-        assert!(size >= min_block_size, "Size must be >= min block size");
+    pub fn new(size: u64, min_block_size: u64) -> Option<Self> {
+        if !size.is_power_of_two() || !min_block_size.is_power_of_two() || size < min_block_size {
+            return None;
+        }
 
         let max_order = (size / min_block_size).trailing_zeros();
         let mut free_lists = vec![Vec::new(); (max_order + 1) as usize];
@@ -24,13 +24,13 @@ impl BuddyAllocator {
         // Initially one free block of maximum size
         free_lists[max_order as usize].push(0);
 
-        Self {
+        Some(Self {
             size,
             min_block_size,
             max_order,
             free_lists,
             allocated: HashMap::new(),
-        }
+        })
     }
 
     /// Allocate block of given size
@@ -155,8 +155,12 @@ lazy_static! {
 }
 
 /// Create buddy allocator
+/// Create buddy allocator. Returns 0 on invalid input (non-power-of-two or size < min_block_size).
 pub fn buddy_allocator_create(total_size: u64, min_block_size: u64) -> u64 {
-    let allocator = BuddyAllocator::new(total_size, min_block_size);
+    let allocator = match BuddyAllocator::new(total_size, min_block_size) {
+        Some(a) => a,
+        None => return 0,
+    };
     let mut allocators = ALLOCATORS.lock();
     let mut next_id = NEXT_ALLOCATOR_ID.lock();
     let id = *next_id;

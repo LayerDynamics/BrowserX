@@ -8,6 +8,8 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateSetCookieParams, validateGetCookiesParams, validateDeleteCookieParams, validateGetStorageEntriesParams, validateClearStorageParams, validateGetUsageAndQuotaParams } from "./storage-validators.ts";
 import type { Cookie } from "../../../browser/src/types/storage.ts";
 import type {
     StorageType,
@@ -35,15 +37,15 @@ export class StorageDomain extends BaseDomain {
     protected setup(): void {
         // Register methods
         this.registerMethod("getCookies", "Get cookies matching the given URLs", async (params) => {
-            return await this.getCookies(params as unknown as GetCookiesParams);
+            return await this.getCookies(validateParams(params, validateGetCookiesParams) as GetCookiesParams);
         });
 
         this.registerMethod("setCookie", "Set a cookie with the given parameters", async (params) => {
-            return await this.setCookie(params as unknown as SetCookieParams);
+            return await this.setCookie(validateParams(params, validateSetCookieParams) as SetCookieParams);
         });
 
         this.registerMethod("deleteCookie", "Delete a cookie by name and optional scope", async (params) => {
-            return await this.deleteCookie(params as unknown as DeleteCookieParams);
+            return await this.deleteCookie(validateParams(params, validateDeleteCookieParams) as DeleteCookieParams);
         });
 
         this.registerMethod("clearCookies", "Clear all browser cookies", async () => {
@@ -51,15 +53,15 @@ export class StorageDomain extends BaseDomain {
         });
 
         this.registerMethod("getStorageEntries", "Get storage entries for an origin and type", async (params) => {
-            return await this.getStorageEntries(params as unknown as GetStorageEntriesParams);
+            return await this.getStorageEntries(validateParams(params, validateGetStorageEntriesParams) as GetStorageEntriesParams);
         });
 
         this.registerMethod("clearStorage", "Clear storage for an origin", async (params) => {
-            return await this.clearStorage(params as unknown as ClearStorageParams);
+            return await this.clearStorage(validateParams(params, validateClearStorageParams) as ClearStorageParams);
         });
 
         this.registerMethod("getUsageAndQuota", "Get storage usage and quota for an origin", async (params) => {
-            return await this.getUsageAndQuota(params as unknown as GetUsageAndQuotaParams);
+            return await this.getUsageAndQuota(validateParams(params, validateGetUsageAndQuotaParams) as GetUsageAndQuotaParams);
         });
 
         // Register events

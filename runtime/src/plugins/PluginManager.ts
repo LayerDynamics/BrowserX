@@ -118,8 +118,37 @@ export class PluginManager {
 
     // Phase 4: Activate plugins in dependency order
     const activationOrder = this.getActivationOrder();
+    const failedPlugins = new Set<string>();
+
     for (const pluginId of activationOrder) {
-      await this.activatePlugin(pluginId);
+      // Skip plugins that depend on a failed plugin
+      const info = this.registry.get(pluginId);
+      if (info) {
+        const deps = info.plugin.dependencies ?? [];
+        const blockedBy = deps.find((dep) => failedPlugins.has(dep));
+        if (blockedBy) {
+          console.warn(
+            `[PluginManager] Skipping plugin "${pluginId}": depends on failed plugin "${blockedBy}"`,
+          );
+          failedPlugins.add(pluginId);
+          this.registry.setError(pluginId, new Error(`Dependency "${blockedBy}" failed to activate`));
+          continue;
+        }
+      }
+
+      try {
+        await this.activatePlugin(pluginId);
+      } catch {
+        // activatePlugin may throw for registration/state issues
+        failedPlugins.add(pluginId);
+        continue;
+      }
+
+      // Check if activation failed (activatePlugin catches errors internally)
+      const postInfo = this.registry.get(pluginId);
+      if (postInfo && postInfo.state === "error") {
+        failedPlugins.add(pluginId);
+      }
     }
 
     this.started = true;
@@ -184,7 +213,7 @@ export class PluginManager {
   private async loadPluginDirectories(): Promise<void> {
     for (const dir of this.pluginConfig.pluginDirs) {
       console.debug(`[PluginManager] Scanning plugin directory: ${dir}`);
-      const results = await this.loader.scanDirectory(dir);
+      const results: PluginLoadResult[] = await this.loader.scanDirectory(dir);
 
       for (const result of results) {
         if (result.success && result.plugin) {
@@ -305,12 +334,22 @@ export class PluginManager {
       const context = new PluginContextImpl(contextOptions);
       this.pluginContexts.set(pluginId, context);
 
-      // Activate with timeout
-      await this.withTimeout(
-        info.plugin.activate(context),
-        this.pluginConfig.activationTimeout,
-        `Plugin "${pluginId}" activation timed out after ${this.pluginConfig.activationTimeout}ms`,
-      );
+      // Activate with timeout, passing AbortSignal so the plugin can
+      // detect cancellation and stop work when timeout fires
+      const activationAbort = new AbortController();
+      try {
+        await this.withTimeout(
+          info.plugin.activate(context),
+          this.pluginConfig.activationTimeout,
+          `Plugin "${pluginId}" activation timed out after ${this.pluginConfig.activationTimeout}ms`,
+          activationAbort.signal,
+        );
+      } catch (error) {
+        // Signal the plugin operation to abort so it doesn't continue
+        // executing and corrupting state after the timeout reject
+        activationAbort.abort(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
 
       // Mark as active and track activation order
       this.registry.setState(pluginId, "active");
@@ -355,12 +394,19 @@ export class PluginManager {
     this.emitPluginEvent({ type: "plugin_deactivating", pluginId });
 
     try {
-      // Call plugin's deactivate method
-      await this.withTimeout(
-        info.plugin.deactivate(),
-        this.pluginConfig.activationTimeout,
-        `Plugin "${pluginId}" deactivation timed out`,
-      );
+      // Call plugin's deactivate method with abort signal for cancellation
+      const deactivationAbort = new AbortController();
+      try {
+        await this.withTimeout(
+          info.plugin.deactivate(),
+          this.pluginConfig.activationTimeout,
+          `Plugin "${pluginId}" deactivation timed out`,
+          deactivationAbort.signal,
+        );
+      } catch (error) {
+        deactivationAbort.abort(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
 
       // Dispose all contributions registered by this plugin
       this.registry.disposeAll(pluginId);
@@ -714,9 +760,7 @@ export class PluginManager {
    * Wire a DevTools domain into the DevTools domain registry.
    */
   private wireDevToolsDomain(domain: DevToolsDomainDefinition): void {
-    // DevTools domains require a more complex setup (BaseDomain instance, etc.)
-    // For now, we store them for the DevTools system to discover via getAllDevToolsDomains()
-    // The actual domain registration would require the DevTools protocol layer
+    this.devToolsDomainRegistry.set(domain.name, domain);
     console.debug(
       `[PluginManager] DevTools domain "${domain.name}" registered by plugin — available for DevTools integration`,
     );
@@ -726,9 +770,17 @@ export class PluginManager {
    * Unwire a DevTools domain from the DevTools domain registry.
    */
   private unwireDevToolsDomain(name: string): void {
+    this.devToolsDomainRegistry.delete(name);
     console.debug(
       `[PluginManager] DevTools domain "${name}" unregistered by plugin`,
     );
+  }
+
+  /**
+   * Get all registered DevTools domains from plugins.
+   */
+  getDevToolsDomains(): Map<string, DevToolsDomainDefinition> {
+    return new Map(this.devToolsDomainRegistry);
   }
 
   // ── Events ──
@@ -797,21 +849,44 @@ export class PluginManager {
     promise: Promise<T>,
     timeoutMs: number,
     message: string,
+    signal?: AbortSignal,
   ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
+      let settled = false;
+
       const timer = setTimeout(() => {
-        reject(new Error(message));
+        if (!settled) {
+          settled = true;
+          reject(new Error(message));
+        }
       }, timeoutMs);
 
       promise
         .then((result) => {
-          clearTimeout(timer);
-          resolve(result);
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(result);
+          }
         })
         .catch((error) => {
-          clearTimeout(timer);
-          reject(error);
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            reject(error);
+          }
         });
+
+      // If an AbortSignal is provided, abort also rejects
+      if (signal) {
+        signal.addEventListener("abort", () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            reject(signal.reason ?? new Error("Operation aborted"));
+          }
+        }, { once: true });
+      }
     });
   }
 }

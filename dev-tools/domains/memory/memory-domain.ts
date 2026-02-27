@@ -22,6 +22,8 @@ import type {
     GetDOMCountersResult,
     V8HeapStatistics,
 } from "./memory-types.ts";
+import { validateParams, assertObject } from "../../protocol/validate-params.ts";
+import { validateTakeHeapSnapshotParams, validateStartSamplingParams } from "./memory-validators.ts";
 
 /**
  * Internal sampling data entry
@@ -60,15 +62,15 @@ export class MemoryDomain extends BaseDomain {
 
     protected setup(): void {
         this.registerMethod("getHeapStats", "Get V8 heap statistics", async (params) => {
-            return await this.getHeapStats(params as unknown as Record<string, unknown>);
+            return await this.getHeapStats(assertObject(params) as Record<string, unknown>);
         });
 
         this.registerMethod("takeHeapSnapshot", "Take a heap snapshot and stream chunks", async (params) => {
-            return await this.takeHeapSnapshot(params as unknown as TakeHeapSnapshotParams);
+            return await this.takeHeapSnapshot(validateParams(params, validateTakeHeapSnapshotParams) as TakeHeapSnapshotParams);
         });
 
         this.registerMethod("startSampling", "Start heap allocation sampling", async (params) => {
-            return await this.startSampling(params as unknown as StartSamplingParams);
+            return await this.startSampling(validateParams(params, validateStartSamplingParams) as StartSamplingParams);
         });
 
         this.registerMethod("stopSampling", "Stop heap allocation sampling", async () => {
@@ -76,15 +78,15 @@ export class MemoryDomain extends BaseDomain {
         });
 
         this.registerMethod("getAllocationProfile", "Get sampled allocation profile", async (params) => {
-            return await this.getAllocationProfile(params as unknown as Record<string, unknown>);
+            return await this.getAllocationProfile(assertObject(params) as Record<string, unknown>);
         });
 
         this.registerMethod("forceGarbageCollection", "Force garbage collection", async (params) => {
-            return await this.forceGarbageCollection(params as unknown as Record<string, unknown>);
+            return await this.forceGarbageCollection(assertObject(params) as Record<string, unknown>);
         });
 
         this.registerMethod("getDOMCounters", "Get DOM node and event listener counts", async (params) => {
-            return await this.getDOMCounters(params as unknown as Record<string, unknown>);
+            return await this.getDOMCounters(assertObject(params) as Record<string, unknown>);
         });
 
         // Register events
