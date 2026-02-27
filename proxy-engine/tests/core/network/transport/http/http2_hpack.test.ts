@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertExists, assert } from "@std/assert";
-import { HPACKCodec } from "../../../../../core/network/transport/http/http2_hpack.ts";
+import { HPACKCodec, decodeHuffman, encodeHuffman } from "../../../../../core/network/transport/http/http2_hpack.ts";
 
 // ============================================================================
 // Construction
@@ -180,5 +180,133 @@ Deno.test({
     const encoded = codec.encode(headers);
     const decoded = codec.decode(encoded);
     assertEquals(decoded.get(":method"), "POST");
+  },
+});
+
+// ============================================================================
+// Huffman encoding/decoding (RFC 7541 Appendix B)
+// ============================================================================
+
+Deno.test({
+  name: "Huffman - encodeHuffman/decodeHuffman round-trip for 'www.example.com'",
+  fn() {
+    const input = "www.example.com";
+    const encoded = encodeHuffman(input);
+    const decoded = decodeHuffman(encoded);
+    assertEquals(decoded, input);
+  },
+});
+
+Deno.test({
+  name: "Huffman - decodes RFC 7541 C.4.1 example: 'www.example.com'",
+  fn() {
+    // RFC 7541 C.4.1: Huffman encoding of "www.example.com" is:
+    // f1e3 c2e5 f23a 6ba0 ab90 f4ff
+    const huffBytes = new Uint8Array([
+      0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff,
+    ]);
+    const decoded = decodeHuffman(huffBytes);
+    assertEquals(decoded, "www.example.com");
+  },
+});
+
+Deno.test({
+  name: "Huffman - encodeHuffman/decodeHuffman round-trip for 'no-cache'",
+  fn() {
+    const input = "no-cache";
+    const encoded = encodeHuffman(input);
+    const decoded = decodeHuffman(encoded);
+    assertEquals(decoded, input);
+  },
+});
+
+Deno.test({
+  name: "Huffman - decodes RFC 7541 C.4.2 example: 'no-cache'",
+  fn() {
+    // RFC 7541 C.4.2: Huffman encoding of "no-cache" is: a8eb 1064 9cbf
+    const huffBytes = new Uint8Array([0xa8, 0xeb, 0x10, 0x64, 0x9c, 0xbf]);
+    const decoded = decodeHuffman(huffBytes);
+    assertEquals(decoded, "no-cache");
+  },
+});
+
+Deno.test({
+  name: "Huffman - encodeHuffman/decodeHuffman round-trip for 'custom-key'",
+  fn() {
+    const input = "custom-key";
+    const encoded = encodeHuffman(input);
+    const decoded = decodeHuffman(encoded);
+    assertEquals(decoded, input);
+  },
+});
+
+Deno.test({
+  name: "Huffman - encodeHuffman/decodeHuffman round-trip for 'custom-value'",
+  fn() {
+    const input = "custom-value";
+    const encoded = encodeHuffman(input);
+    const decoded = decodeHuffman(encoded);
+    assertEquals(decoded, input);
+  },
+});
+
+Deno.test({
+  name: "Huffman - decodes RFC 7541 C.6.1 example: 'custom-key' and 'custom-value'",
+  fn() {
+    // RFC 7541 C.6.1: "custom-key" = 25a849e95ba97d7f, "custom-value" = 25a849e95bb8e8b4bf
+    const keyBytes = new Uint8Array([0x25, 0xa8, 0x49, 0xe9, 0x5b, 0xa9, 0x7d, 0x7f]);
+    assertEquals(decodeHuffman(keyBytes), "custom-key");
+
+    const valBytes = new Uint8Array([0x25, 0xa8, 0x49, 0xe9, 0x5b, 0xb8, 0xe8, 0xb4, 0xbf]);
+    assertEquals(decodeHuffman(valBytes), "custom-value");
+  },
+});
+
+Deno.test({
+  name: "Huffman - HPACKCodec decodes Huffman-encoded literal header",
+  fn() {
+    // Build a raw HPACK frame with a Huffman-encoded literal header
+    // Format: 0x40 (literal with incremental indexing, new name)
+    //         + Huffman-encoded name + Huffman-encoded value
+    const nameStr = "x-test";
+    const valueStr = "hello";
+    const nameHuff = encodeHuffman(nameStr);
+    const valueHuff = encodeHuffman(valueStr);
+
+    // Build the HPACK block manually
+    const parts: number[] = [];
+    // Literal header field with incremental indexing, new name (0100 xxxx, index=0)
+    parts.push(0x40);
+    // Name: H=1, length
+    parts.push(0x80 | nameHuff.length); // H bit set + length (assuming < 127)
+    for (const b of nameHuff) parts.push(b);
+    // Value: H=1, length
+    parts.push(0x80 | valueHuff.length);
+    for (const b of valueHuff) parts.push(b);
+
+    const block = new Uint8Array(parts);
+    const codec = new HPACKCodec();
+    const headers = codec.decode(block);
+    assertEquals(headers.get("x-test"), "hello");
+  },
+});
+
+Deno.test({
+  name: "Huffman - encodeHuffman/decodeHuffman round-trip for all printable ASCII",
+  fn() {
+    const input = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join("");
+    const encoded = encodeHuffman(input);
+    const decoded = decodeHuffman(encoded);
+    assertEquals(decoded, input);
+  },
+});
+
+Deno.test({
+  name: "Huffman - empty string round-trips",
+  fn() {
+    const encoded = encodeHuffman("");
+    assertEquals(encoded.length, 0);
+    const decoded = decodeHuffman(encoded);
+    assertEquals(decoded, "");
   },
 });
