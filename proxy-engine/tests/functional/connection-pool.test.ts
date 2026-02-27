@@ -125,13 +125,14 @@ Deno.test("ConnectionPool - release sets inUse to false", () => {
   const pool = createPool();
   const mockConn: PooledConnectionInfo = {
     id: "test-conn",
-    conn: { close: () => {} } as unknown as Deno.Conn,
+    conn: { close: () => {}, write: () => Promise.resolve(0), rid: 1 } as unknown as Deno.Conn,
     host: "localhost",
     port: 8080,
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
     requestCount: 1,
     inUse: true,
+    dead: false,
   };
 
   pool.release(mockConn);

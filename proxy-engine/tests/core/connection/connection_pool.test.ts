@@ -137,13 +137,14 @@ Deno.test({
     // Create a mock pooled connection info
     const mockConn: PooledConnectionInfo = {
       id: "conn-test",
-      conn: { close: () => {} } as unknown as Deno.Conn,
+      conn: { close: () => {}, write: () => Promise.resolve(0), rid: 1 } as unknown as Deno.Conn,
       host: "localhost",
       port: 8080,
       createdAt: Date.now(),
       lastUsedAt: Date.now() - 1000,
       requestCount: 1,
       inUse: true,
+      dead: false,
     };
 
     assertEquals(mockConn.inUse, true);
@@ -165,13 +166,14 @@ Deno.test({
 
     const mockConn: PooledConnectionInfo = {
       id: "conn-test",
-      conn: { close: () => {} } as unknown as Deno.Conn,
+      conn: { close: () => {}, write: () => Promise.resolve(0), rid: 1 } as unknown as Deno.Conn,
       host: "localhost",
       port: 8080,
       createdAt: Date.now(),
       lastUsedAt: oldTimestamp,
       requestCount: 1,
       inUse: true,
+      dead: false,
     };
 
     pool.release(mockConn);
@@ -288,13 +290,14 @@ Deno.test({
   fn() {
     const connInfo: PooledConnectionInfo = {
       id: "conn-123",
-      conn: { close: () => {} } as unknown as Deno.Conn,
+      conn: { close: () => {}, write: () => Promise.resolve(0), rid: 1 } as unknown as Deno.Conn,
       host: "api.example.com",
       port: 443,
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       requestCount: 5,
       inUse: false,
+      dead: false,
     };
 
     assertEquals(connInfo.id, "conn-123");
@@ -488,6 +491,202 @@ Deno.test({
     const pool = new ConnectionPool(config);
 
     assertEquals(pool.getConfig().maxConnections, 1);
+    pool.destroy();
+  },
+});
+
+// ============================================================================
+// isConnectionAlive / markDead Tests
+// ============================================================================
+
+Deno.test({
+  name: "ConnectionPool - release disposes dead connections instead of returning to pool",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const pool = new ConnectionPool(createTestConfig());
+    const poolKey = "localhost:8080";
+
+    // Manually insert a connection into the pool
+    const mockConn: PooledConnectionInfo = {
+      id: "conn-dead",
+      conn: {
+        close: () => {},
+        write: () => Promise.resolve(0),
+        rid: 1,
+      } as unknown as Deno.Conn,
+      host: "localhost",
+      port: 8080,
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      requestCount: 1,
+      inUse: true,
+      dead: false,
+    };
+
+    const pools = pool.getPools();
+    // We need to add directly to internal state
+    // Instead, mark dead and release - it should be disposed
+    pool.markDead(mockConn);
+    assertEquals(mockConn.dead, true);
+
+    // Release should call disposeConnection (not return to pool)
+    pool.release(mockConn);
+    // mockConn.inUse should still be true since it was disposed, not released
+    assertEquals(mockConn.inUse, true);
+
+    pool.destroy();
+  },
+});
+
+Deno.test({
+  name: "ConnectionPool - markDead sets dead flag to true",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const pool = new ConnectionPool(createTestConfig());
+
+    const mockConn: PooledConnectionInfo = {
+      id: "conn-1",
+      conn: { close: () => {}, write: () => Promise.resolve(0), rid: 1 } as unknown as Deno.Conn,
+      host: "localhost",
+      port: 8080,
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      requestCount: 0,
+      inUse: false,
+      dead: false,
+    };
+
+    assertEquals(mockConn.dead, false);
+    pool.markDead(mockConn);
+    assertEquals(mockConn.dead, true);
+
+    pool.destroy();
+  },
+});
+
+Deno.test({
+  name: "ConnectionPool - release accepts alive connection back to pool",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const pool = new ConnectionPool(createTestConfig());
+
+    const mockConn: PooledConnectionInfo = {
+      id: "conn-alive",
+      conn: {
+        close: () => {},
+        write: () => Promise.resolve(0),
+        rid: 42,
+      } as unknown as Deno.Conn,
+      host: "localhost",
+      port: 8080,
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      requestCount: 1,
+      inUse: true,
+      dead: false,
+    };
+
+    pool.release(mockConn);
+    // Should be released back to pool (not disposed)
+    assertEquals(mockConn.inUse, false);
+
+    pool.destroy();
+  },
+});
+
+Deno.test({
+  name: "ConnectionPool - connection with null rid is detected as dead",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const pool = new ConnectionPool(createTestConfig());
+
+    const mockConn: PooledConnectionInfo = {
+      id: "conn-null-rid",
+      conn: {
+        close: () => {},
+        write: () => { throw new Error("closed"); },
+        rid: null,
+      } as unknown as Deno.Conn,
+      host: "localhost",
+      port: 8080,
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      requestCount: 1,
+      inUse: true,
+      dead: false,
+    };
+
+    // Release should dispose because rid is null
+    pool.release(mockConn);
+    // inUse stays true because it was disposed, not released
+    assertEquals(mockConn.inUse, true);
+
+    pool.destroy();
+  },
+});
+
+Deno.test({
+  name: "ConnectionPool - connection with throwing write is detected as dead",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const pool = new ConnectionPool(createTestConfig());
+
+    const mockConn: PooledConnectionInfo = {
+      id: "conn-write-fail",
+      conn: {
+        close: () => {},
+        write: () => { throw new Error("Broken pipe"); },
+        rid: 99,
+      } as unknown as Deno.Conn,
+      host: "localhost",
+      port: 8080,
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      requestCount: 1,
+      inUse: true,
+      dead: false,
+    };
+
+    // Release should dispose because write probe throws
+    pool.release(mockConn);
+    assertEquals(mockConn.inUse, true);
+
+    pool.destroy();
+  },
+});
+
+Deno.test({
+  name: "ConnectionPool - expired connection (maxLifetime) is detected as dead on release",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const pool = new ConnectionPool(createTestConfig({ maxLifetime: 100 }));
+
+    const mockConn: PooledConnectionInfo = {
+      id: "conn-expired",
+      conn: {
+        close: () => {},
+        write: () => Promise.resolve(0),
+        rid: 10,
+      } as unknown as Deno.Conn,
+      host: "localhost",
+      port: 8080,
+      createdAt: Date.now() - 200, // 200ms ago, maxLifetime is 100ms
+      lastUsedAt: Date.now(),
+      requestCount: 1,
+      inUse: true,
+      dead: false,
+    };
+
+    pool.release(mockConn);
+    // Should be disposed due to expired maxLifetime
+    assertEquals(mockConn.inUse, true);
+
     pool.destroy();
   },
 });

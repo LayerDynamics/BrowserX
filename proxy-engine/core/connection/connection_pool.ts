@@ -9,14 +9,27 @@ export interface PooledConnectionInfo {
   lastUsedAt: number;
   requestCount: number;
   inUse: boolean;
+  /** Marked true when an operation on this connection fails, signaling it should be discarded */
+  dead: boolean;
 }
+
+export type LogLevel = "debug" | "info" | "warn" | "error" | "none";
 
 export interface ConnectionPoolConfig {
   minConnections: number;
   maxConnections: number;
   idleTimeout: number; // milliseconds
   maxLifetime: number; // milliseconds
+  logLevel?: LogLevel;
 }
+
+const LOG_PRIORITY: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+  none: 4,
+};
 
 export class ConnectionPool {
   private pools: Map<string, PooledConnectionInfo[]> = new Map();
@@ -31,14 +44,59 @@ export class ConnectionPool {
     this.startCleanupInterval();
   }
 
+  private log(level: LogLevel, ...args: unknown[]): void {
+    const configLevel = this.config.logLevel ?? "warn";
+    if (LOG_PRIORITY[level] >= LOG_PRIORITY[configLevel]) {
+      if (level === "error") {
+        console.error(...args);
+      } else {
+        console.log(...args);
+      }
+    }
+  }
+
+  /**
+   * Pre-warm the pool by creating minConnections connections for a given host:port
+   */
+  async prewarm(host: string, port: number): Promise<void> {
+    const poolKey = `${host}:${port}`;
+    const pool = this.pools.get(poolKey) || [];
+    this.pools.set(poolKey, pool);
+
+    const toCreate = this.config.minConnections - pool.length;
+    this.log("info", `[POOL] Pre-warming ${toCreate} connection(s) for ${poolKey}`);
+
+    for (let i = 0; i < toCreate; i++) {
+      try {
+        const conn = await Deno.connect({ hostname: host, port });
+        const pooledConn: PooledConnectionInfo = {
+          id: `conn-${this.nextId++}`,
+          conn,
+          host,
+          port,
+          createdAt: Date.now(),
+          lastUsedAt: Date.now(),
+          requestCount: 0,
+          inUse: false,
+          dead: false,
+        };
+        pool.push(pooledConn);
+        this.log("info", `  ✓ Pre-warmed connection ${pooledConn.id}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.log("warn", `  ✗ Failed to pre-warm connection: ${message}`);
+      }
+    }
+  }
+
   async acquire(host: string, port: number): Promise<PooledConnectionInfo | null> {
     const poolKey = `${host}:${port}`;
     const pool = this.pools.get(poolKey) || [];
 
-    console.log(`[POOL] Acquiring connection to ${poolKey}`);
-    console.log(`  Current pool size: ${pool.length}`);
-    console.log(`  Available: ${pool.filter((c) => !c.inUse).length}`);
-    console.log(`  In use: ${pool.filter((c) => c.inUse).length}`);
+    this.log("debug", `[POOL] Acquiring connection to ${poolKey}`);
+    this.log("debug", `  Current pool size: ${pool.length}`);
+    this.log("debug", `  Available: ${pool.filter((c) => !c.inUse).length}`);
+    this.log("debug", `  In use: ${pool.filter((c) => c.inUse).length}`);
 
     // Find available connection
     const available = pool.find((c) => !c.inUse && this.isConnectionValid(c));
@@ -48,15 +106,15 @@ export class ConnectionPool {
       available.lastUsedAt = Date.now();
       available.requestCount++;
 
-      console.log(`  ✓ Reusing connection ${available.id}`);
-      console.log(`    Age: ${((Date.now() - available.createdAt) / 1000).toFixed(1)}s`);
-      console.log(`    Requests: ${available.requestCount}`);
+      this.log("debug", `  ✓ Reusing connection ${available.id}`);
+      this.log("debug", `    Age: ${((Date.now() - available.createdAt) / 1000).toFixed(1)}s`);
+      this.log("debug", `    Requests: ${available.requestCount}`);
       return available;
     }
 
     // Check if we can create new connection
     if (pool.length < this.config.maxConnections) {
-      console.log(`  → Creating new connection (${pool.length + 1}/${this.config.maxConnections})`);
+      this.log("info", `  → Creating new connection (${pool.length + 1}/${this.config.maxConnections})`);
 
       try {
         const conn = await Deno.connect({ hostname: host, port });
@@ -70,30 +128,31 @@ export class ConnectionPool {
           lastUsedAt: Date.now(),
           requestCount: 1,
           inUse: true,
+          dead: false,
         };
 
         pool.push(pooledConn);
         this.pools.set(poolKey, pool);
 
-        console.log(`  ✓ New connection ${pooledConn.id} created`);
+        this.log("info", `  ✓ New connection ${pooledConn.id} created`);
         return pooledConn;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`  ✗ Failed to create connection: ${message}`);
+        this.log("error", `  ✗ Failed to create connection: ${message}`);
         return null;
       }
     }
 
     // Pool is full and no connections available
-    console.log(`  ✗ Pool exhausted (${pool.length}/${this.config.maxConnections})`);
-    console.log(`    All connections are in use`);
+    this.log("warn", `  ✗ Pool exhausted (${pool.length}/${this.config.maxConnections})`);
+    this.log("warn", `    All connections are in use`);
     return null;
   }
 
   release(pooledConn: PooledConnectionInfo): void {
     // Validate the connection is still alive before returning to pool
     if (!this.isConnectionAlive(pooledConn)) {
-      console.log(`[POOL] Connection ${pooledConn.id} is dead, disposing instead of returning to pool`);
+      this.log("info", `[POOL] Connection ${pooledConn.id} is dead, disposing instead of returning to pool`);
       this.disposeConnection(pooledConn);
       return;
     }
@@ -101,29 +160,50 @@ export class ConnectionPool {
     pooledConn.inUse = false;
     pooledConn.lastUsedAt = Date.now();
 
-    console.log(`[POOL] Released connection ${pooledConn.id}`);
-    console.log(`  Returned to pool for ${pooledConn.host}:${pooledConn.port}`);
+    this.log("debug", `[POOL] Released connection ${pooledConn.id}`);
+    this.log("debug", `  Returned to pool for ${pooledConn.host}:${pooledConn.port}`);
   }
 
   /**
    * Check if a connection is still alive
    */
+  /**
+   * Mark a connection as dead so it will be discarded on release.
+   * Call this when an I/O operation on the connection fails.
+   */
+  markDead(conn: PooledConnectionInfo): void {
+    conn.dead = true;
+    this.log("info", `[POOL] Connection ${conn.id} marked dead`);
+  }
+
   private isConnectionAlive(conn: PooledConnectionInfo): boolean {
     try {
-      // Check basic validity first (age, idle time)
+      // If explicitly marked dead by a failed operation, discard it
+      if (conn.dead) {
+        return false;
+      }
+
+      // Check basic validity (age, idle time)
       if (!this.isConnectionValid(conn)) {
         return false;
       }
 
-      // Try to check if the underlying connection is still open
-      // Deno.Conn doesn't have a direct "isAlive" check, but we can
-      // verify the resource is still valid by checking if rid exists
+      // In newer Deno versions, rid is removed after close().
+      // If rid exists as a property but is undefined/null, the connection was closed.
       const rid = (conn.conn as any).rid;
-      if (rid !== undefined && rid !== null) {
-        return true;
+      if ("rid" in (conn.conn as any) && (rid === undefined || rid === null)) {
+        return false;
       }
 
-      return true; // If no rid property, assume alive
+      // Probe: attempt a zero-length write to detect peer-closed connections.
+      // A closed connection will throw immediately on write.
+      try {
+        conn.conn.write(new Uint8Array(0));
+      } catch {
+        return false;
+      }
+
+      return true;
     } catch {
       return false;
     }
@@ -156,14 +236,14 @@ export class ConnectionPool {
     // Check if connection is too old
     const age = now - conn.createdAt;
     if (age > this.config.maxLifetime) {
-      console.log(`  ✗ Connection ${conn.id} too old (${(age / 1000).toFixed(1)}s)`);
+      this.log("debug", `  ✗ Connection ${conn.id} too old (${(age / 1000).toFixed(1)}s)`);
       return false;
     }
 
     // Check if connection has been idle too long
     const idleTime = now - conn.lastUsedAt;
     if (idleTime > this.config.idleTimeout) {
-      console.log(`  ✗ Connection ${conn.id} idle too long (${(idleTime / 1000).toFixed(1)}s)`);
+      this.log("debug", `  ✗ Connection ${conn.id} idle too long (${(idleTime / 1000).toFixed(1)}s)`);
       return false;
     }
 
@@ -173,7 +253,7 @@ export class ConnectionPool {
   private startCleanupInterval(): void {
     // Run cleanup every 10 seconds
     this.cleanupIntervalId = setInterval(() => {
-      console.log("\n[CLEANUP] Running connection pool cleanup...");
+      this.log("debug", "\n[CLEANUP] Running connection pool cleanup...");
       this.cleanup();
     }, 10000) as unknown as number;
   }
@@ -193,7 +273,7 @@ export class ConnectionPool {
       for (const conn of pool) {
         try {
           conn.conn.close();
-          console.log(`[POOL DESTROY] Closed connection ${conn.id} for ${poolKey}`);
+          this.log("info", `[POOL DESTROY] Closed connection ${conn.id} for ${poolKey}`);
         } catch {
           // Already closed
         }
@@ -209,7 +289,14 @@ export class ConnectionPool {
     this.pools.forEach((pool, poolKey) => {
       const before = pool.length;
 
-      // Remove invalid connections and idle connections past timeout
+      // Count idle connections to respect minConnections
+      let idleKept = 0;
+      const idleConns = pool.filter((c) => !c.inUse);
+      const minToKeep = this.config.minConnections;
+      this.log("debug", `  ${poolKey}: ${idleConns.length} idle, keeping min ${minToKeep}`);
+
+      // Remove invalid connections and idle connections past timeout,
+      // but keep at least minConnections idle connections per pool
       const validConnections = pool.filter((conn) => {
         if (conn.inUse) {
           return true; // Keep active connections
@@ -217,42 +304,45 @@ export class ConnectionPool {
 
         // Check idle timeout using current timestamp
         const idleMs = now - conn.lastUsedAt;
-        if (idleMs > this.config.idleTimeout) {
+        const isIdle = idleMs > this.config.idleTimeout;
+        const isStale = !this.isConnectionValid(conn);
+
+        if (isIdle || isStale) {
+          // Keep if we haven't preserved enough idle connections for minConnections
+          if (idleKept < minToKeep) {
+            // Only keep if not stale (expired maxLifetime)
+            const age = now - conn.createdAt;
+            if (age <= this.config.maxLifetime) {
+              idleKept++;
+              return true;
+            }
+          }
+
           try {
             conn.conn.close();
             totalClosed++;
-            console.log(`  ✗ Closed idle connection ${conn.id} for ${poolKey} (idle ${idleMs}ms)`);
+            this.log("info", `  ✗ Closed ${isIdle ? "idle" : "stale"} connection ${conn.id} for ${poolKey}`);
           } catch {
             // Already closed
           }
           return false;
         }
 
-        if (!this.isConnectionValid(conn)) {
-          try {
-            conn.conn.close();
-            totalClosed++;
-            console.log(`  ✗ Closed stale connection ${conn.id} for ${poolKey}`);
-          } catch {
-            // Already closed
-          }
-          return false;
-        }
-
+        idleKept++;
         return true;
       });
 
       this.pools.set(poolKey, validConnections);
 
       if (before !== validConnections.length) {
-        console.log(`  ${poolKey}: ${before} → ${validConnections.length} connections`);
+        this.log("info", `  ${poolKey}: ${before} → ${validConnections.length} connections`);
       }
     });
 
     if (totalClosed > 0) {
-      console.log(`[CLEANUP] Closed ${totalClosed} stale connection(s)`);
+      this.log("info", `[CLEANUP] Closed ${totalClosed} stale connection(s)`);
     } else {
-      console.log(`[CLEANUP] No stale connections found`);
+      this.log("debug", `[CLEANUP] No stale connections found`);
     }
   }
 
@@ -338,7 +428,7 @@ export class ConnectionPool {
     console.log(`  In use: ${totalInUse}`);
     console.log(`  Total requests served: ${totalRequests}`);
     console.log(
-      `  Average requests per connection: ${(totalRequests / totalConnections).toFixed(2)}`,
+      `  Average requests per connection: ${totalConnections > 0 ? (totalRequests / totalConnections).toFixed(2) : "N/A"}`,
     );
     console.log("=".repeat(70) + "\n");
   }
@@ -351,6 +441,7 @@ if (import.meta.main) {
     maxConnections: 10,
     idleTimeout: 30000, // 30 seconds
     maxLifetime: 300000, // 5 minutes
+    logLevel: "info",
   };
 
   const pool = new ConnectionPool(config);
