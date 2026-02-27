@@ -786,7 +786,7 @@ export class ExecutionPlanner {
               const pattern = String((binary.right as Literal).value);
               return `(new RegExp(${JSON.stringify(pattern)}).test(String(${left})))`;
             }
-            return `(new RegExp(${right}).test(String(${left})))`;
+            return `((v => { try { return new RegExp(String(v)).test(String(${left})); } catch { return false; } })(${right}))`;
           }
 
           case "CONTAINS": {
