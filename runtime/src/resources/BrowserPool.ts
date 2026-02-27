@@ -281,6 +281,8 @@ export class BrowserPool {
     // Check if any waiters are queued - hand instance directly to first waiter
     if (this.waiters.length > 0) {
       const waiter = this.waiters.shift()!;
+      instance.state = "in_use";
+      instance.lastUsedAt = Date.now();
       waiter.resolve(instanceId);
       return;
     }
