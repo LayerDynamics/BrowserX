@@ -306,6 +306,21 @@ export class DOMDomain extends BaseDomain {
 
     // ---- Method implementations ----
 
+    /**
+     * Ensure the nodeMap is up-to-date by rebuilding from the DOM if dirty.
+     * Must be called before any nodeMap read operation.
+     */
+    private ensureNodeMapFresh(): void {
+        if (this.nodeMapDirty) {
+            const dom = this.getCurrentDOM();
+            if (dom) {
+                this.nodeMap.clear();
+                this.buildNodeMap(dom);
+                this.nodeMapDirty = false;
+            }
+        }
+    }
+
     async getDocument(params: GetDocumentParams): Promise<GetDocumentResult> {
         const dom = this.getCurrentDOM();
         if (!dom) {
@@ -324,17 +339,14 @@ export class DOMDomain extends BaseDomain {
         }
 
         // Rebuild node map only when dirty
-        if (this.nodeMapDirty) {
-            this.nodeMap.clear();
-            this.buildNodeMap(dom);
-            this.nodeMapDirty = false;
-        }
+        this.ensureNodeMapFresh();
 
         const depth = params.depth ?? 2;
         return { root: this.serializeNode(dom, depth) };
     }
 
     async querySelector(params: QuerySelectorParams): Promise<QuerySelectorResult> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node) {
             throw new Error(`Node ${params.nodeId} not found`);
@@ -350,6 +362,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async querySelectorAll(params: QuerySelectorAllParams): Promise<QuerySelectorAllResult> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node) {
             throw new Error(`Node ${params.nodeId} not found`);
@@ -363,6 +376,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async getOuterHTML(params: GetOuterHTMLParams): Promise<GetOuterHTMLResult> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node) {
             throw new Error(`Node ${params.nodeId} not found`);
@@ -371,6 +385,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async setAttributeValue(params: SetAttributeValueParams): Promise<Record<string, unknown>> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node || node.nodeType !== DOMNodeType.ELEMENT) {
             throw new Error(`Element ${params.nodeId} not found`);
@@ -543,6 +558,7 @@ export class DOMDomain extends BaseDomain {
      * Used by sibling domains (CSS, Overlay) for explicit cross-domain resolution.
      */
     getNodeById(nodeId: NodeID): DOMNode | null {
+        this.ensureNodeMapFresh();
         return this.nodeMap.get(nodeId) ?? null;
     }
 
