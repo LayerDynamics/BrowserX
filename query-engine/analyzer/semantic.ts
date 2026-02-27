@@ -24,6 +24,7 @@ import { DataType } from "../types/primitives.ts";
 import { ScopeType, Symbol, SymbolTable, SymbolType } from "./symbols.ts";
 import { TypeChecker } from "./type-checker.ts";
 import { Validator } from "./validator.ts";
+import { SecurityValidator, type SecurityPolicy } from "../security/validator.ts";
 
 /**
  * Semantic analysis error
@@ -52,6 +53,7 @@ export interface SemanticAnalyzerConfig {
   strictTypeChecking?: boolean;
   allowPrivateIPs?: boolean;
   maxNestingDepth?: number;
+  securityPolicy?: Partial<SecurityPolicy>;
 }
 
 /**
@@ -61,6 +63,7 @@ export class SemanticAnalyzer {
   private symbolTable: SymbolTable;
   private typeChecker: TypeChecker;
   private validator: Validator;
+  private securityValidator: SecurityValidator;
   private config: SemanticAnalyzerConfig;
   private typeInfo: Map<Expression, DataType>;
   private nestingDepth: number;
@@ -77,6 +80,10 @@ export class SemanticAnalyzer {
     this.typeChecker = new TypeChecker(this.symbolTable);
     this.validator = new Validator(this.symbolTable, {
       allowUndefinedVariables: this.config.allowUndefinedVariables,
+    });
+    this.securityValidator = new SecurityValidator({
+      blockPrivateIPs: !this.config.allowPrivateIPs,
+      ...config.securityPolicy,
     });
     this.typeInfo = new Map();
     this.nestingDepth = 0;
@@ -101,7 +108,10 @@ export class SemanticAnalyzer {
     // Phase 3: Semantic validation
     this.validator.validate(stmt);
 
-    // Phase 4: Collect type information
+    // Phase 4: Security validation (SSRF, private IP, domain policy)
+    this.securityValidator.validate(stmt);
+
+    // Phase 5: Collect type information
     this.collectTypeInfo(stmt);
 
     return {

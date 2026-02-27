@@ -16,6 +16,8 @@ import type {
     ScreenshotParams,
     ScreenshotResult,
 } from "./page-types.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateNavigateParams, validateReloadParams, validateScreenshotParams } from "./page-validators.ts";
 
 /**
  * Page Domain - navigation, lifecycle, screenshots
@@ -29,11 +31,11 @@ export class PageDomain extends BaseDomain {
 
     protected setup(): void {
         this.registerMethod("navigate", "Navigate to URL", async (params) => {
-            return await this.navigate(params as unknown as NavigateParams);
+            return await this.navigate(validateParams(params, validateNavigateParams) as NavigateParams);
         });
 
         this.registerMethod("reload", "Reload current page", async (params) => {
-            return await this.reload(params as unknown as ReloadParams);
+            return await this.reload(validateParams(params, validateReloadParams) as ReloadParams);
         });
 
         this.registerMethod("goBack", "Navigate back in history", async () => {
@@ -53,7 +55,7 @@ export class PageDomain extends BaseDomain {
         });
 
         this.registerMethod("captureScreenshot", "Capture page screenshot", async (params) => {
-            return await this.captureScreenshot(params as unknown as ScreenshotParams);
+            return await this.captureScreenshot(validateParams(params, validateScreenshotParams) as ScreenshotParams);
         });
 
         this.registerMethod("getResourceTree", "Get resource tree", async () => {

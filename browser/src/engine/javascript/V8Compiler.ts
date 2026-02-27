@@ -1637,18 +1637,35 @@ export class BytecodeGenerator {
     const funcReg = this.allocateRegister();
     this.emit(Opcode.STAR, funcReg);
 
-    // Compile arguments to consecutive registers
-    const argRegs: number[] = [];
-    for (const arg of node.arguments) {
-      this.generateExpression(arg);
-      const argReg = this.allocateRegister();
-      this.emit(Opcode.STAR, argReg);
-      argRegs.push(argReg);
-    }
+    // Compile arguments: first evaluate all into temp registers, then copy
+    // into consecutive arg registers so the interpreter can find them reliably.
+    if (node.arguments.length > 0) {
+      // Phase 1: evaluate each arg expression (may allocate intermediate temps)
+      const tempRegs: number[] = [];
+      for (const arg of node.arguments) {
+        this.generateExpression(arg);
+        const tempReg = this.allocateRegister();
+        this.emit(Opcode.STAR, tempReg);
+        tempRegs.push(tempReg);
+      }
 
-    // Load function and call
-    this.emit(Opcode.LDAR, funcReg);
-    this.emit(Opcode.CALL, node.arguments.length);
+      // Phase 2: allocate consecutive arg registers and copy values
+      const firstArgReg = this.allocateRegister();
+      this.emit(Opcode.LDAR, tempRegs[0]);
+      this.emit(Opcode.STAR, firstArgReg);
+      for (let i = 1; i < tempRegs.length; i++) {
+        const argReg = this.allocateRegister();
+        this.emit(Opcode.LDAR, tempRegs[i]);
+        this.emit(Opcode.STAR, argReg);
+      }
+
+      // Load function and call — firstArgReg tells interpreter where args start
+      this.emit(Opcode.LDAR, funcReg);
+      this.emit(Opcode.CALL, node.arguments.length, firstArgReg);
+    } else {
+      this.emit(Opcode.LDAR, funcReg);
+      this.emit(Opcode.CALL, 0, funcReg);
+    }
   }
 
   /**
@@ -1732,16 +1749,32 @@ export class BytecodeGenerator {
     const ctorReg = this.allocateRegister();
     this.emit(Opcode.STAR, ctorReg);
 
-    const argRegs: number[] = [];
-    for (const arg of node.arguments) {
-      this.generateExpression(arg);
-      const argReg = this.allocateRegister();
-      this.emit(Opcode.STAR, argReg);
-      argRegs.push(argReg);
-    }
+    if (node.arguments.length > 0) {
+      // Phase 1: evaluate each arg expression (may allocate intermediate temps)
+      const tempRegs: number[] = [];
+      for (const arg of node.arguments) {
+        this.generateExpression(arg);
+        const tempReg = this.allocateRegister();
+        this.emit(Opcode.STAR, tempReg);
+        tempRegs.push(tempReg);
+      }
 
-    this.emit(Opcode.LDAR, ctorReg);
-    this.emit(Opcode.CONSTRUCT, node.arguments.length);
+      // Phase 2: copy into consecutive arg registers
+      const firstArgReg = this.allocateRegister();
+      this.emit(Opcode.LDAR, tempRegs[0]);
+      this.emit(Opcode.STAR, firstArgReg);
+      for (let i = 1; i < tempRegs.length; i++) {
+        const argReg = this.allocateRegister();
+        this.emit(Opcode.LDAR, tempRegs[i]);
+        this.emit(Opcode.STAR, argReg);
+      }
+
+      this.emit(Opcode.LDAR, ctorReg);
+      this.emit(Opcode.CONSTRUCT, node.arguments.length, firstArgReg);
+    } else {
+      this.emit(Opcode.LDAR, ctorReg);
+      this.emit(Opcode.CONSTRUCT, 0, ctorReg);
+    }
   }
 
   /**

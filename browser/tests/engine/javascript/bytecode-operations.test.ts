@@ -290,3 +290,107 @@ Deno.test("bytecode ops - compiler produces valid bytecode for for loop", () => 
   const compiled = compiler.compile("for (var i = 0; i < 10; i = i + 1) {}");
   assertNotEquals(compiled.bytecode.length, 0);
 });
+
+// ============================================================================
+// CALL argument register reliability tests
+// ============================================================================
+
+Deno.test("bytecode ops - CALL passes correct args with interleaved registers", () => {
+  // This tests the bug where executeCALL scans backwards for highest non-undefined
+  // register to find args, which breaks when earlier code leaves values in higher registers.
+  // Setup: store values in registers via variables, then call a function.
+  // The earlier variable assignments occupy registers that could confuse the heuristic.
+  const result = compileAndRun(`
+    function add(a, b) { return a + b; }
+    var x = 10;
+    var y = 20;
+    var z = 30;
+    add(1, 2)
+  `);
+  assertEquals(result.type, JSValueType.NUMBER);
+  assertEquals(result.value, 3);
+});
+
+Deno.test("bytecode ops - CALL with nested call args gets correct values", () => {
+  // Nested calls create intermediate register usage that can confuse backwards scanning
+  const result = compileAndRun(`
+    function double(n) { return n + n; }
+    function addOne(n) { return n + 1; }
+    addOne(double(3))
+  `);
+  assertEquals(result.type, JSValueType.NUMBER);
+  assertEquals(result.value, 7);
+});
+
+Deno.test("bytecode ops - CALL multiple sequential calls use correct args", () => {
+  // Multiple calls in sequence - earlier call results in registers shouldn't
+  // pollute later calls' argument resolution
+  const result = compileAndRun(`
+    function id(x) { return x; }
+    var a = id(100);
+    var b = id(200);
+    id(42)
+  `);
+  assertEquals(result.type, JSValueType.NUMBER);
+  assertEquals(result.value, 42);
+});
+
+Deno.test("bytecode ops - CALL with expression arg that allocates intermediate registers", () => {
+  // When the second arg is a binary expression, the compiler allocates a temp
+  // register between argReg[0] and argReg[1], making args non-consecutive.
+  // e.g., foo(c, a + b) -> funcReg=R0, argReg[0]=R1(c), tempR2(a), argReg[1]=R3(a+b)
+  // The backwards heuristic would compute argBase = R3-2+1 = R2 (the temp), not R1.
+  const result = compileAndRun(`
+    function add(a, b) { return a + b; }
+    add(10, 1 + 2)
+  `);
+  assertEquals(result.type, JSValueType.NUMBER);
+  assertEquals(result.value, 13);  // add(10, 3) = 13, NOT add(1, 3) = 4
+});
+
+Deno.test("bytecode ops - CALL with multiple expression args", () => {
+  // Both args are expressions, creating multiple intermediate registers
+  const result = compileAndRun(`
+    function sub(a, b) { return a - b; }
+    sub(10 + 5, 3 + 1)
+  `);
+  assertEquals(result.type, JSValueType.NUMBER);
+  assertEquals(result.value, 11);  // sub(15, 4) = 11
+});
+
+// ============================================================================
+// Instruction budget tests
+// ============================================================================
+
+import { assertThrows } from "@std/assert";
+
+Deno.test("bytecode ops - instruction budget prevents infinite loops", () => {
+  const compiler = new V8Compiler();
+  const compiled = compiler.compile("while (true) { }");
+  const interpreter = new IgnitionInterpreter();
+  interpreter.setMaxInstructions(1000);
+  assertThrows(
+    () => interpreter.execute(compiled.bytecode, compiled.constantPool),
+    Error,
+    "Script exceeded instruction budget",
+  );
+});
+
+Deno.test("bytecode ops - instruction budget allows normal programs", () => {
+  const interpreter = new IgnitionInterpreter();
+  interpreter.setMaxInstructions(100_000);
+  const compiler = new V8Compiler();
+  const compiled = compiler.compile(
+    "var sum = 0; for (var i = 0; i < 100; i = i + 1) { sum = sum + i; } sum",
+  );
+  const result = interpreter.execute(compiled.bytecode, compiled.constantPool);
+  assertEquals(result.type, JSValueType.NUMBER);
+  assertEquals(result.value, 4950);
+});
+
+Deno.test("bytecode ops - getMaxInstructions returns current budget", () => {
+  const interpreter = new IgnitionInterpreter();
+  assertEquals(interpreter.getMaxInstructions(), 10_000_000);
+  interpreter.setMaxInstructions(500);
+  assertEquals(interpreter.getMaxInstructions(), 500);
+});

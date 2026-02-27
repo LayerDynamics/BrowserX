@@ -810,3 +810,108 @@ Deno.test("CookieManager - default domain is request domain", () => {
 
   manager.dispose();
 });
+
+// ============================================================================
+// PUBLIC SUFFIX LIST INTEGRATION
+// ============================================================================
+
+Deno.test("CookieManager - rejects cookie for github.io (multi-level PSL entry)", () => {
+  const manager = new CookieManager();
+
+  // github.io is NOT in ICANN PSL, but io is a TLD
+  // What matters: co.uk style entries are blocked
+  manager.setCookie(
+    { name: "test", value: "data", domain: "co.uk" },
+    "https://example.co.uk/",
+  );
+  assertEquals(manager.getCookieCount(), 0);
+
+  manager.dispose();
+});
+
+Deno.test("CookieManager - allows cookie for registrable domain under second-level PS", () => {
+  const manager = new CookieManager();
+
+  manager.setCookie(
+    { name: "test", value: "data", domain: "example.co.uk" },
+    "https://example.co.uk/",
+  );
+  assertEquals(manager.getCookieCount(), 1);
+
+  manager.dispose();
+});
+
+Deno.test("CookieManager - rejects cookie for wildcard public suffix (*.ck)", () => {
+  const manager = new CookieManager();
+
+  // *.ck rule means foo.ck is a public suffix
+  manager.setCookie(
+    { name: "test", value: "data", domain: "foo.ck" },
+    "https://example.foo.ck/",
+  );
+  assertEquals(manager.getCookieCount(), 0);
+
+  manager.dispose();
+});
+
+Deno.test("CookieManager - allows cookie for domain under wildcard PS", () => {
+  const manager = new CookieManager();
+
+  // example.foo.ck is registrable (foo.ck is PS due to *.ck)
+  manager.setCookie(
+    { name: "test", value: "data", domain: "example.foo.ck" },
+    "https://example.foo.ck/",
+  );
+  assertEquals(manager.getCookieCount(), 1);
+
+  manager.dispose();
+});
+
+Deno.test("CookieManager - exception rule: allows www.ck as non-PS", () => {
+  const manager = new CookieManager();
+
+  // !www.ck exception means www.ck is NOT a public suffix
+  manager.setCookie(
+    { name: "test", value: "data", domain: "www.ck" },
+    "https://www.ck/",
+  );
+  assertEquals(manager.getCookieCount(), 1);
+
+  manager.dispose();
+});
+
+Deno.test("CookieManager - rejects cookie for bare TLD", () => {
+  const manager = new CookieManager();
+
+  manager.setCookie(
+    { name: "test", value: "data", domain: "org" },
+    "https://example.org/",
+  );
+  assertEquals(manager.getCookieCount(), 0);
+
+  manager.dispose();
+});
+
+Deno.test("CookieManager - rejects cookie for Japanese prefecture (tokyo.jp)", () => {
+  const manager = new CookieManager();
+
+  manager.setCookie(
+    { name: "test", value: "data", domain: "tokyo.jp" },
+    "https://example.tokyo.jp/",
+  );
+  assertEquals(manager.getCookieCount(), 0);
+
+  manager.dispose();
+});
+
+Deno.test("CookieManager - allows cookie for registrable domain under tokyo.jp", () => {
+  const manager = new CookieManager();
+
+  manager.setCookie(
+    { name: "test", value: "data", domain: "example.tokyo.jp" },
+    "https://example.tokyo.jp/",
+  );
+  assertEquals(manager.getCookieCount(), 1);
+
+  manager.dispose();
+});

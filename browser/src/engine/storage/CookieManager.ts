@@ -6,6 +6,7 @@
  */
 
 import type { Cookie } from "../../types/storage.ts";
+import { isPublicSuffix, getRegistrableDomain } from "./public-suffix-list.ts";
 
 /**
  * Cookie storage key
@@ -213,8 +214,8 @@ export class CookieManager {
         return false;
       }
 
-      // Cannot set cookie for public suffix (simplified check)
-      if (this.isPublicSuffix(cookie.domain)) {
+      // Cannot set cookie for public suffix
+      if (isPublicSuffix(cookie.domain)) {
         return false;
       }
     }
@@ -293,8 +294,8 @@ export class CookieManager {
     const target = this.parseUrl(targetUrl);
     const request = this.parseUrl(requestUrl);
 
-    return this.getRegistrableDomain(target.hostname) ===
-      this.getRegistrableDomain(request.hostname);
+    return getRegistrableDomain(target.hostname) ===
+      getRegistrableDomain(request.hostname);
   }
 
   /**
@@ -302,56 +303,6 @@ export class CookieManager {
    */
   private isTopLevelNavigation(requestType: "navigation" | "subresource"): boolean {
     return requestType === "navigation";
-  }
-
-  /**
-   * Get registrable domain (eTLD+1)
-   */
-  private getRegistrableDomain(hostname: string): string {
-    const parts = hostname.split(".");
-
-    if (parts.length >= 3) {
-      // Check if last two parts form a known second-level public suffix
-      const lastTwo = parts.slice(-2).join(".");
-      if (this.isPublicSuffix(lastTwo)) {
-        return parts.slice(-3).join(".");
-      }
-    }
-
-    if (parts.length >= 2) {
-      return parts.slice(-2).join(".");
-    }
-
-    return hostname;
-  }
-
-  /**
-   * Check if domain is public suffix
-   */
-  private isPublicSuffix(domain: string): boolean {
-    const d = domain.toLowerCase().replace(/^\./, "");
-
-    // Single-label domain (no dots) is a TLD — block it
-    if (!d.includes(".")) {
-      const tlds = new Set([
-        "com", "org", "net", "edu", "gov", "mil", "int", "info", "biz", "name",
-        "pro", "aero", "coop", "museum",
-        // ccTLDs
-        "uk", "de", "fr", "it", "es", "nl", "be", "at", "ch", "au", "nz", "ca",
-        "jp", "cn", "kr", "in", "br", "ru", "za", "mx", "ar", "cl", "co", "io",
-        "ai", "me", "tv", "cc", "us",
-      ]);
-      return tlds.has(d);
-    }
-
-    // Multi-label public suffixes (second-level domains that act as TLDs)
-    const secondLevelSuffixes = new Set([
-      "co.uk", "co.jp", "co.nz", "co.za", "co.kr", "co.in",
-      "com.au", "com.br", "com.cn", "com.mx", "com.ar",
-      "org.uk", "net.au", "ac.uk", "gov.uk", "edu.au",
-      "or.jp", "ne.jp", "ac.jp",
-    ]);
-    return secondLevelSuffixes.has(d);
   }
 
   /**

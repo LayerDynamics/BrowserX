@@ -172,6 +172,100 @@ Deno.test("CSP: CSPViolation constructor sets all fields", () => {
   assertEquals(v.reportOnly, true);
 });
 
+// === strict-dynamic tests ===
+
+Deno.test("CSP: strict-dynamic suppresses 'unsafe-inline' for inline scripts", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'unsafe-inline' 'nonce-abc123'",
+  );
+  // unsafe-inline should be ignored when strict-dynamic is present
+  assertEquals(csp.allowsInlineScript(), false); // no nonce → blocked
+  assert(csp.allowsInlineScript("abc123")); // valid nonce → allowed
+});
+
+Deno.test("CSP: strict-dynamic ignores host-based allowlists in allows()", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'nonce-abc123' https://cdn.example.com",
+  );
+  // Host allowlist should be ignored when strict-dynamic is present
+  assertEquals(
+    csp.allows("script-src", "https://cdn.example.com/app.js", "https://example.com"),
+    false,
+  );
+});
+
+Deno.test("CSP: strict-dynamic ignores 'self' in allows()", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'self' 'nonce-abc123'",
+  );
+  // 'self' should be ignored when strict-dynamic is present
+  assertEquals(
+    csp.allows("script-src", "https://example.com/app.js", "https://example.com"),
+    false,
+  );
+});
+
+Deno.test("CSP: strict-dynamic ignores scheme-source in allows()", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'nonce-abc123' https:",
+  );
+  assertEquals(
+    csp.allows("script-src", "https://any.com/app.js", "https://example.com"),
+    false,
+  );
+});
+
+Deno.test("CSP: strict-dynamic allows dynamically-loaded scripts via allowsDynamicScript()", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'nonce-abc123'",
+  );
+  assert(csp.allowsDynamicScript());
+});
+
+Deno.test("CSP: allowsDynamicScript() returns false without strict-dynamic", () => {
+  const csp = new ContentSecurityPolicy("script-src 'self'");
+  assertEquals(csp.allowsDynamicScript(), false);
+});
+
+Deno.test("CSP: strict-dynamic does not affect non-script directives", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'nonce-abc123'; img-src https://cdn.example.com",
+  );
+  // img-src should still work normally
+  assert(csp.allows("img-src", "https://cdn.example.com/img.png", "https://example.com"));
+  assertEquals(
+    csp.allows("img-src", "https://other.com/img.png", "https://example.com"),
+    false,
+  );
+});
+
+Deno.test("CSP: strict-dynamic with nonce allows matching nonce inline scripts", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'nonce-myNonce'",
+  );
+  assert(csp.allowsInlineScript("myNonce"));
+  assertEquals(csp.allowsInlineScript("wrongNonce"), false);
+  assertEquals(csp.allowsInlineScript(), false);
+});
+
+Deno.test("CSP: strict-dynamic with hash allows matching hash inline scripts", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'sha256-hashval'",
+  );
+  assert(csp.allowsInlineScript(undefined, "hashval"));
+  assertEquals(csp.allowsInlineScript(undefined, "wronghash"), false);
+});
+
+Deno.test("CSP: strict-dynamic ignores wildcard * for scripts", () => {
+  const csp = new ContentSecurityPolicy(
+    "script-src 'strict-dynamic' 'nonce-abc' *",
+  );
+  assertEquals(
+    csp.allows("script-src", "https://any.com/evil.js", "https://example.com"),
+    false,
+  );
+});
+
 Deno.test("CSP: allows() with full URL host-source match", () => {
   const csp = new ContentSecurityPolicy("script-src https://cdn.example.com");
   assert(csp.allows("script-src", "https://cdn.example.com/app.js", "https://example.com"));

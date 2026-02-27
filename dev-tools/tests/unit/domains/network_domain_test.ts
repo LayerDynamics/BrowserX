@@ -469,6 +469,40 @@ Deno.test("NetworkDomain - trackRequest returns unique sequential IDs", async ()
     assertEquals(id3, "req-3");
 });
 
+Deno.test("NetworkDomain - evicts oldest completed requests when exceeding capacity", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new NetworkDomain(eventBus);
+    const context = createMockContext({ eventBus });
+    domain.initialize(context);
+    await domain.enable();
+
+    // Fill up to the max (1000) with completed requests
+    const ids: string[] = [];
+    for (let i = 0; i < 1001; i++) {
+        const id = domain.trackRequest(`https://example.com/${i}`, "GET", {});
+        domain.trackResponse(id, 200, "OK", {}, `body-${i}`);
+        ids.push(id);
+    }
+
+    // Stats should show 1000 (the oldest completed request was evicted)
+    const stats = await domain.handleMethod("getRequestStats", {});
+    assertEquals((stats as Record<string, unknown>).totalRequests, 1000);
+
+    // The first request should have been evicted
+    await assertRejects(
+        async () => {
+            await domain.handleMethod("getResponseBody", { requestId: ids[0] });
+        },
+        Error,
+        "not found",
+    );
+
+    // The last request should still be accessible
+    const result = await domain.handleMethod("getResponseBody", { requestId: ids[1000] });
+    assertEquals((result as Record<string, unknown>).body, "body-1000");
+});
+
 Deno.test("NetworkDomain - handleMethod throws for unknown method", async () => {
     resetNodeIdCounter();
     const eventBus = new EventBus();

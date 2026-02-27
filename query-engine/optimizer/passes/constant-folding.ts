@@ -205,10 +205,12 @@ export class ConstantFoldingPass {
             return this.createBooleanLiteral(leftVal === rightVal);
           case "!=":
             return this.createBooleanLiteral(leftVal !== rightVal);
-          case "LIKE":
-            // Simple LIKE implementation
-            const pattern = rightVal.replace(/%/g, ".*").replace(/_/g, ".");
+          case "LIKE": {
+            // Escape regex metacharacters first, then convert LIKE wildcards
+            const escaped = rightVal.replace(/([.+*?^${}()|[\]\\])/g, "\\$1");
+            const pattern = escaped.replace(/%/g, ".*").replace(/_/g, ".");
             return this.createBooleanLiteral(new RegExp(`^${pattern}$`).test(leftVal));
+          }
         }
       }
 

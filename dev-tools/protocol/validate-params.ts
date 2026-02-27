@@ -41,16 +41,16 @@ export function validateParams<T>(
     }
 }
 
-// ---- Concrete validators for high-risk domains ----
+// ---- Helpers (exported for per-domain validator files) ----
 
-function assertObject(p: unknown): Record<string, unknown> {
+export function assertObject(p: unknown): Record<string, unknown> {
     if (p === null || p === undefined || typeof p !== "object" || Array.isArray(p)) {
         throw new ParamValidationError("params must be a non-null object");
     }
     return p as Record<string, unknown>;
 }
 
-function requireString(obj: Record<string, unknown>, key: string): string {
+export function requireString(obj: Record<string, unknown>, key: string): string {
     const val = obj[key];
     if (typeof val !== "string") {
         throw new ParamValidationError(`'${key}' must be a string`);
@@ -58,7 +58,7 @@ function requireString(obj: Record<string, unknown>, key: string): string {
     return val;
 }
 
-function requireNumber(obj: Record<string, unknown>, key: string): number {
+export function requireNumber(obj: Record<string, unknown>, key: string): number {
     const val = obj[key];
     if (typeof val !== "number") {
         throw new ParamValidationError(`'${key}' must be a number`);
@@ -66,7 +66,7 @@ function requireNumber(obj: Record<string, unknown>, key: string): number {
     return val;
 }
 
-function optionalString(obj: Record<string, unknown>, key: string): string | undefined {
+export function optionalString(obj: Record<string, unknown>, key: string): string | undefined {
     const val = obj[key];
     if (val === undefined) return undefined;
     if (typeof val !== "string") {
@@ -75,7 +75,7 @@ function optionalString(obj: Record<string, unknown>, key: string): string | und
     return val;
 }
 
-function optionalNumber(obj: Record<string, unknown>, key: string): number | undefined {
+export function optionalNumber(obj: Record<string, unknown>, key: string): number | undefined {
     const val = obj[key];
     if (val === undefined) return undefined;
     if (typeof val !== "number") {
@@ -84,7 +84,7 @@ function optionalNumber(obj: Record<string, unknown>, key: string): number | und
     return val;
 }
 
-function optionalBoolean(obj: Record<string, unknown>, key: string): boolean | undefined {
+export function optionalBoolean(obj: Record<string, unknown>, key: string): boolean | undefined {
     const val = obj[key];
     if (val === undefined) return undefined;
     if (typeof val !== "boolean") {

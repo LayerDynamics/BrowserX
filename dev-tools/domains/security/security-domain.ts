@@ -20,6 +20,8 @@ import type {
     GetCertificateResult,
 } from "./security-types.ts";
 import { certificateToCertificateInfo } from "./security-types.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateGetCertificateParams } from "./security-validators.ts";
 
 /**
  * Security Domain - TLS, certificate, and mixed content inspection
@@ -44,7 +46,7 @@ export class SecurityDomain extends BaseDomain {
         });
 
         this.registerMethod("getCertificate", "Get certificate details for an origin", async (params) => {
-            return await this.getCertificate(params as unknown as GetCertificateParams);
+            return await this.getCertificate(validateParams(params, validateGetCertificateParams) as GetCertificateParams);
         });
 
         this.registerMethod("getInsecureContentStatus", "Get insecure content status", async (params) => {

@@ -24,6 +24,8 @@ import type {
     GetPerformanceScoreResult,
     PerformanceScoreDescription,
 } from "./performance-types.ts";
+import { validateParams, assertObject } from "../../protocol/validate-params.ts";
+import { validateProfileParams } from "./performance-validators.ts";
 
 /**
  * Performance Domain - metrics collection and profiling
@@ -51,31 +53,31 @@ export class PerformanceDomain extends BaseDomain {
 
     protected setup(): void {
         this.registerMethod("getMetrics", "Collect performance metrics from all subsystems", async (params) => {
-            return await this.getMetrics(params as unknown as Record<string, unknown>);
+            return await this.getMetrics(assertObject(params) as Record<string, unknown>);
         });
 
         this.registerMethod("startProfiling", "Start CPU profiling", async (params) => {
-            return await this.startProfiling(params as unknown as ProfileParams);
+            return await this.startProfiling(validateParams(params, validateProfileParams) as ProfileParams);
         });
 
         this.registerMethod("stopProfiling", "Stop CPU profiling and return profile", async (params) => {
-            return await this.stopProfiling(params as unknown as ProfileParams);
+            return await this.stopProfiling(validateParams(params, validateProfileParams) as ProfileParams);
         });
 
         this.registerMethod("getNavigationTiming", "Get navigation timing breakdown", async (params) => {
-            return await this.getNavigationTiming(params as unknown as Record<string, unknown>);
+            return await this.getNavigationTiming(assertObject(params) as Record<string, unknown>);
         });
 
         this.registerMethod("getWebVitals", "Get Core Web Vitals metrics", async (params) => {
-            return await this.getWebVitals(params as unknown as Record<string, unknown>);
+            return await this.getWebVitals(assertObject(params) as Record<string, unknown>);
         });
 
         this.registerMethod("getRenderingMetrics", "Get rendering pipeline metrics", async (params) => {
-            return await this.getRenderingMetrics(params as unknown as Record<string, unknown>);
+            return await this.getRenderingMetrics(assertObject(params) as Record<string, unknown>);
         });
 
         this.registerMethod("getPerformanceScore", "Get composite performance score", async (params) => {
-            return await this.getPerformanceScore(params as unknown as Record<string, unknown>);
+            return await this.getPerformanceScore(assertObject(params) as Record<string, unknown>);
         });
 
         // Register events

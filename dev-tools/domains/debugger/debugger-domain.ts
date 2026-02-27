@@ -30,6 +30,8 @@ import type {
     GetPossibleBreakpointsParams,
     GetPossibleBreakpointsResult,
 } from "./debugger-types.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateSetBreakpointParams, validateSetBreakpointByUrlParams, validateRemoveBreakpointParams, validateGetScriptSourceParams, validateEvaluateOnCallFrameParams, validateGetPossibleBreakpointsParams, validateGetPropertiesParams } from "./debugger-validators.ts";
 
 /**
  * Internal breakpoint storage
@@ -67,19 +69,19 @@ export class DebuggerDomain extends BaseDomain {
     protected setup(): void {
         // Register methods
         this.registerMethod("setBreakpoint", "Set breakpoint at a specific location", async (params) => {
-            return await this.setBreakpoint(params as unknown as SetBreakpointParams);
+            return await this.setBreakpoint(validateParams(params, validateSetBreakpointParams) as SetBreakpointParams);
         });
 
         this.registerMethod("setBreakpointByUrl", "Set breakpoint by URL and line number", async (params) => {
-            return await this.setBreakpointByUrl(params as unknown as SetBreakpointByUrlParams);
+            return await this.setBreakpointByUrl(validateParams(params, validateSetBreakpointByUrlParams) as SetBreakpointByUrlParams);
         });
 
         this.registerMethod("removeBreakpoint", "Remove a breakpoint", async (params) => {
-            return await this.removeBreakpoint(params as unknown as RemoveBreakpointParams);
+            return await this.removeBreakpoint(validateParams(params, validateRemoveBreakpointParams) as RemoveBreakpointParams);
         });
 
         this.registerMethod("getScriptSource", "Get source code of a script", async (params) => {
-            return await this.getScriptSource(params as unknown as GetScriptSourceParams);
+            return await this.getScriptSource(validateParams(params, validateGetScriptSourceParams) as GetScriptSourceParams);
         });
 
         this.registerMethod("resume", "Resume script execution", async (params) => {
@@ -103,11 +105,11 @@ export class DebuggerDomain extends BaseDomain {
         });
 
         this.registerMethod("evaluateOnCallFrame", "Evaluate expression on a specific call frame", async (params) => {
-            return await this.evaluateOnCallFrame(params as unknown as EvaluateOnCallFrameParams);
+            return await this.evaluateOnCallFrame(validateParams(params, validateEvaluateOnCallFrameParams) as EvaluateOnCallFrameParams);
         });
 
         this.registerMethod("getPossibleBreakpoints", "Get possible breakpoint locations in a range", async (params) => {
-            return await this.getPossibleBreakpoints(params as unknown as GetPossibleBreakpointsParams);
+            return await this.getPossibleBreakpoints(validateParams(params, validateGetPossibleBreakpointsParams) as GetPossibleBreakpointsParams);
         });
 
         this.registerMethod("getStackTrace", "Get the current call stack trace", async (params) => {
@@ -115,7 +117,7 @@ export class DebuggerDomain extends BaseDomain {
         });
 
         this.registerMethod("getProperties", "Get properties of a remote object by objectId", async (params) => {
-            return await this.getProperties(params as unknown as { objectId: string });
+            return await this.getProperties(validateParams(params, validateGetPropertiesParams));
         });
 
         // Register events

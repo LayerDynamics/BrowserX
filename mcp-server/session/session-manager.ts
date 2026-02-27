@@ -92,31 +92,32 @@ export class SessionManager {
    * Create a new browser session
    */
   async createSession(permissions: Permission[] = []): Promise<string> {
-    // Enforce hard session limit, accounting for in-flight acquires to prevent
-    // concurrent callers from both passing the check during await gaps
+    // Reserve a slot SYNCHRONOUSLY before any await to prevent concurrent callers
+    // from both passing the size check during await gaps (race condition fix).
+    this.pendingAcquires++;
+
+    // Enforce hard session limit, accounting for in-flight acquires
     const effectiveCount = this.sessions.size + this.pendingAcquires;
-    if (effectiveCount >= this.maxSessions) {
+    if (effectiveCount > this.maxSessions) {
       // Try to cleanup idle sessions first
       await this.cleanupIdleSessions();
 
       // If still at limit, evict the oldest session
       const effectiveAfterCleanup = this.sessions.size + this.pendingAcquires;
-      if (effectiveAfterCleanup >= this.maxSessions) {
+      if (effectiveAfterCleanup > this.maxSessions) {
         await this.closeOldestSession();
       }
 
-      // If still at limit after eviction, throw
+      // If still at limit after eviction, release our reservation and throw
       const effectiveAfterEviction = this.sessions.size + this.pendingAcquires;
-      if (effectiveAfterEviction >= this.maxSessions) {
+      if (effectiveAfterEviction > this.maxSessions) {
+        this.pendingAcquires--;
         throw new Error(
           `Maximum session limit reached (${this.maxSessions}). ` +
           `Close an existing session before creating a new one.`
         );
       }
     }
-
-    // Increment pending counter synchronously before any awaits to reserve a slot
-    this.pendingAcquires++;
 
     const sessionId = this.generateSessionId();
 

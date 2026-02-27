@@ -7,7 +7,8 @@
 
 import type { DomainName } from "../../protocol/types.ts";
 import { BaseDomain } from "../base-domain.ts";
-import { validateParams, validateQuerySelectorParams } from "../../protocol/validate-params.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateQuerySelectorParams, validateGetDocumentParams, validateQuerySelectorAllParams, validateGetOuterHTMLParams, validateSetAttributeValueParams, validateRemoveAttributeParams, validateRemoveNodeParams, validateGetBoxModelParams, validateRequestChildNodesParams, validatePerformSearchParams, validateGetSearchResultsParams } from "./dom-validators.ts";
 import { domToGraph } from "./dom-graph.ts";
 import { type DOMNode, type DOMElement, DOMNodeType } from "../../../browser/src/types/dom.ts";
 import type { NodeID } from "../../../browser/src/types/identifiers.ts";
@@ -61,7 +62,7 @@ export class DOMDomain extends BaseDomain {
     protected setup(): void {
         // Register methods
         this.registerMethod("getDocument", "Returns the root DOM node", async (params) => {
-            return await this.getDocument(params as unknown as GetDocumentParams);
+            return await this.getDocument(validateParams(params, validateGetDocumentParams) as GetDocumentParams);
         });
 
         this.registerMethod("querySelector", "Execute querySelector on a node", async (params) => {
@@ -69,39 +70,39 @@ export class DOMDomain extends BaseDomain {
         });
 
         this.registerMethod("querySelectorAll", "Execute querySelectorAll on a node", async (params) => {
-            return await this.querySelectorAll(params as unknown as QuerySelectorAllParams);
+            return await this.querySelectorAll(validateParams(params, validateQuerySelectorAllParams) as QuerySelectorAllParams);
         });
 
         this.registerMethod("getOuterHTML", "Get outer HTML of a node", async (params) => {
-            return await this.getOuterHTML(params as unknown as GetOuterHTMLParams);
+            return await this.getOuterHTML(validateParams(params, validateGetOuterHTMLParams) as GetOuterHTMLParams);
         });
 
         this.registerMethod("setAttributeValue", "Set an attribute on an element", async (params) => {
-            return await this.setAttributeValue(params as unknown as SetAttributeValueParams);
+            return await this.setAttributeValue(validateParams(params, validateSetAttributeValueParams) as SetAttributeValueParams);
         });
 
         this.registerMethod("removeAttribute", "Remove an attribute from an element", async (params) => {
-            return await this.removeAttribute(params as unknown as RemoveAttributeParams);
+            return await this.removeAttribute(validateParams(params, validateRemoveAttributeParams) as RemoveAttributeParams);
         });
 
         this.registerMethod("removeNode", "Remove a node from the DOM", async (params) => {
-            return await this.removeNode(params as unknown as RemoveNodeParams);
+            return await this.removeNode(validateParams(params, validateRemoveNodeParams) as RemoveNodeParams);
         });
 
         this.registerMethod("getBoxModel", "Get box model for a node", async (params) => {
-            return await this.getBoxModel(params as unknown as GetBoxModelParams);
+            return await this.getBoxModel(validateParams(params, validateGetBoxModelParams) as GetBoxModelParams);
         });
 
         this.registerMethod("requestChildNodes", "Request children for a node", async (params) => {
-            return await this.requestChildNodes(params as unknown as RequestChildNodesParams);
+            return await this.requestChildNodes(validateParams(params, validateRequestChildNodesParams) as RequestChildNodesParams);
         });
 
         this.registerMethod("performSearch", "Search the DOM tree", async (params) => {
-            return await this.performSearch(params as unknown as PerformSearchParams);
+            return await this.performSearch(validateParams(params, validatePerformSearchParams) as PerformSearchParams);
         });
 
         this.registerMethod("getSearchResults", "Get search results by range", async (params) => {
-            return await this.getSearchResults(params as unknown as GetSearchResultsParams);
+            return await this.getSearchResults(validateParams(params, validateGetSearchResultsParams) as GetSearchResultsParams);
         });
 
         this.registerMethod("getGraphVisualization", "Get DOM tree as GraphX visualization", async (_params) => {

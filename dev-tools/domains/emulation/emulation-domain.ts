@@ -28,6 +28,8 @@ import type {
     MediaFeature,
     UserAgentMetadata,
 } from "./emulation-types.ts";
+import { validateParams } from "../../protocol/validate-params.ts";
+import { validateDeviceMetricsParams, validateSetUserAgentOverrideParams, validateSetEmulatedMediaParams, validateSetGeolocationOverrideParams, validateSetTimezoneOverrideParams, validateSetLocaleOverrideParams, validateSetTouchEmulationEnabledParams, validateSetNetworkConditionsParams, validateSetCPUThrottlingRateParams, validateSetScriptExecutionDisabledParams } from "./emulation-validators.ts";
 
 /**
  * Emulation Domain - device and environment emulation
@@ -97,7 +99,7 @@ export class EmulationDomain extends BaseDomain {
     protected setup(): void {
         // Register methods
         this.registerMethod("setDeviceMetricsOverride", "Override device metrics (viewport, scale, mobile)", async (params) => {
-            return this.setDeviceMetricsOverride(params as unknown as DeviceMetricsParams);
+            return this.setDeviceMetricsOverride(validateParams(params, validateDeviceMetricsParams) as DeviceMetricsParams);
         });
 
         this.registerMethod("clearDeviceMetricsOverride", "Clear device metrics override", async () => {
@@ -105,15 +107,15 @@ export class EmulationDomain extends BaseDomain {
         });
 
         this.registerMethod("setUserAgentOverride", "Override the user agent string", async (params) => {
-            return this.setUserAgentOverride(params as unknown as SetUserAgentOverrideParams);
+            return this.setUserAgentOverride(validateParams(params, validateSetUserAgentOverrideParams) as SetUserAgentOverrideParams);
         });
 
         this.registerMethod("setEmulatedMedia", "Override CSS media type and features", async (params) => {
-            return this.setEmulatedMedia(params as unknown as SetEmulatedMediaParams);
+            return this.setEmulatedMedia(validateParams(params, validateSetEmulatedMediaParams) as SetEmulatedMediaParams);
         });
 
         this.registerMethod("setGeolocationOverride", "Override geolocation position", async (params) => {
-            return this.setGeolocationOverride(params as unknown as SetGeolocationOverrideParams);
+            return this.setGeolocationOverride(validateParams(params, validateSetGeolocationOverrideParams) as SetGeolocationOverrideParams);
         });
 
         this.registerMethod("clearGeolocationOverride", "Clear geolocation override", async () => {
@@ -121,27 +123,27 @@ export class EmulationDomain extends BaseDomain {
         });
 
         this.registerMethod("setTimezoneOverride", "Override timezone", async (params) => {
-            return this.setTimezoneOverride(params as unknown as SetTimezoneOverrideParams);
+            return this.setTimezoneOverride(validateParams(params, validateSetTimezoneOverrideParams) as SetTimezoneOverrideParams);
         });
 
         this.registerMethod("setLocaleOverride", "Override locale", async (params) => {
-            return this.setLocaleOverride(params as unknown as SetLocaleOverrideParams);
+            return this.setLocaleOverride(validateParams(params, validateSetLocaleOverrideParams) as SetLocaleOverrideParams);
         });
 
         this.registerMethod("setTouchEmulationEnabled", "Enable or disable touch emulation", async (params) => {
-            return this.setTouchEmulationEnabled(params as unknown as SetTouchEmulationEnabledParams);
+            return this.setTouchEmulationEnabled(validateParams(params, validateSetTouchEmulationEnabledParams) as SetTouchEmulationEnabledParams);
         });
 
         this.registerMethod("setNetworkConditions", "Set network throttling conditions", async (params) => {
-            return this.setNetworkConditions(params as unknown as SetNetworkConditionsParams);
+            return this.setNetworkConditions(validateParams(params, validateSetNetworkConditionsParams) as SetNetworkConditionsParams);
         });
 
         this.registerMethod("setCPUThrottlingRate", "Set CPU throttling rate", async (params) => {
-            return this.setCPUThrottlingRate(params as unknown as SetCPUThrottlingRateParams);
+            return this.setCPUThrottlingRate(validateParams(params, validateSetCPUThrottlingRateParams) as SetCPUThrottlingRateParams);
         });
 
         this.registerMethod("setScriptExecutionDisabled", "Disable or enable script execution", async (params) => {
-            return this.setScriptExecutionDisabled(params as unknown as SetScriptExecutionDisabledParams);
+            return this.setScriptExecutionDisabled(validateParams(params, validateSetScriptExecutionDisabledParams) as SetScriptExecutionDisabledParams);
         });
 
         this.registerMethod("canEmulate", "Check if emulation is supported", async () => {

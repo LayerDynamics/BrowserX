@@ -610,6 +610,9 @@ Deno.test({
 
     pool.release(instance.id);
 
+    // Allow async closeInstance to complete (release fire-and-forgets it)
+    await new Promise((r) => setTimeout(r, 50));
+
     // Instance should be closed, not returned to pool
     assertEquals(pool.hasInstance(instance.id), false);
 

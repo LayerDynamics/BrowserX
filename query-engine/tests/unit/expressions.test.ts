@@ -638,6 +638,34 @@ Deno.test("MemberExpression - array index access", () => {
   assertEquals(expr.computed, true);
 });
 
+Deno.test("MemberExpression - dynamic variable bracket access preserves computedProperty", () => {
+  const dynamicKey: Identifier = { type: "IDENTIFIER", name: "myKey" };
+  const expr: MemberExpression = {
+    type: "MEMBER",
+    object: { type: "IDENTIFIER", name: "obj" },
+    property: "",
+    computed: true,
+    computedProperty: dynamicKey,
+  };
+
+  assertEquals(expr.property, "");
+  assertEquals(expr.computed, true);
+  assertEquals(expr.computedProperty?.type, "IDENTIFIER");
+  assertEquals((expr.computedProperty as Identifier).name, "myKey");
+});
+
+Deno.test("MemberExpression - literal bracket access has no computedProperty", () => {
+  const expr: MemberExpression = {
+    type: "MEMBER",
+    object: { type: "IDENTIFIER", name: "obj" },
+    property: "foo",
+    computed: true,
+  };
+
+  assertEquals(expr.property, "foo");
+  assertEquals(expr.computedProperty, undefined);
+});
+
 // ============================================================================
 // Array Expression Tests
 // ============================================================================

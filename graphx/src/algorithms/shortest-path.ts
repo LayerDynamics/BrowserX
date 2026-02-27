@@ -1,5 +1,6 @@
 import type { NodeId } from "../types.ts";
 import type { Graph } from "../graph/Graph.ts";
+import { MinHeap } from "./min-heap.ts";
 
 export interface ShortestPathResult {
   /** Distance from start to each node */
@@ -13,7 +14,8 @@ export interface ShortestPathResult {
 }
 
 /**
- * Dijkstra's shortest path algorithm.
+ * Dijkstra's shortest path algorithm using a binary min-heap.
+ * Time complexity: O((V + E) log V) instead of O(V²).
  * Returns shortest paths from start to all reachable nodes.
  */
 export function dijkstra<N, E>(graph: Graph<N, E>, start: NodeId): ShortestPathResult {
@@ -23,40 +25,39 @@ export function dijkstra<N, E>(graph: Graph<N, E>, start: NodeId): ShortestPathR
 
   const distance = new Map<NodeId, number>();
   const previous = new Map<NodeId, NodeId | null>();
-  const unvisited = new Set<NodeId>();
+  const visited = new Set<NodeId>();
+  const heap = new MinHeap<NodeId>();
 
   for (const node of graph.nodes()) {
     distance.set(node.id, Infinity);
     previous.set(node.id, null);
-    unvisited.add(node.id);
   }
   distance.set(start, 0);
+  heap.insert(start, 0);
 
-  while (unvisited.size > 0) {
-    // Find node with minimum distance
-    let minDist = Infinity;
-    let current: NodeId | null = null;
-    for (const id of unvisited) {
-      const d = distance.get(id)!;
-      if (d < minDist) {
-        minDist = d;
-        current = id;
-      }
-    }
+  while (heap.size > 0) {
+    const min = heap.extractMin()!;
+    const current = min.key;
 
-    if (current === null || minDist === Infinity) break;
+    if (visited.has(current)) continue;
+    if (min.priority === Infinity) break;
 
-    unvisited.delete(current);
+    visited.add(current);
 
     const currentDist = distance.get(current)!;
     for (const edge of graph.incidentEdges(current)) {
       const neighborId = edge.source === current ? edge.target : edge.source;
-      if (!unvisited.has(neighborId)) continue;
+      if (visited.has(neighborId)) continue;
 
       const alt = currentDist + edge.weight;
       if (alt < distance.get(neighborId)!) {
         distance.set(neighborId, alt);
         previous.set(neighborId, current);
+        if (heap.has(neighborId)) {
+          heap.decreaseKey(neighborId, alt);
+        } else {
+          heap.insert(neighborId, alt);
+        }
       }
     }
   }

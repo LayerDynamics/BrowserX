@@ -1162,7 +1162,7 @@ export class Parser {
         const property = this.parseExpression();
         this.consume(TokenType.RIGHT_BRACKET);
 
-        // Convert property to string if it's a literal
+        // For literals, inline the string key; for dynamic expressions, preserve the AST node
         const propName = property.type === "LITERAL" ? String((property as Literal).value) : "";
 
         expr = {
@@ -1170,6 +1170,7 @@ export class Parser {
           object: expr,
           property: propName,
           computed: true,
+          ...(property.type !== "LITERAL" ? { computedProperty: property } : {}),
         };
       } else {
         break;

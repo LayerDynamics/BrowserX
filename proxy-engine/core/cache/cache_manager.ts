@@ -36,6 +36,7 @@ class HTTPCacheManager {
     misses: number;
     revalidations: number;
     evictions: number;
+    encryptionFailures: number;
   };
   private cleanupTimerId?: number;
 
@@ -43,7 +44,7 @@ class HTTPCacheManager {
     this.memoryCache = new Map();
     this.cacheSize = 0;
     this.config = config;
-    this.stats = { hits: 0, misses: 0, revalidations: 0, evictions: 0 };
+    this.stats = { hits: 0, misses: 0, revalidations: 0, evictions: 0, encryptionFailures: 0 };
 
     // Start background cleanup
     this.startCleanupTimer();
@@ -135,7 +136,7 @@ class HTTPCacheManager {
   async store(
     cacheKey: string,
     response: { status: number; headers: Record<string, string>; body: Uint8Array },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const cacheControl = response.headers["cache-control"] || "";
     const maxAge = this.parseMaxAge(cacheControl);
 
@@ -149,8 +150,10 @@ class HTTPCacheManager {
         body = encrypted.ciphertext;
         encryptionIV = encrypted.iv as Uint8Array;
       } catch (error) {
-        console.error(`[CACHE ENCRYPTION ERROR] ${cacheKey}:`, error);
-        body = response.body; // Fall back to plaintext
+        // Fail-closed: refuse to cache unencrypted data when encryption is required
+        console.error(`[CACHE ENCRYPTION ERROR] ${cacheKey}: entry NOT cached —`, error);
+        this.stats.encryptionFailures++;
+        return false;
       }
     }
 
@@ -182,6 +185,8 @@ class HTTPCacheManager {
     console.log(
       `[CACHE STORE] ${cacheKey} (size: ${(entrySize / 1024).toFixed(2)} KB, TTL: ${maxAge}s)`,
     );
+
+    return true;
   }
 
   /**
@@ -402,6 +407,7 @@ class HTTPCacheManager {
       misses: this.stats.misses,
       revalidations: this.stats.revalidations,
       evictions: this.stats.evictions,
+      encryptionFailures: this.stats.encryptionFailures,
       size: this.cacheSize,
       entries: this.memoryCache.size,
     };

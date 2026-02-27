@@ -2,29 +2,32 @@
 
 > ⚠️ **Work in Progress** - BrowserX is in active development. Many components are experimental, incomplete, or undergoing significant changes. This project is not yet production-ready.
 
-**A browser toolkit built with TypeScript/Deno and Rust.** BrowserX is a fully composable, programmable browser system where every component—from networking to rendering to GPU acceleration—can be used independently or combined to create custom browser experiences.
+**A browser toolkit built with TypeScript/Deno and Rust.** BrowserX is a fully composable, programmable browser system with **11 standalone packages** — every component from networking to rendering to GPU acceleration can be used independently or combined to create custom browser experiences.
 
 ## 🎯 What is BrowserX?
 
 BrowserX is not a traditional browser. It's a **toolkit for building anything browser-related**. Whether you need a headless scraper, a custom renderer, a programmable proxy, or a full-featured browser with AI integration, BrowserX provides the building blocks.
 
-### The BrowserX Toolkit
+### The BrowserX Toolkit — 11 Composable Packages
 
-All modules and crates are designed to work together as an integrated system:
+All packages are designed to work together as an integrated system, but each is a standalone composable unit with its own workspace, API, and test suite:
 
-**TypeScript/Deno Modules:**
+**TypeScript/Deno Packages (7):**
 
-- **Browser Engine** - Complete rendering pipeline: HTML/CSS parsing, layout, JavaScript execution, DOM manipulation
-- **Proxy Engine** - Programmable traffic routing: middleware, load balancing, caching, request/response transformation
-- **Query Engine** - SQL-like interface: query browser state, DOM tree, network activity, and proxy metrics
-- **Runtime** - Unified orchestration layer integrating all engines with plugin architecture
-- **MCP Server** - Model Context Protocol server for AI-driven browser automation
-- **DevTools** - Chrome DevTools Protocol (CDP) implementation with 14 debugging domains
+- **Browser Engine** (`@browserx/browser`) - Complete rendering pipeline: HTML/CSS parsing, layout, JavaScript execution, DOM manipulation
+- **Proxy Engine** (`@browserx/proxy-engine`) - Programmable traffic routing: middleware, load balancing, caching, request/response transformation
+- **Query Engine** (`@browserx/query-engine`) - SQL-like interface: query browser state, DOM tree, network activity, and proxy metrics
+- **Runtime** (`@browserx/runtime`) - Unified orchestration layer integrating all engines with plugin architecture
+- **MCP Server** (`@browserx/mcp-server`) - Model Context Protocol server for AI-driven browser automation
+- **DevTools** (`@browserx/dev-tools`) - Chrome DevTools Protocol (CDP) implementation with 14 debugging domains
+- **GraphX** (`@browserx/graphx`) - Graph data structures, algorithms (topological sort, shortest path, cycle detection), and visualization
 
-**Rust Crates (via FFI):**
+**Rust FFI Crates (4):**
 
-- **Pixpane** - Native windowing: cross-platform windows, GPU rendering via wgpu, immediate-mode UI with egui
-- **webgpu_x** - GPU compute: WebGPU bindings for compute shaders, tensor operations, and custom GPU workloads
+- **pixpane** - Native windowing: cross-platform windows, GPU rendering via wgpu, immediate-mode UI with egui
+- **webgpu_x** - GPU compute: WebGPU bindings for compute shaders, texture readback, and bind group management
+- **bytecodex** - Bytecode optimization: constant folding, dead store elimination, peephole optimization, validation
+- **transportx** - QUIC/HTTP3 transport: connection management, stream multiplexing via quiche FFI
 
 ### Built to Work Together
 
@@ -132,6 +135,13 @@ Understanding the Layers:
 │ - GPU Rendering  │  │ - Kernels        │
 │ - egui (FFI)     │  │ - Tensors (FFI)  │
 └──────────────────┘  └──────────────────┘
+
+┌──────────────────┐  ┌──────────────────┐
+│ bytecodex (Rust) │  │ transportx(Rust) │
+│ - Const folding  │  │ - QUIC/HTTP3     │
+│ - Dead store     │  │ - Stream mux     │
+│ - Peephole (FFI) │  │ - quiche (FFI)   │
+└──────────────────┘  └──────────────────┘
 ```
 
 **Data Flow**: User requests flow down through the MCP server → query engine → runtime → proxy engine → browser engine. The browser engine can then output to:
@@ -183,6 +193,14 @@ BrowserX/
 │   ├── src/domains/        # CDP domains (DOM, CSS, Network, etc.)
 │   └── tests/              # 847+ tests across 24 test files
 │
+├── graphx/                  # Graph Library (TypeScript/Deno)
+│   ├── src/
+│   │   ├── graph/          # Graph, DiGraph, DAG data structures
+│   │   ├── algorithms/     # Topological sort, shortest path, cycle detection
+│   │   ├── layout/         # Force-directed, hierarchical layouts
+│   │   └── export/         # SVG, DOT, JSON export
+│   └── tests/              # 164 tests
+│
 ├── crates/
 │   ├── pixpane/            # Native windowing layer (Rust)
 │   │   ├── src/
@@ -191,13 +209,19 @@ BrowserX/
 │   │   │   └── deno_bindings.rs  # FFI exports via deno_bindgen
 │   │   └── bindings/       # Generated TypeScript bindings
 │   │
-│   └── webgpu_x/           # GPU compute layer (Rust)
-│       ├── src/
-│       │   ├── compute/    # Compute kernels and workgroups
-│       │   ├── tensor/     # Tensor operations and storage
-│       │   ├── shader/     # WGSL shader generation
-│       │   └── deno_bindings.rs  # FFI exports via deno_bindgen
-│       └── bindings/       # Generated TypeScript bindings
+│   ├── webgpu_x/           # GPU compute layer (Rust)
+│   │   ├── src/
+│   │   │   ├── compute/    # Compute kernels and workgroups
+│   │   │   ├── tensor/     # Tensor operations and storage
+│   │   │   ├── shader/     # WGSL shader generation
+│   │   │   └── deno_bindings.rs  # FFI exports via deno_bindgen
+│   │   └── bindings/       # Generated TypeScript bindings
+│   │
+│   ├── bytecodex/          # Bytecode optimizer (Rust)
+│   │   └── src/            # Constant folding, dead store elimination, peephole
+│   │
+│   └── transportx/         # QUIC/HTTP3 transport (Rust)
+│       └── src/            # Connection management, stream mux via quiche
 │
 ├── resources/               # Reference implementations and dependencies
 │   ├── deno_bindgen-0.8.1/ # Custom deno_bindgen for FFI generation

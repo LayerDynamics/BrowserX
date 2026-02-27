@@ -282,7 +282,30 @@ export class InMemoryUserValidator implements BasicAuthValidator {
   async validate(username: string, password: string): Promise<AuthenticatedUser | null> {
     const entry = this.users.get(username);
 
-    if (!entry || entry.password !== password) {
+    if (!entry) {
+      return null;
+    }
+
+    // Constant-time comparison via HMAC digest to prevent timing attacks
+    // (mirrors AuthProxy.validateBasicAuth pattern)
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode("timing-safe-compare"),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const storedDigest = await crypto.subtle.sign("HMAC", key, encoder.encode(entry.password));
+    const inputDigest = await crypto.subtle.sign("HMAC", key, encoder.encode(password));
+    const storedArr = new Uint8Array(storedDigest);
+    const inputArr = new Uint8Array(inputDigest);
+    let match = storedArr.length === inputArr.length ? 1 : 0;
+    for (let i = 0; i < storedArr.length; i++) {
+      match &= storedArr[i] === inputArr[i] ? 1 : 0;
+    }
+
+    if (!match) {
       return null;
     }
 

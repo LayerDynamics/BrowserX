@@ -24,6 +24,10 @@ export class ToolRateLimiter {
     this.config = config;
     // Periodically clean up expired windows to prevent unbounded growth
     this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+    // Unref so this timer doesn't prevent process/Deno shutdown
+    if (typeof Deno !== "undefined") {
+      Deno.unrefTimer(this.cleanupInterval);
+    }
   }
 
   check(sessionId: string): void {

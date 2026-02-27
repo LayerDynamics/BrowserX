@@ -309,9 +309,9 @@ export class BrowserPool {
 
     try {
       // Close browser engine if present
-      const engine = instance.browserEngine as { close?: () => void };
+      const engine = instance.browserEngine as { close?: () => Promise<void> | void };
       if (engine && typeof engine.close === 'function') {
-        engine.close();
+        await engine.close();
       }
 
       // Stop event loop if present
