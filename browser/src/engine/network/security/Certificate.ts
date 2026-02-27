@@ -97,7 +97,7 @@ function matchesHostname(hostname: string, certNames: string[]): boolean {
       const domain = certName.substring(2);
       const parts = hostname.split(".");
 
-      if (parts.length >= 2) {
+      if (parts.length >= 3 && domain.split(".").length >= 2) {
         const hostDomain = parts.slice(1).join(".");
         if (hostDomain === domain) {
           return true;
@@ -194,6 +194,61 @@ async function verifySignature(cert: Certificate, issuer: Certificate): Promise<
 }
 
 /**
+ * DER-encode a Distinguished Name string (e.g., "CN=Example CA, O=Example Inc") into ASN.1 RDN SEQUENCE.
+ * Used as fallback when raw DER issuer bytes are not available.
+ * Produces: SEQUENCE { SET { SEQUENCE { OID, PrintableString } } ... }
+ */
+export function derEncodeDistinguishedName(dn: string): Uint8Array {
+  // Parse "KEY=value, KEY=value" format
+  const rdnParts: { oid: Uint8Array; value: string }[] = [];
+
+  // RDN attribute type OIDs (2.5.4.x)
+  const oidMap: Record<string, Uint8Array> = {
+    "CN": new Uint8Array([0x55, 0x04, 0x03]),
+    "C": new Uint8Array([0x55, 0x04, 0x06]),
+    "L": new Uint8Array([0x55, 0x04, 0x07]),
+    "ST": new Uint8Array([0x55, 0x04, 0x08]),
+    "O": new Uint8Array([0x55, 0x04, 0x0a]),
+    "OU": new Uint8Array([0x55, 0x04, 0x0b]),
+  };
+
+  // Split on ", " but handle values that may contain commas within (simple heuristic)
+  const parts = dn.split(/,\s*/);
+  for (const part of parts) {
+    const eqIdx = part.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = part.substring(0, eqIdx).trim().toUpperCase();
+    const value = part.substring(eqIdx + 1).trim();
+    const oid = oidMap[key];
+    if (oid) {
+      rdnParts.push({ oid, value });
+    }
+  }
+
+  // Build SET OF AttributeTypeAndValue for each RDN
+  const encoder = new TextEncoder();
+  const sets: Uint8Array[] = [];
+  for (const { oid, value } of rdnParts) {
+    const oidTLV = derWrap(0x06, oid);
+    const valueTLV = derWrap(0x13, encoder.encode(value)); // PrintableString
+    const atv = derWrap(0x30, new Uint8Array([...oidTLV, ...valueTLV])); // SEQUENCE
+    const set = derWrap(0x31, atv); // SET
+    sets.push(set);
+  }
+
+  // Concatenate all SETs and wrap in outer SEQUENCE
+  const totalLen = sets.reduce((acc, s) => acc + s.length, 0);
+  const allSets = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const s of sets) {
+    allSets.set(s, offset);
+    offset += s.length;
+  }
+
+  return derWrap(0x30, allSets);
+}
+
+/**
  * Check certificate revocation status
  */
 export async function checkRevocationStatus(cert: Certificate, issuerCert?: Certificate): Promise<boolean> {
@@ -227,8 +282,13 @@ export async function checkRevocationStatus(cert: Certificate, issuerCert?: Cert
     let nameHashBytes: Uint8Array;
     let keyHashBytes: Uint8Array;
     if (issuerCert) {
-      const encoder = new TextEncoder();
-      nameHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", encoder.encode(cert.issuer)));
+      // RFC 6960: issuerNameHash is SHA-1 of the DER-encoded issuer DN, NOT text encoding
+      // Use cert.issuerRaw (raw DER of the issuer field) if available, otherwise fall back to
+      // the issuer cert's subject DN raw bytes, or finally DER-encode from the string
+      const issuerDNBytes = (cert as Certificate & { issuerRaw?: ByteBuffer }).issuerRaw
+        ?? (issuerCert as Certificate & { issuerRaw?: ByteBuffer }).issuerRaw
+        ?? derEncodeDistinguishedName(cert.issuer);
+      nameHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerDNBytes));
       keyHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerCert.publicKey));
     } else {
       // No issuer cert available — use zero-byte placeholders (OCSP responder may return "unknown")
@@ -782,9 +842,12 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
   const signatureAlgorithm = parseOID(der, offset);
   offset += sigAlgLen;
 
-  // Parse issuer (SEQUENCE)
+  // Parse issuer (SEQUENCE) — capture raw DER bytes for OCSP hashing (RFC 6960)
+  const issuerRawStart = offset;
   const issuer = parseDN(der, offset);
-  offset += getDNLength(der, offset);
+  const issuerRawLen = getDNLength(der, offset);
+  const issuerRaw = der.slice(issuerRawStart, issuerRawStart + issuerRawLen) as ByteBuffer;
+  offset += issuerRawLen;
 
   // Parse validity (SEQUENCE)
   if (der[offset] !== 0x30) {
@@ -997,6 +1060,7 @@ function parseDERCertificate(der: ByteBuffer): Certificate {
     signatureAlgorithm,
     subjectAltNames,
     tbsCertificate: rawTbsCertificate,
+    issuerRaw,
   };
   if (aiaOcspUrl) {
     cert.ocspResponderUrl = aiaOcspUrl;
