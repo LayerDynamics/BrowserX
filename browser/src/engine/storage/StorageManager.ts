@@ -44,9 +44,6 @@ class OriginStorage {
   }
 
   /**
-   * Set item with quota check
-   */
-  /**
    * Validate that the given URL matches this storage's origin
    */
   private validateOrigin(url: string): void {
@@ -67,17 +64,23 @@ class OriginStorage {
     }
   }
 
-  setItem(key: string, value: string, url: string): void {
+  setItem(key: string, value: string, url: string): Promise<void> {
     this.validateOrigin(url);
-    // Synchronous write with mutex protection via promise chain
-    // The _writeLock ensures concurrent async callers serialize through this method
-    this._writeLock = this._writeLock.then(() => {
-      this._setItemSync(key, value, url);
-    }).catch(() => {
-      // Ensure chain doesn't break on errors
+    let rejectCaller: (err: unknown) => void;
+    let resolveCaller: () => void;
+    const callerPromise = new Promise<void>((resolve, reject) => {
+      resolveCaller = resolve;
+      rejectCaller = reject;
     });
-    // Perform the actual synchronous write immediately for the current caller
-    this._setItemSync(key, value, url);
+    this._writeLock = this._writeLock.then(() => {
+      try {
+        this._setItemSync(key, value, url);
+        resolveCaller!();
+      } catch (err) {
+        rejectCaller!(err);
+      }
+    });
+    return callerPromise;
   }
 
   private _setItemSync(key: string, value: string, url: string): void {
@@ -115,58 +118,83 @@ class OriginStorage {
   /**
    * Remove item
    */
-  removeItem(key: string, url: string): void {
+  removeItem(key: string, url: string): Promise<void> {
     this.validateOrigin(url);
-    const oldValue = this.data.get(key);
+    let resolveCaller: () => void;
+    const callerPromise = new Promise<void>((resolve) => {
+      resolveCaller = resolve;
+    });
+    this._writeLock = this._writeLock.then(() => {
+      const oldValue = this.data.get(key);
 
-    if (oldValue !== undefined) {
-      this.data.delete(key);
+      if (oldValue !== undefined) {
+        this.data.delete(key);
 
-      // Update quota
-      const size = this.calculateSize(key, oldValue);
-      this.quotaManager.updateUsage(this.origin, -size);
+        // Update quota
+        const size = this.calculateSize(key, oldValue);
+        this.quotaManager.updateUsage(this.origin, -size);
 
-      // Emit storage event
-      const removeEvent: StorageEvent = {
-        key,
-        oldValue,
-        newValue: null,
-        url,
-        storageArea: this.area,
-      };
-      this.eventEmitter.emit(removeEvent);
-    }
+        // Emit storage event
+        const removeEvent: StorageEvent = {
+          key,
+          oldValue,
+          newValue: null,
+          url,
+          storageArea: this.area,
+        };
+        this.eventEmitter.emit(removeEvent);
+      }
+      resolveCaller!();
+    });
+    return callerPromise;
   }
 
   /**
    * Clear all items
    */
-  clear(url: string): void {
-    if (this.data.size === 0) {
-      return;
-    }
+  clear(url: string): Promise<void> {
+    this.validateOrigin(url);
+    let resolveCaller: () => void;
+    const callerPromise = new Promise<void>((resolve) => {
+      resolveCaller = resolve;
+    });
+    this._writeLock = this._writeLock.then(() => {
+      if (this.data.size === 0) {
+        resolveCaller!();
+        return;
+      }
 
-    // Calculate total size
-    let totalSize = 0;
-    for (const [key, value] of this.data.entries()) {
-      totalSize += this.calculateSize(key, value);
-    }
+      // Calculate total size
+      let totalSize = 0;
+      for (const [key, value] of this.data.entries()) {
+        totalSize += this.calculateSize(key, value);
+      }
 
-    // Clear data
-    this.data.clear();
+      // Clear data
+      this.data.clear();
 
-    // Update quota
-    this.quotaManager.updateUsage(this.origin, -totalSize);
+      // Update quota
+      this.quotaManager.updateUsage(this.origin, -totalSize);
 
-    // Emit storage event (with empty key to indicate clear)
-    const clearEvent: StorageEvent = {
-      key: "",
-      oldValue: null,
-      newValue: null,
-      url,
-      storageArea: this.area,
-    };
-    this.eventEmitter.emit(clearEvent);
+      // Emit storage event (null key per Web Storage spec indicates clear)
+      const clearEvent: StorageEvent = {
+        key: "",
+        oldValue: null,
+        newValue: null,
+        url,
+        storageArea: this.area,
+      };
+      this.eventEmitter.emit(clearEvent);
+      resolveCaller!();
+    });
+    return callerPromise;
+  }
+
+  /**
+   * Wait for all pending writes to complete
+   */
+  waitForWrites(): Promise<void> {
+    return this._writeLock;
   }
 
   /**
@@ -239,6 +267,11 @@ class OriginStorage {
    * Import data (for deserialization)
    */
   import(data: Record<string, string>): void {
+    // Subtract old data's size from quota before clearing
+    const oldSize = this.getSize();
+    if (oldSize > 0) {
+      this.quotaManager.updateUsage(this.origin, -oldSize);
+    }
     this.data.clear();
     let totalBytes = 0;
     for (const [key, value] of Object.entries(data)) {
@@ -295,15 +328,15 @@ export class StorageManager {
   /**
    * Clear all storage for origin
    */
-  clearOrigin(origin: string, url: string): void {
+  async clearOrigin(origin: string, url: string): Promise<void> {
     const local = this.localStorage.get(origin);
     if (local) {
-      local.clear(url);
+      await local.clear(url);
     }
 
     const session = this.sessionStorage.get(origin);
     if (session) {
-      session.clear(url);
+      await session.clear(url);
     }
   }
 
@@ -420,6 +453,13 @@ export class StorageManager {
         storage.import(originData);
       }
     }
+  }
+
+  /**
+   * Clear all local storage
+   */
+  clearAllLocalStorage(): void {
+    this.localStorage.clear();
   }
 
   /**

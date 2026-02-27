@@ -12,17 +12,17 @@ Deno.test("OriginStorage - same-origin runtime checks", async (t) => {
     );
   });
 
-  await t.step("setItem allows same-origin URL", () => {
+  await t.step("setItem allows same-origin URL", async () => {
     const manager = new StorageManager();
     const storage = manager.getLocalStorage("https://example.com");
-    storage.setItem("key", "value", "https://example.com/page");
+    await storage.setItem("key", "value", "https://example.com/page");
     assertEquals(storage.getItem("key"), "value");
   });
 
-  await t.step("removeItem rejects cross-origin URL", () => {
+  await t.step("removeItem rejects cross-origin URL", async () => {
     const manager = new StorageManager();
     const storage = manager.getLocalStorage("https://example.com");
-    storage.setItem("key", "value", "https://example.com/page");
+    await storage.setItem("key", "value", "https://example.com/page");
     assertThrows(
       () => storage.removeItem("key", "https://evil.com/page"),
       DOMException,
