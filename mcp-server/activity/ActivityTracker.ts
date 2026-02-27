@@ -35,15 +35,31 @@ export interface ScreenshotEntry {
   size: number;
 }
 
+export interface ActivityTrackerOptions {
+  baseDir?: string;
+  maxActivities?: number;
+  maxScreenshots?: number;
+}
+
 export class ActivityTracker {
   private baseDir: string;
   private enabled: boolean = true;
   private activities: ActivityEntry[] = [];
   private screenshots: ScreenshotEntry[] = [];
   private initialized: boolean = false;
+  private maxActivities: number;
+  private maxScreenshots: number;
 
-  constructor(baseDir: string = ".browserx/usage_data") {
-    this.baseDir = baseDir;
+  constructor(baseDirOrOptions: string | ActivityTrackerOptions = ".browserx/usage_data") {
+    if (typeof baseDirOrOptions === "string") {
+      this.baseDir = baseDirOrOptions;
+      this.maxActivities = 10000;
+      this.maxScreenshots = 1000;
+    } else {
+      this.baseDir = baseDirOrOptions.baseDir ?? ".browserx/usage_data";
+      this.maxActivities = baseDirOrOptions.maxActivities ?? 10000;
+      this.maxScreenshots = baseDirOrOptions.maxScreenshots ?? 1000;
+    }
   }
 
   async initialize(): Promise<void> {
@@ -102,6 +118,7 @@ export class ActivityTracker {
     };
 
     this.activities.push(entry);
+    this.trimActivities();
     await this.appendLog(entry);
   }
 
@@ -144,6 +161,7 @@ export class ActivityTracker {
     };
 
     this.screenshots.push(entry);
+    this.trimScreenshots();
 
     // Also track as activity
     await this.trackActivity("screenshot", sessionId, url, {
@@ -181,6 +199,7 @@ export class ActivityTracker {
     };
 
     this.activities.push(entry);
+    this.trimActivities();
     await this.appendLog(entry);
   }
 
@@ -218,6 +237,32 @@ export class ActivityTracker {
       resultType: typeof result,
       success: result !== null && result !== undefined,
     }, timing);
+  }
+
+  /**
+   * Trim activities array to maxActivities, removing oldest entries
+   */
+  private trimActivities(): void {
+    if (this.activities.length > this.maxActivities) {
+      this.activities.splice(0, this.activities.length - this.maxActivities);
+    }
+  }
+
+  /**
+   * Trim screenshots array to maxScreenshots, removing oldest entries
+   */
+  private trimScreenshots(): void {
+    if (this.screenshots.length > this.maxScreenshots) {
+      this.screenshots.splice(0, this.screenshots.length - this.maxScreenshots);
+    }
+  }
+
+  getMaxActivities(): number {
+    return this.maxActivities;
+  }
+
+  getMaxScreenshots(): number {
+    return this.maxScreenshots;
   }
 
   /** Maximum log file size before rotation (50MB) */
@@ -323,7 +368,15 @@ export function getActivityTracker(): ActivityTracker {
   return instance;
 }
 
-export function initActivityTracker(baseDir?: string): ActivityTracker {
-  instance = new ActivityTracker(baseDir);
+export function initActivityTracker(baseDirOrOptions?: string | ActivityTrackerOptions): ActivityTracker {
+  instance = new ActivityTracker(baseDirOrOptions);
   return instance;
+}
+
+/** Reset singleton — for testing only */
+export function resetActivityTracker(): void {
+  if (instance) {
+    instance.setEnabled(false);
+  }
+  instance = null;
 }
