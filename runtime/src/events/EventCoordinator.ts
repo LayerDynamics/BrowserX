@@ -244,18 +244,24 @@ export class EventCoordinator {
     }
     this.browserEventLoops.clear();
 
+    // Capture the proxy loop promise before stopping (stopProxyEventLoop nulls it)
+    const pendingProxyLoop = this.proxyLoopPromise;
+
     // Stop proxy event loop
     this.stopProxyEventLoop();
 
-    // Wait for proxy loop to finish if running
-    if (this.proxyLoopPromise) {
+    // Wait for proxy loop to finish if it was running
+    if (pendingProxyLoop) {
       try {
         await Promise.race([
-          this.proxyLoopPromise,
+          pendingProxyLoop,
           new Promise((resolve) => setTimeout(resolve, 1000)), // 1s timeout
         ]);
-      } catch {
-        // Ignore errors during shutdown
+      } catch (error) {
+        // Log proxy loop errors for debugging rather than silently discarding
+        if (error instanceof Error && error.message !== "Proxy event loop stop timeout") {
+          console.warn("[EventCoordinator] Proxy event loop error during shutdown:", error.message);
+        }
       }
     }
 

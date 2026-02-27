@@ -504,6 +504,16 @@ class CacheStorageManager {
   }
 
   /**
+   * Clear all cache storages across all origins
+   */
+  async clearAllStorages(): Promise<void> {
+    for (const storage of this.storages.values()) {
+      await storage.clearAll();
+    }
+    this.storages.clear();
+  }
+
+  /**
    * Get all origins with cache storage
    */
   getAllOrigins(): string[] {

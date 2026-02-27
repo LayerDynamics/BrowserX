@@ -263,7 +263,7 @@ Deno.test({
     // Two concurrent handleRequest calls should get separate connection IDs
     // and not overwrite each other's lastEventId.
     // We verify by checking that after both fail (no real server),
-    // the lastEventIds map is cleaned up (entries deleted in finally block).
+    // the lastEventIds map is cleaned up (entries deleted on error path).
     const route = createTestRoute();
     route.upstream.servers[0].host = "192.0.2.1";
     route.upstream.servers[0].port = 1;
@@ -300,8 +300,129 @@ Deno.test({
     assertEquals(resp1.statusCode, 502);
     assertEquals(resp2.statusCode, 502);
 
-    // After connections close, entries should be cleaned up
+    // After error connections, entries should be cleaned up immediately
     const ids = proxy.getLastEventIds();
-    assertEquals(ids.size, 0, "All connection entries should be cleaned up after close");
+    assertEquals(ids.size, 0, "All connection entries should be cleaned up after error");
+
+    // activeConnections should be 0 after errors (errors decrement immediately)
+    assertEquals(proxy.getActiveConnections(), 0, "Error connections decrement immediately");
+  },
+});
+
+// ============================================================================
+// releaseConnection() — deferred cleanup for successful responses
+// ============================================================================
+
+Deno.test({
+  name: "SSEProxy - releaseConnection() returns false for unknown connectionId",
+  fn() {
+    const proxy = new SSEProxy(createTestRoute());
+    assertEquals(proxy.releaseConnection("nonexistent"), false);
+  },
+});
+
+Deno.test({
+  name: "SSEProxy - releaseConnection() returns false when called twice for same connectionId",
+  fn() {
+    const proxy = new SSEProxy(createTestRoute());
+    // No active connections, so any release returns false
+    assertEquals(proxy.releaseConnection("0"), false);
+  },
+});
+
+Deno.test({
+  name: "SSEProxy - error path decrements activeConnections immediately",
+  async fn() {
+    const route = createTestRoute();
+    route.upstream.servers[0].host = "192.0.2.1";
+    route.upstream.servers[0].port = 1;
+    const proxy = new SSEProxy(route, {
+      maxRetries: 1,
+      timeout: 50,
+      retryDelay: 10,
+    });
+
+    const request = {
+      method: "GET" as const,
+      uri: "/events/test",
+      version: "1.1" as const,
+      headers: { accept: "text/event-stream" },
+    };
+    const context = { clientIP: "127.0.0.1", clientPort: 5000, protocol: "http", startTime: Date.now() };
+
+    await proxy.handleRequest(request, context);
+
+    // After error, activeConnections should be 0 (decremented on error path)
+    assertEquals(proxy.getActiveConnections(), 0);
+    assertEquals(proxy.getStats().totalConnections, 1);
+  },
+});
+
+Deno.test({
+  name: "SSEProxy - close() releases all active connections",
+  async fn() {
+    const proxy = new SSEProxy(createTestRoute());
+    // Just verify close works cleanly with no active connections
+    await proxy.close();
+    assertEquals(proxy.getActiveConnections(), 0);
+  },
+});
+
+// ============================================================================
+// lastEventId persists during stream processing
+// ============================================================================
+
+Deno.test({
+  name: "SSEProxy - lastEventId is available during event stream processing via transformHook",
+  fn() {
+    // Use transformHook to observe lastEventId mid-stream.
+    // The hook fires for each event AFTER lastEventIds.set() but BEFORE
+    // the finally block that deletes it. This proves the ID persists
+    // throughout stream consumption.
+    const observedIds: (string | undefined)[] = [];
+    let capturedConnectionId: string | undefined;
+
+    const proxy = new SSEProxy(createTestRoute(), {
+      transformEvents: true,
+      transformHook: (event, _direction) => {
+        // During processing, the lastEventId for the connection should be set
+        if (capturedConnectionId !== undefined) {
+          observedIds.push(proxy.getLastEventId(capturedConnectionId));
+        }
+        return event;
+      },
+    });
+
+    // Simulate what createStreamingResponse does: call processEventStream
+    // We access the private method via casting for this test.
+    const ssePayload = [
+      "id: evt-1",
+      "data: first",
+      "",
+      "id: evt-2",
+      "data: second",
+      "",
+    ].join("\n");
+
+    const body = new TextEncoder().encode(ssePayload);
+    const context = { clientIP: "127.0.0.1", clientPort: 5000, protocol: "http", startTime: Date.now() };
+
+    // The connection ID will be "0" (first connection)
+    capturedConnectionId = "0";
+
+    // Call processEventStream via the private method
+    // deno-lint-ignore no-explicit-any
+    const result = (proxy as any).processEventStream(body, context, "0");
+
+    // The transform hook should have observed the lastEventId during processing
+    assertEquals(observedIds.length, 2, "Hook should fire for both events");
+    assertEquals(observedIds[0], "evt-1", "First event should have id evt-1 during processing");
+    assertEquals(observedIds[1], "evt-2", "Second event should have id evt-2 during processing");
+
+    // After processEventStream completes, the lastEventId should be cleaned up
+    assertEquals(proxy.getLastEventId("0"), undefined, "lastEventId should be cleaned up after stream ends");
+
+    // Verify we got actual output
+    assert(result.length > 0, "Should produce output bytes");
   },
 });

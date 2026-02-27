@@ -334,12 +334,22 @@ export class PluginManager {
       const context = new PluginContextImpl(contextOptions);
       this.pluginContexts.set(pluginId, context);
 
-      // Activate with timeout
-      await this.withTimeout(
-        info.plugin.activate(context),
-        this.pluginConfig.activationTimeout,
-        `Plugin "${pluginId}" activation timed out after ${this.pluginConfig.activationTimeout}ms`,
-      );
+      // Activate with timeout, passing AbortSignal so the plugin can
+      // detect cancellation and stop work when timeout fires
+      const activationAbort = new AbortController();
+      try {
+        await this.withTimeout(
+          info.plugin.activate(context),
+          this.pluginConfig.activationTimeout,
+          `Plugin "${pluginId}" activation timed out after ${this.pluginConfig.activationTimeout}ms`,
+          activationAbort.signal,
+        );
+      } catch (error) {
+        // Signal the plugin operation to abort so it doesn't continue
+        // executing and corrupting state after the timeout reject
+        activationAbort.abort(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
 
       // Mark as active and track activation order
       this.registry.setState(pluginId, "active");
@@ -384,12 +394,19 @@ export class PluginManager {
     this.emitPluginEvent({ type: "plugin_deactivating", pluginId });
 
     try {
-      // Call plugin's deactivate method
-      await this.withTimeout(
-        info.plugin.deactivate(),
-        this.pluginConfig.activationTimeout,
-        `Plugin "${pluginId}" deactivation timed out`,
-      );
+      // Call plugin's deactivate method with abort signal for cancellation
+      const deactivationAbort = new AbortController();
+      try {
+        await this.withTimeout(
+          info.plugin.deactivate(),
+          this.pluginConfig.activationTimeout,
+          `Plugin "${pluginId}" deactivation timed out`,
+          deactivationAbort.signal,
+        );
+      } catch (error) {
+        deactivationAbort.abort(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
 
       // Dispose all contributions registered by this plugin
       this.registry.disposeAll(pluginId);
@@ -832,21 +849,44 @@ export class PluginManager {
     promise: Promise<T>,
     timeoutMs: number,
     message: string,
+    signal?: AbortSignal,
   ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
+      let settled = false;
+
       const timer = setTimeout(() => {
-        reject(new Error(message));
+        if (!settled) {
+          settled = true;
+          reject(new Error(message));
+        }
       }, timeoutMs);
 
       promise
         .then((result) => {
-          clearTimeout(timer);
-          resolve(result);
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(result);
+          }
         })
         .catch((error) => {
-          clearTimeout(timer);
-          reject(error);
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            reject(error);
+          }
         });
+
+      // If an AbortSignal is provided, abort also rejects
+      if (signal) {
+        signal.addEventListener("abort", () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            reject(signal.reason ?? new Error("Operation aborted"));
+          }
+        }, { once: true });
+      }
     });
   }
 }

@@ -7,6 +7,8 @@ export interface PooledConnectionInfo {
   port: number;
   createdAt: number;
   lastUsedAt: number;
+  /** Timestamp of the last successful read/write I/O operation on this connection */
+  lastSuccessfulIO: number;
   requestCount: number;
   inUse: boolean;
   /** Marked true when an operation on this connection fails, signaling it should be discarded */
@@ -33,6 +35,7 @@ const LOG_PRIORITY: Record<LogLevel, number> = {
 
 export class ConnectionPool {
   private pools: Map<string, PooledConnectionInfo[]> = new Map();
+  private inFlight: Map<string, number> = new Map();
   private config: ConnectionPoolConfig;
   private nextId = 1;
   private cleanupIntervalId?: number;
@@ -45,13 +48,13 @@ export class ConnectionPool {
   }
 
   private log(level: LogLevel, ...args: unknown[]): void {
-    const configLevel = this.config.logLevel ?? "warn";
-    if (LOG_PRIORITY[level] >= LOG_PRIORITY[configLevel]) {
-      if (level === "error") {
-        console.error(...args);
-      } else {
-        console.log(...args);
-      }
+    if (LOG_PRIORITY[level] < LOG_PRIORITY[this.config.logLevel ?? "warn"]) return;
+    if (level === "none") return;
+    switch (level) {
+      case "error": console.error(...args); break;
+      case "warn": console.warn(...args); break;
+      case "info": console.info(...args); break;
+      case "debug": console.debug(...args); break;
     }
   }
 
@@ -67,6 +70,11 @@ export class ConnectionPool {
     this.log("info", `[POOL] Pre-warming ${toCreate} connection(s) for ${poolKey}`);
 
     for (let i = 0; i < toCreate; i++) {
+      const currentInFlight = this.inFlight.get(poolKey) ?? 0;
+      if (pool.length + currentInFlight >= this.config.maxConnections) {
+        break;
+      }
+      this.inFlight.set(poolKey, currentInFlight + 1);
       try {
         const conn = await Deno.connect({ hostname: host, port });
         const pooledConn: PooledConnectionInfo = {
@@ -76,6 +84,7 @@ export class ConnectionPool {
           port,
           createdAt: Date.now(),
           lastUsedAt: Date.now(),
+          lastSuccessfulIO: Date.now(),
           requestCount: 0,
           inUse: false,
           dead: false,
@@ -85,6 +94,8 @@ export class ConnectionPool {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.log("warn", `  ✗ Failed to pre-warm connection: ${message}`);
+      } finally {
+        this.inFlight.set(poolKey, (this.inFlight.get(poolKey) ?? 1) - 1);
       }
     }
   }
@@ -92,6 +103,9 @@ export class ConnectionPool {
   async acquire(host: string, port: number): Promise<PooledConnectionInfo | null> {
     const poolKey = `${host}:${port}`;
     const pool = this.pools.get(poolKey) || [];
+    if (!this.pools.has(poolKey)) {
+      this.pools.set(poolKey, pool);
+    }
 
     this.log("debug", `[POOL] Acquiring connection to ${poolKey}`);
     this.log("debug", `  Current pool size: ${pool.length}`);
@@ -112,8 +126,10 @@ export class ConnectionPool {
       return available;
     }
 
-    // Check if we can create new connection
-    if (pool.length < this.config.maxConnections) {
+    // Check if we can create new connection (accounting for in-flight creates)
+    const currentInFlight = this.inFlight.get(poolKey) ?? 0;
+    if (pool.length + currentInFlight < this.config.maxConnections) {
+      this.inFlight.set(poolKey, currentInFlight + 1);
       this.log("info", `  → Creating new connection (${pool.length + 1}/${this.config.maxConnections})`);
 
       try {
@@ -126,20 +142,26 @@ export class ConnectionPool {
           port,
           createdAt: Date.now(),
           lastUsedAt: Date.now(),
+          lastSuccessfulIO: Date.now(),
           requestCount: 1,
           inUse: true,
           dead: false,
         };
 
         pool.push(pooledConn);
-        this.pools.set(poolKey, pool);
 
         this.log("info", `  ✓ New connection ${pooledConn.id} created`);
         return pooledConn;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.log("error", `  ✗ Failed to create connection: ${message}`);
+        // Clean up empty pool entry if no connections were ever established
+        if (pool.length === 0) {
+          this.pools.delete(poolKey);
+        }
         return null;
+      } finally {
+        this.inFlight.set(poolKey, (this.inFlight.get(poolKey) ?? 1) - 1);
       }
     }
 
@@ -165,15 +187,20 @@ export class ConnectionPool {
   }
 
   /**
-   * Check if a connection is still alive
-   */
-  /**
    * Mark a connection as dead so it will be discarded on release.
    * Call this when an I/O operation on the connection fails.
    */
   markDead(conn: PooledConnectionInfo): void {
     conn.dead = true;
     this.log("info", `[POOL] Connection ${conn.id} marked dead`);
+  }
+
+  /**
+   * Update the lastSuccessfulIO timestamp after a successful read/write.
+   * Call this from application code when I/O succeeds on a pooled connection.
+   */
+  recordSuccessfulIO(conn: PooledConnectionInfo): void {
+    conn.lastSuccessfulIO = Date.now();
   }
 
   private isConnectionAlive(conn: PooledConnectionInfo): boolean {
@@ -195,11 +222,11 @@ export class ConnectionPool {
         return false;
       }
 
-      // Probe: attempt a zero-length write to detect peer-closed connections.
-      // A closed connection will throw immediately on write.
-      try {
-        conn.conn.write(new Uint8Array(0));
-      } catch {
+      // If no successful I/O for longer than idle timeout, consider potentially dead.
+      // This catches connections that were acquired but never actually used for I/O.
+      const ioIdleTime = Date.now() - conn.lastSuccessfulIO;
+      if (ioIdleTime > this.config.idleTimeout) {
+        this.log("debug", `  ✗ Connection ${conn.id} no successful I/O for ${(ioIdleTime / 1000).toFixed(1)}s`);
         return false;
       }
 
@@ -290,10 +317,11 @@ export class ConnectionPool {
       const before = pool.length;
 
       // Count idle connections to respect minConnections
-      let idleKept = 0;
       const idleConns = pool.filter((c) => !c.inUse);
       const minToKeep = this.config.minConnections;
       this.log("debug", `  ${poolKey}: ${idleConns.length} idle, keeping min ${minToKeep}`);
+
+      let idleKept = 0;
 
       // Remove invalid connections and idle connections past timeout,
       // but keep at least minConnections idle connections per pool
@@ -350,14 +378,14 @@ export class ConnectionPool {
    * Get all connection pools (returns copy)
    */
   getPools(): Map<string, PooledConnectionInfo[]> {
-    return new Map(this.pools);
+    return new Map([...this.pools.entries()].map(([k, v]) => [k, [...v]]));
   }
 
   /**
    * Get configuration
    */
   getConfig(): ConnectionPoolConfig {
-    return this.config;
+    return { ...this.config };
   }
 
   /**
@@ -394,26 +422,27 @@ export class ConnectionPool {
   }
 
   displayStats(): void {
-    console.log(`\n${"=".repeat(70)}`);
-    console.log("Connection Pool Statistics");
-    console.log("=".repeat(70));
+    this.log("info", `\n${"=".repeat(70)}`);
+    this.log("info", "Connection Pool Statistics");
+    this.log("info", "=".repeat(70));
 
     let totalConnections = 0;
     let totalInUse = 0;
     let totalRequests = 0;
 
     this.pools.forEach((pool, poolKey) => {
-      console.log(`\nPool: ${poolKey}`);
-      console.log(`  Total connections: ${pool.length}`);
-      console.log(`  In use: ${pool.filter((c) => c.inUse).length}`);
-      console.log(`  Available: ${pool.filter((c) => !c.inUse).length}`);
+      this.log("info", `\nPool: ${poolKey}`);
+      this.log("info", `  Total connections: ${pool.length}`);
+      this.log("info", `  In use: ${pool.filter((c) => c.inUse).length}`);
+      this.log("info", `  Available: ${pool.filter((c) => !c.inUse).length}`);
 
       pool.forEach((conn) => {
         const age = ((Date.now() - conn.createdAt) / 1000).toFixed(1);
         const idle = ((Date.now() - conn.lastUsedAt) / 1000).toFixed(1);
         const status = conn.inUse ? "IN USE" : "IDLE";
 
-        console.log(
+        this.log(
+          "info",
           `    ${conn.id}: ${status}, age: ${age}s, idle: ${idle}s, reqs: ${conn.requestCount}`,
         );
 
@@ -423,14 +452,15 @@ export class ConnectionPool {
       });
     });
 
-    console.log(`\nOverall:`);
-    console.log(`  Total connections: ${totalConnections}`);
-    console.log(`  In use: ${totalInUse}`);
-    console.log(`  Total requests served: ${totalRequests}`);
-    console.log(
+    this.log("info", `\nOverall:`);
+    this.log("info", `  Total connections: ${totalConnections}`);
+    this.log("info", `  In use: ${totalInUse}`);
+    this.log("info", `  Total requests served: ${totalRequests}`);
+    this.log(
+      "info",
       `  Average requests per connection: ${totalConnections > 0 ? (totalRequests / totalConnections).toFixed(2) : "N/A"}`,
     );
-    console.log("=".repeat(70) + "\n");
+    this.log("info", "=".repeat(70) + "\n");
   }
 }
 

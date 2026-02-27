@@ -79,7 +79,7 @@ class OriginStorage {
       } catch (err) {
         rejectCaller!(err);
       }
-    });
+    }).catch(() => {});
     return callerPromise;
   }
 
@@ -121,31 +121,37 @@ class OriginStorage {
   removeItem(key: string, url: string): Promise<void> {
     this.validateOrigin(url);
     let resolveCaller: () => void;
-    const callerPromise = new Promise<void>((resolve) => {
+    let rejectCaller: (err: unknown) => void;
+    const callerPromise = new Promise<void>((resolve, reject) => {
       resolveCaller = resolve;
+      rejectCaller = reject;
     });
     this._writeLock = this._writeLock.then(() => {
-      const oldValue = this.data.get(key);
+      try {
+        const oldValue = this.data.get(key);
 
-      if (oldValue !== undefined) {
-        this.data.delete(key);
+        if (oldValue !== undefined) {
+          this.data.delete(key);
 
-        // Update quota
-        const size = this.calculateSize(key, oldValue);
-        this.quotaManager.updateUsage(this.origin, -size);
+          // Update quota
+          const size = this.calculateSize(key, oldValue);
+          this.quotaManager.updateUsage(this.origin, -size);
 
-        // Emit storage event
-        const removeEvent: StorageEvent = {
-          key,
-          oldValue,
-          newValue: null,
-          url,
-          storageArea: this.area,
-        };
-        this.eventEmitter.emit(removeEvent);
+          // Emit storage event
+          const removeEvent: StorageEvent = {
+            key,
+            oldValue,
+            newValue: null,
+            url,
+            storageArea: this.area,
+          };
+          this.eventEmitter.emit(removeEvent);
+        }
+        resolveCaller!();
+      } catch (e) {
+        rejectCaller!(e);
       }
-      resolveCaller!();
-    });
+    }).catch(() => {});
     return callerPromise;
   }
 
@@ -155,38 +161,44 @@ class OriginStorage {
   clear(url: string): Promise<void> {
     this.validateOrigin(url);
     let resolveCaller: () => void;
-    const callerPromise = new Promise<void>((resolve) => {
+    let rejectCaller: (err: unknown) => void;
+    const callerPromise = new Promise<void>((resolve, reject) => {
       resolveCaller = resolve;
+      rejectCaller = reject;
     });
     this._writeLock = this._writeLock.then(() => {
-      if (this.data.size === 0) {
+      try {
+        if (this.data.size === 0) {
+          resolveCaller!();
+          return;
+        }
+
+        // Calculate total size
+        let totalSize = 0;
+        for (const [key, value] of this.data.entries()) {
+          totalSize += this.calculateSize(key, value);
+        }
+
+        // Clear data
+        this.data.clear();
+
+        // Update quota
+        this.quotaManager.updateUsage(this.origin, -totalSize);
+
+        // Emit storage event (null key per Web Storage spec indicates clear)
+        const clearEvent: StorageEvent = {
+          key: "",
+          oldValue: null,
+          newValue: null,
+          url,
+          storageArea: this.area,
+        };
+        this.eventEmitter.emit(clearEvent);
         resolveCaller!();
-        return;
+      } catch (e) {
+        rejectCaller!(e);
       }
-
-      // Calculate total size
-      let totalSize = 0;
-      for (const [key, value] of this.data.entries()) {
-        totalSize += this.calculateSize(key, value);
-      }
-
-      // Clear data
-      this.data.clear();
-
-      // Update quota
-      this.quotaManager.updateUsage(this.origin, -totalSize);
-
-      // Emit storage event (null key per Web Storage spec indicates clear)
-      const clearEvent: StorageEvent = {
-        key: "",
-        oldValue: null,
-        newValue: null,
-        url,
-        storageArea: this.area,
-      };
-      this.eventEmitter.emit(clearEvent);
-      resolveCaller!();
-    });
+    }).catch(() => {});
     return callerPromise;
   }
 
@@ -458,14 +470,20 @@ export class StorageManager {
   /**
    * Clear all local storage
    */
-  clearAllLocalStorage(): void {
+  async clearAllLocalStorage(): Promise<void> {
+    await Promise.all(
+      Array.from(this.localStorage.entries()).map(([origin, storage]) => storage.clear(origin)),
+    );
     this.localStorage.clear();
   }
 
   /**
    * Clear all session storage (on browser close)
    */
-  clearAllSessionStorage(): void {
+  async clearAllSessionStorage(): Promise<void> {
+    await Promise.all(
+      Array.from(this.sessionStorage.entries()).map(([origin, storage]) => storage.clear(origin)),
+    );
     this.sessionStorage.clear();
   }
 }

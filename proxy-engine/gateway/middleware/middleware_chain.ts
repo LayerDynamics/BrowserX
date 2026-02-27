@@ -291,12 +291,26 @@ export class MiddlewareChain {
 /**
  * Create error response from middleware error
  */
+function getGenericErrorMessage(statusCode: number): string {
+  switch (statusCode) {
+    case 401: return "Authentication required";
+    case 403: return "Access denied";
+    case 404: return "Resource not found";
+    case 408: return "Request timed out";
+    case 429: return "Too many requests";
+    case 502: return "Bad gateway";
+    case 503: return "Service unavailable";
+    case 504: return "Gateway timeout";
+    default: return "An internal error occurred";
+  }
+}
+
 export function createErrorResponse(error: Error): HTTPResponse {
   const statusCode = getStatusCodeFromError(error);
   const body = new TextEncoder().encode(
     JSON.stringify({
-      error: error.name,
-      message: error.message,
+      error: getStatusText(statusCode),
+      message: getGenericErrorMessage(statusCode),
       statusCode,
     }),
   );

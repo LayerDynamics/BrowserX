@@ -75,6 +75,7 @@ export class SessionManager {
   private cleanupInterval: number | null = null;
   private totalCreated = 0;
   private totalClosed = 0;
+  private pendingAcquires = 0;
 
   constructor(config: SessionManagerConfig = {}) {
     this.maxSessions = config.maxSessions ?? 100;
@@ -91,18 +92,22 @@ export class SessionManager {
    * Create a new browser session
    */
   async createSession(permissions: Permission[] = []): Promise<string> {
-    // Enforce hard session limit
-    if (this.sessions.size >= this.maxSessions) {
+    // Enforce hard session limit, accounting for in-flight acquires to prevent
+    // concurrent callers from both passing the check during await gaps
+    const effectiveCount = this.sessions.size + this.pendingAcquires;
+    if (effectiveCount >= this.maxSessions) {
       // Try to cleanup idle sessions first
       await this.cleanupIdleSessions();
 
       // If still at limit, evict the oldest session
-      if (this.sessions.size >= this.maxSessions) {
+      const effectiveAfterCleanup = this.sessions.size + this.pendingAcquires;
+      if (effectiveAfterCleanup >= this.maxSessions) {
         await this.closeOldestSession();
       }
 
       // If still at limit after eviction, throw
-      if (this.sessions.size >= this.maxSessions) {
+      const effectiveAfterEviction = this.sessions.size + this.pendingAcquires;
+      if (effectiveAfterEviction >= this.maxSessions) {
         throw new Error(
           `Maximum session limit reached (${this.maxSessions}). ` +
           `Close an existing session before creating a new one.`
@@ -110,12 +115,16 @@ export class SessionManager {
       }
     }
 
+    // Increment pending counter synchronously before any awaits to reserve a slot
+    this.pendingAcquires++;
+
     const sessionId = this.generateSessionId();
 
     let browserEngine: BrowserEngine;
     let poolInstanceId: string | undefined;
 
-    if (this.browserPool) {
+    try {
+      if (this.browserPool) {
       // Integrated path: acquire from BrowserPool
       let instance: BrowserInstance;
       try {
@@ -169,6 +178,10 @@ export class SessionManager {
     }
 
     return sessionId;
+    } finally {
+      // Decrement pending counter now that the slot is either in sessions map or failed
+      this.pendingAcquires--;
+    }
   }
 
   /**

@@ -1094,3 +1094,192 @@ Deno.test("DOMDomain - getNodeById returns fresh node after mutation", async () 
     assertExists(node);
     assertEquals(node!.nodeId, div.nodeId);
 });
+
+// ============================================================================
+// ensureNodeMapFresh() coverage for removeAttribute, getBoxModel,
+// requestChildNodes, and getNodeMap
+// ============================================================================
+
+Deno.test("DOMDomain - removeAttribute works after mutation marks nodeMap dirty", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", { class: "x", "data-foo": "bar" });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    await domain.handleMethod("getDocument", {});
+
+    // Mutate to set dirty flag
+    await domain.handleMethod("setAttributeValue", {
+        nodeId: div.nodeId,
+        name: "class",
+        value: "y",
+    });
+
+    // removeAttribute should still find the node despite dirty nodeMap
+    await domain.handleMethod("removeAttribute", {
+        nodeId: div.nodeId,
+        name: "data-foo",
+    });
+
+    // Verify attribute was removed
+    const attrs = (div as unknown as Record<string, unknown>).attributes as Map<string, string>;
+    assertEquals(attrs.has("data-foo"), false);
+});
+
+Deno.test("DOMDomain - removeAttribute without prior getDocument call works", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", { "data-remove": "yes" });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    // No getDocument call — ensureNodeMapFresh should rebuild lazily
+    await domain.handleMethod("removeAttribute", {
+        nodeId: div.nodeId,
+        name: "data-remove",
+    });
+
+    const attrs = (div as unknown as Record<string, unknown>).attributes as Map<string, string>;
+    assertEquals(attrs.has("data-remove"), false);
+});
+
+Deno.test("DOMDomain - getBoxModel works after mutation marks nodeMap dirty", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", { id: "box" }, [], {
+        layout: { x: 10, y: 20, width: 100, height: 50 },
+    });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    await domain.handleMethod("getDocument", {});
+
+    // Mutate to set dirty flag
+    await domain.handleMethod("setAttributeValue", {
+        nodeId: div.nodeId,
+        name: "id",
+        value: "box2",
+    });
+
+    // getBoxModel should still resolve the node
+    const result = await domain.handleMethod("getBoxModel", { nodeId: div.nodeId });
+    const model = (result as Record<string, unknown>).model as Record<string, unknown>;
+    assertExists(model);
+    assertEquals(model.width, 100);
+    assertEquals(model.height, 50);
+});
+
+Deno.test("DOMDomain - getBoxModel without prior getDocument call works", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", {}, [], {
+        layout: { x: 0, y: 0, width: 200, height: 100 },
+    });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    const result = await domain.handleMethod("getBoxModel", { nodeId: div.nodeId });
+    const model = (result as Record<string, unknown>).model as Record<string, unknown>;
+    assertExists(model);
+    assertEquals(model.width, 200);
+});
+
+Deno.test("DOMDomain - requestChildNodes works after mutation marks nodeMap dirty", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const child = createMockElement("span");
+    const div = createMockElement("div", {}, [child]);
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    await domain.handleMethod("getDocument", {});
+
+    // Mutate to set dirty flag
+    await domain.handleMethod("setAttributeValue", {
+        nodeId: child.nodeId,
+        name: "class",
+        value: "changed",
+    });
+
+    // requestChildNodes should still find the node (no throw)
+    const result = await domain.handleMethod("requestChildNodes", { nodeId: div.nodeId });
+    assertEquals(result, {});
+});
+
+Deno.test("DOMDomain - requestChildNodes without prior getDocument call works", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const child = createMockElement("span");
+    const div = createMockElement("div", {}, [child]);
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    // Should not throw — ensureNodeMapFresh rebuilds lazily
+    const result = await domain.handleMethod("requestChildNodes", { nodeId: div.nodeId });
+    assertEquals(result, {});
+});
+
+Deno.test("DOMDomain - getNodeMap returns fresh map after mutation", async () => {
+    resetNodeIdCounter();
+    const eventBus = new EventBus();
+    const domain = new DOMDomain(eventBus);
+
+    const div = createMockElement("div", { id: "a" });
+    const doc = createMockDocument([div]);
+    const renderResult = createMockRenderResult({ dom: doc });
+    const pipeline = createPipelineWithDOM(renderResult);
+    const context = createMockContext({ eventBus, renderingPipeline: pipeline });
+    domain.initialize(context);
+    await domain.enable();
+
+    await domain.handleMethod("getDocument", {});
+
+    // Mutate to set dirty flag
+    await domain.handleMethod("setAttributeValue", {
+        nodeId: div.nodeId,
+        name: "id",
+        value: "b",
+    });
+
+    // getNodeMap should return a map that contains the node (rebuilt from dirty)
+    const nodeMap = domain.getNodeMap();
+    assertEquals(nodeMap.has(div.nodeId), true);
+    assertEquals(nodeMap.has(doc.nodeId), true);
+});

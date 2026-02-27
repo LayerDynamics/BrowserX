@@ -67,7 +67,7 @@ export class RequestPipelineError extends Error {
   constructor(
     message: string,
     public readonly stage: string,
-    public override readonly cause?: Error,
+    public readonly cause?: Error,
   ) {
     super(message);
     this.name = "RequestPipelineError";
@@ -363,6 +363,7 @@ export class RequestPipeline {
         let bodyStartIndex = 0;
 
         // Read until response is complete
+        const decoder = new TextDecoder();
         while (true) {
           // Check if aborted in read loop
           if (options.signal?.aborted) {
@@ -388,13 +389,16 @@ export class RequestPipeline {
           // Check if headers are complete
           if (!headersComplete) {
             const partialResponse = this.concatChunks(chunks, totalBytes);
-            const text = new TextDecoder().decode(partialResponse);
-            const headerEndIndex = text.indexOf("\r\n\r\n");
+            // Search for \r\n\r\n (0x0d 0x0a 0x0d 0x0a) in raw bytes to avoid
+            // byte/char offset mismatch with multi-byte UTF-8 in headers
+            const headerEndByteIndex = this.findHeaderEnd(partialResponse);
 
-            if (headerEndIndex !== -1) {
+            if (headerEndByteIndex !== -1) {
               headersComplete = true;
-              bodyStartIndex = headerEndIndex + 4;
+              bodyStartIndex = headerEndByteIndex + 4;
 
+              // Decode only the header portion for text-based checks
+              const text = decoder.decode(partialResponse.slice(0, headerEndByteIndex));
               // Check for chunked encoding or content-length
               const lowerText = text.toLowerCase();
               if (lowerText.includes("transfer-encoding: chunked")) {
@@ -437,7 +441,7 @@ export class RequestPipeline {
               // RFC 7230 Section 4.1: chunked-body = *chunk last-chunk trailer-part CRLF
               // last-chunk = "0" *( ";" chunk-ext ) CRLF
               // trailer-part = *( header-field CRLF )
-              const text = new TextDecoder().decode(partialResponse.slice(bodyStartIndex));
+              const text = decoder.decode(partialResponse.slice(bodyStartIndex));
               // Find the zero-length chunk (can be "0\r\n" or "0;ext\r\n")
               const zeroChunkMatch = text.match(/\r\n0(?:;[^\r\n]*)?\r\n/);
               if (zeroChunkMatch) {
@@ -681,6 +685,24 @@ export class RequestPipeline {
   /**
    * Concatenate byte array chunks into a single buffer
    */
+  /**
+   * Find the end of HTTP headers in raw bytes by searching for \r\n\r\n (0x0d 0x0a 0x0d 0x0a).
+   * Returns the byte index of the first \r in the sequence, or -1 if not found.
+   */
+  private findHeaderEnd(data: Uint8Array): number {
+    for (let i = 0; i <= data.length - 4; i++) {
+      if (
+        data[i] === 0x0d &&
+        data[i + 1] === 0x0a &&
+        data[i + 2] === 0x0d &&
+        data[i + 3] === 0x0a
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   private concatChunks(chunks: Uint8Array[], totalBytes: number): Uint8Array {
     const result = new Uint8Array(totalBytes);
     let offset = 0;

@@ -1338,3 +1338,311 @@ Deno.test({
     assertEquals(step3Result.data, 3);
   },
 });
+
+// =============================================================================
+// Browser engine not configured - throws instead of silent fallback
+// =============================================================================
+
+import {
+  NavigateStep,
+  ClickStep,
+  TypeStep,
+  WaitStep,
+  ScreenshotStep,
+  PDFStep,
+  DOMQueryStep,
+  EvaluateJSStep,
+} from "../../planner/plan.ts";
+
+Deno.test({
+  name: "QueryExecutor - navigate throws when browserController not set",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const stateManager = createTestStateManager();
+    const executor = new QueryExecutor(undefined, undefined, stateManager);
+    const plan: ExecutionPlan = {
+      id: "test-nav" as any,
+      steps: [{
+        id: "nav1",
+        type: ExecutionStepType.NAVIGATE,
+        url: "https://example.com",
+        dependencies: [],
+      } as NavigateStep],
+      metadata: { createdAt: Date.now(), estimatedCost: 1, optimized: false },
+    };
+    const result = await executor.execute(plan);
+    assertEquals(result.success, false);
+    assert(result.error?.message.includes("Browser engine not configured"));
+  },
+});
+
+Deno.test({
+  name: "QueryExecutor - click throws when browserController not set",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const stateManager = createTestStateManager();
+    const executor = new QueryExecutor(undefined, undefined, stateManager);
+    const plan: ExecutionPlan = {
+      id: "test-click" as any,
+      steps: [{
+        id: "click1",
+        type: ExecutionStepType.CLICK,
+        selector: "#btn",
+        dependencies: [],
+      } as ClickStep],
+      metadata: { createdAt: Date.now(), estimatedCost: 1, optimized: false },
+    };
+    const result = await executor.execute(plan);
+    assertEquals(result.success, false);
+    assert(result.error?.message.includes("Browser engine not configured"));
+  },
+});
+
+Deno.test({
+  name: "QueryExecutor - type throws when browserController not set",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const stateManager = createTestStateManager();
+    const executor = new QueryExecutor(undefined, undefined, stateManager);
+    const plan: ExecutionPlan = {
+      id: "test-type" as any,
+      steps: [{
+        id: "type1",
+        type: ExecutionStepType.TYPE,
+        selector: "#input",
+        text: "hello",
+        dependencies: [],
+      } as TypeStep],
+      metadata: { createdAt: Date.now(), estimatedCost: 1, optimized: false },
+    };
+    const result = await executor.execute(plan);
+    assertEquals(result.success, false);
+    assert(result.error?.message.includes("Browser engine not configured"));
+  },
+});
+
+Deno.test({
+  name: "QueryExecutor - screenshot throws when browserController not set",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const stateManager = createTestStateManager();
+    const executor = new QueryExecutor(undefined, undefined, stateManager);
+    const plan: ExecutionPlan = {
+      id: "test-ss" as any,
+      steps: [{
+        id: "ss1",
+        type: ExecutionStepType.SCREENSHOT,
+        dependencies: [],
+      } as ScreenshotStep],
+      metadata: { createdAt: Date.now(), estimatedCost: 1, optimized: false },
+    };
+    const result = await executor.execute(plan);
+    assertEquals(result.success, false);
+    assert(result.error?.message.includes("Browser engine not configured"));
+  },
+});
+
+// =============================================================================
+// Concurrent execute() isolation — per-execution state not shared
+// =============================================================================
+
+Deno.test({
+  name: "QueryExecutor - concurrent execute() calls use isolated maxIterations",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const executor = createTestExecutor();
+
+    // Plan with a loop over 5 items
+    const makeLoopPlan = (id: string): ExecutionPlan => {
+      const items: Literal = { type: "LITERAL", value: [1, 2, 3, 4, 5], dataType: DataType.ARRAY };
+      const loopStep: LoopStep = {
+        id: `loop_${id}`,
+        type: ExecutionStepType.LOOP,
+        collectionVariable: `items_${id}`,
+        collectionExpression: items,
+        iteratorVariable: `item_${id}`,
+        bodySteps: [{
+          id: `assign_${id}`,
+          type: ExecutionStepType.ASSIGN,
+          variable: `item_${id}`,
+          value: { type: "IDENTIFIER", name: `item_${id}` } as Identifier,
+          dependencies: [],
+        } as AssignStep],
+        dependencies: [],
+      };
+      return createSimplePlan([loopStep], id);
+    };
+
+    // Call 1: maxIterations=3 (should fail — 5 items > 3)
+    // Call 2: maxIterations=100 (should succeed)
+    const [result1, result2] = await Promise.all([
+      executor.execute(makeLoopPlan("plan_a"), { maxIterations: 3 }),
+      executor.execute(makeLoopPlan("plan_b"), { maxIterations: 100 }),
+    ]);
+
+    // Plan A should fail due to its own limit of 3
+    assertEquals(result1.success, false);
+    assert(result1.error?.message.includes("iteration limit exceeded"));
+
+    // Plan B should succeed with its own limit of 100
+    assertEquals(result2.success, true);
+  },
+});
+
+Deno.test({
+  name: "QueryExecutor - concurrent execute() calls use isolated maxResultSize",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const executor = createTestExecutor();
+
+    // Plan that filters an array and checks result size limit
+    const makeFilterPlan = (id: string): ExecutionPlan => {
+      // First assign the array, then filter it
+      const assignStep: AssignStep = {
+        id: `assign_${id}`,
+        type: ExecutionStepType.ASSIGN,
+        variable: `data_${id}`,
+        value: { type: "LITERAL", value: [1, 2, 3, 4, 5], dataType: DataType.ARRAY } as Literal,
+        dependencies: [],
+      };
+      const filterStep: FilterStep = {
+        id: `filter_${id}`,
+        type: ExecutionStepType.FILTER,
+        inputVariable: `data_${id}`,
+        outputVariable: `result_${id}`,
+        predicate: { type: "LITERAL", value: true, dataType: DataType.BOOLEAN } as Literal,
+        dependencies: [`assign_${id}`],
+      };
+      return createSimplePlan([assignStep, filterStep], id);
+    };
+
+    // Call 1: maxResultSize=2 (should fail — 5 items > 2)
+    // Call 2: maxResultSize=1000 (should succeed)
+    const [result1, result2] = await Promise.all([
+      executor.execute(makeFilterPlan("plan_c"), { maxResultSize: 2 }),
+      executor.execute(makeFilterPlan("plan_d"), { maxResultSize: 1000 }),
+    ]);
+
+    // Plan C should fail due to its own limit of 2
+    assertEquals(result1.success, false);
+    assert(result1.error?.message.includes("Result set size limit exceeded"));
+
+    // Plan D should succeed with its own limit of 1000
+    assertEquals(result2.success, true);
+  },
+});
+
+Deno.test({
+  name: "QueryExecutor - concurrent execute() calls use isolated abort signals",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const executor = createTestExecutor();
+
+    const makePlan = (id: string): ExecutionPlan => {
+      const step: AssignStep = {
+        id: `assign_${id}`,
+        type: ExecutionStepType.ASSIGN,
+        variable: "x",
+        value: { type: "LITERAL", value: 42, dataType: DataType.NUMBER } as Literal,
+        dependencies: [],
+      };
+      return createSimplePlan([step], id);
+    };
+
+    // Call 1: already-aborted signal
+    const abortController = new AbortController();
+    abortController.abort("cancelled");
+
+    // Call 2: no signal (should succeed)
+    let threw = false;
+    try {
+      await executor.execute(makePlan("plan_e"), { signal: abortController.signal });
+    } catch {
+      threw = true;
+    }
+    assert(threw, "Aborted execution should throw");
+
+    // Second call on same executor should succeed (not affected by first call's abort)
+    const result2 = await executor.execute(makePlan("plan_f"));
+    assertEquals(result2.success, true);
+    assertEquals(result2.data, 42);
+  },
+});
+
+Deno.test({
+  name: "executeParallel - sub-steps get isolated context clones",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const executor = createTestExecutor();
+
+    // Two parallel ASSIGN steps that each write to a different variable.
+    // Before the fix, they shared the same mutable context.variables Map,
+    // meaning concurrent writes could race. With cloned contexts, each
+    // sub-step writes to its own Map and results are merged back.
+    const plan: ExecutionPlan = {
+      id: "parallel_isolation_test",
+      steps: [
+        {
+          id: "setup",
+          type: ExecutionStepType.ASSIGN,
+          variable: "shared_input",
+          value: {
+            type: "LITERAL",
+            value: "original",
+            dataType: DataType.STRING,
+          } as Literal,
+          dependencies: [],
+        } as AssignStep,
+        {
+          id: "parallel_step",
+          type: ExecutionStepType.PARALLEL,
+          steps: [
+            {
+              id: "branch_a",
+              type: ExecutionStepType.ASSIGN,
+              variable: "var_a",
+              value: {
+                type: "LITERAL",
+                value: "from_a",
+                dataType: DataType.STRING,
+              } as Literal,
+              dependencies: [],
+            } as AssignStep,
+            {
+              id: "branch_b",
+              type: ExecutionStepType.ASSIGN,
+              variable: "var_b",
+              value: {
+                type: "LITERAL",
+                value: "from_b",
+                dataType: DataType.STRING,
+              } as Literal,
+              dependencies: [],
+            } as AssignStep,
+          ],
+          dependencies: ["setup"],
+        } as ParallelStep,
+      ],
+    };
+
+    const result = await executor.execute(plan);
+    if (!result.success) {
+      throw result.error || new Error("Execution failed with no error");
+    }
+
+    // Both variables should have been merged back into the parent context
+    const data = result.data as unknown[];
+    assertEquals(Array.isArray(data), true);
+    assertEquals(data.length, 2);
+    assertEquals(data[0], "from_a");
+    assertEquals(data[1], "from_b");
+  },
+});

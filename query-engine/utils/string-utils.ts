@@ -231,7 +231,14 @@ export function repeat(str: string, count: number): string {
  * Reverse string
  */
 export function reverse(str: string): string {
-  return str.split("").reverse().join("");
+  try {
+    // deno-lint-ignore no-explicit-any
+    const segmenter = new (Intl as any).Segmenter(undefined, { granularity: "grapheme" });
+    return [...segmenter.segment(str)].map((s: { segment: string }) => s.segment).reverse().join("");
+  } catch {
+    // Fallback for environments without Intl.Segmenter — handles surrogate pairs but not grapheme clusters
+    return [...str].reverse().join("");
+  }
 }
 
 /**
@@ -288,15 +295,27 @@ export function matchesLike(
   pattern: string,
   caseInsensitive: boolean = false,
 ): boolean {
+  // Handle escape sequences before regex conversion
+  // Replace \_ and \% with placeholders
+  const ESCAPED_UNDERSCORE = "\x00";
+  const ESCAPED_PERCENT = "\x01";
+
+  let processed = pattern
+    .replace(/\\\\/g, "\x02") // Preserve escaped backslashes first
+    .replace(/\\%/g, ESCAPED_PERCENT)
+    .replace(/\\_/g, ESCAPED_UNDERSCORE);
+
   // Convert SQL LIKE pattern to regex
   // % = .* (any characters)
   // _ = . (single character)
-  const regexPattern = pattern
+  const regexPattern = processed
     .split("%")
     .map(escapeRegex)
     .join(".*")
-    .replace(/\\_/g, ".")
-    .replace(/_/g, ".");
+    .replace(/_/g, ".")
+    .replace(/\x00/g, "_") // Restore escaped underscore as literal
+    .replace(/\x01/g, "%") // Restore escaped percent as literal
+    .replace(/\x02/g, "\\\\"); // Restore escaped backslash
 
   const flags = caseInsensitive ? "i" : "";
   return new RegExp(`^${regexPattern}$`, flags).test(text);

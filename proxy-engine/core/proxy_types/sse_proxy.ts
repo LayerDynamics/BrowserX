@@ -173,6 +173,9 @@ export class SSEProxy {
   // Track last received event ID per connection for reconnection
   private lastEventIds: Map<string, string> = new Map();
 
+  // Track which connections are actively streaming responses to clients
+  private activeConnectionIds: Set<string> = new Set();
+
   // Auto-incrementing connection ID counter
   private nextConnectionId = 0;
 
@@ -236,6 +239,7 @@ export class SSEProxy {
       const server = this.selectUpstreamServer(request, context);
       if (!server) {
         this.stats.connectionErrors++;
+        this.stats.activeConnections--;
         return this.createErrorResponse(503, "No healthy upstream servers available");
       }
 
@@ -248,16 +252,18 @@ export class SSEProxy {
       // Connect to upstream with retries
       const upstreamResponse = await this.connectToUpstream(upstreamRequest, server);
 
+      // Track this connection as actively streaming — cleanup deferred to releaseConnection()
+      this.activeConnectionIds.add(connectionId);
+
       // Return streaming response
       return this.createStreamingResponse(upstreamResponse, context, connectionId);
     } catch (error) {
       console.error("[SSE Proxy] Request handling error:", error);
       this.stats.connectionErrors++;
-      return this.createErrorResponse(502, "Failed to connect to upstream");
-    } finally {
+      // Only decrement on error — successful responses stay active until releaseConnection()
       this.stats.activeConnections--;
-      // Clean up per-connection lastEventId when connection closes
       this.lastEventIds.delete(connectionId);
+      return this.createErrorResponse(502, "Failed to connect to upstream");
     }
   }
 
@@ -391,13 +397,18 @@ export class SSEProxy {
     // For now, we return the upstream response directly
     // The gateway server would handle the actual streaming
 
-    const headers = {
+    const headers: Record<string, string> = {
       ...upstreamResponse.headers,
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       "connection": "keep-alive",
       "x-accel-buffering": "no", // Disable buffering in nginx
     };
+
+    // Include connection ID so callers can call releaseConnection() after delivery
+    if (connectionId !== undefined) {
+      headers["x-sse-connection-id"] = connectionId;
+    }
 
     return {
       version: upstreamResponse.version,
@@ -420,30 +431,40 @@ export class SSEProxy {
     // Process each event
     const processedEvents: string[] = [];
 
-    for (const event of events) {
-      try {
-        // Track last event ID per connection for reconnection
-        if (event.id !== undefined && connectionId !== undefined) {
-          this.lastEventIds.set(connectionId, event.id);
-        }
+    try {
+      for (const event of events) {
+        try {
+          // Track last event ID per connection for reconnection
+          if (event.id !== undefined && connectionId !== undefined) {
+            this.lastEventIds.set(connectionId, event.id);
+          }
 
-        // Inspect event if enabled
-        if (this.config.inspectEvents) {
-          this.inspectEvent(event, context);
-        }
+          // Inspect event if enabled
+          if (this.config.inspectEvents) {
+            this.inspectEvent(event, context);
+          }
 
-        // Transform event if enabled
-        let transformedEvent = event;
-        if (this.config.transformEvents) {
-          transformedEvent = this.transformEvent(event, "origin->client");
-        }
+          // Transform event if enabled
+          let transformedEvent = event;
+          if (this.config.transformEvents) {
+            transformedEvent = this.transformEvent(event, "origin->client");
+          }
 
-        // Serialize event
-        processedEvents.push(this.serializeSSEEvent(transformedEvent));
-        this.stats.eventsForwarded++;
-      } catch (error) {
-        console.error("[SSE Proxy] Event processing error:", error);
-        this.stats.eventErrors++;
+          // Serialize event
+          processedEvents.push(this.serializeSSEEvent(transformedEvent));
+          this.stats.eventsForwarded++;
+        } catch (error) {
+          console.error("[SSE Proxy] Event processing error:", error);
+          this.stats.eventErrors++;
+        }
+      }
+    } finally {
+      // Clean up lastEventIds when the stream processing completes (success or error).
+      // This ensures the entry persists while events are being processed but is
+      // cleaned up once the stream is fully consumed, rather than being deleted
+      // prematurely before stream consumption or deferred to an external caller.
+      if (connectionId !== undefined) {
+        this.lastEventIds.delete(connectionId);
       }
     }
 
@@ -654,6 +675,26 @@ export class SSEProxy {
   }
 
   /**
+   * Release a connection after the response body has been delivered to the client.
+   * Callers (e.g. the gateway server) MUST call this when they finish sending the
+   * SSE response body to the downstream client, so that activeConnections accurately
+   * reflects reality.
+   *
+   * @param connectionId - The connection ID returned alongside the response
+   * @returns true if the connection was found and released, false if already released or unknown
+   */
+  releaseConnection(connectionId: string): boolean {
+    if (!this.activeConnectionIds.has(connectionId)) {
+      return false;
+    }
+    this.activeConnectionIds.delete(connectionId);
+    this.stats.activeConnections--;
+    // Note: lastEventIds cleanup is handled by processEventStream's finally block,
+    // not here, so the entry persists throughout stream consumption.
+    return true;
+  }
+
+  /**
    * Get active connections count
    */
   getActiveConnections(): number {
@@ -671,6 +712,11 @@ export class SSEProxy {
    * Close proxy and clean up resources
    */
   async close(): Promise<void> {
+    // Release all active connections
+    for (const connectionId of this.activeConnectionIds) {
+      this.releaseConnection(connectionId);
+    }
+
     if (this.healthMonitor) {
       this.healthMonitor.stop();
     }

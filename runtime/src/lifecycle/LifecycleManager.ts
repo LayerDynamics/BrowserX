@@ -273,6 +273,7 @@ export class LifecycleManager {
    */
   reset(): void {
     this.state = RuntimeState.STOPPED;
+    this._transitioning = false;
     this.stateHistory = [];
 
     // Reset all component states

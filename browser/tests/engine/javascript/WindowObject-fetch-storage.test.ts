@@ -1550,7 +1550,7 @@ Deno.test("e2e - StorageManager clearAllSessionStorage clears session data but n
   callNativeFn(storageFn(ss, "setItem"), createString("temp"), createString("gone"));
 
   // Simulate browser close
-  sm.clearAllSessionStorage();
+  await sm.clearAllSessionStorage();
 
   // localStorage survives
   assertEquals(jsStr(callNativeFn(storageFn(ls, "getItem"), createString("persist"))), "yes");

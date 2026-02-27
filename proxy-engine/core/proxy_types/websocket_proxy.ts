@@ -362,8 +362,9 @@ export class WebSocketProxy {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
+      let ws: WebSocket | null = null;
       try {
-        const ws = new WebSocket(url);
+        ws = new WebSocket(url);
 
         // Add forwarded headers if enabled
         if (this.config.addForwardedHeaders) {
@@ -380,12 +381,12 @@ export class WebSocketProxy {
             reject(new Error("WebSocket connection timeout"));
           }, this.config.timeout);
 
-          ws.onopen = () => {
+          ws!.onopen = () => {
             clearTimeout(timeout);
             resolve();
           };
 
-          ws.onerror = () => {
+          ws!.onerror = () => {
             clearTimeout(timeout);
             reject(new Error("WebSocket connection failed"));
           };
@@ -393,6 +394,14 @@ export class WebSocketProxy {
 
         return ws;
       } catch (error) {
+        // Close the WebSocket to prevent resource leaks from sockets stuck in CONNECTING state
+        if (ws) {
+          try {
+            ws.close();
+          } catch {
+            // Ignore close errors during cleanup
+          }
+        }
         lastError = error as Error;
         console.error(`[WebSocket Proxy] Connection attempt ${attempt + 1} failed:`, error);
 

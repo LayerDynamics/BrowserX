@@ -141,3 +141,92 @@ Deno.test({
     assertEquals(proxy.getHealthMonitor(), undefined);
   },
 });
+
+// ============================================================================
+// Resource Leak Prevention - connectToOrigin closes WebSocket on failure
+// ============================================================================
+
+Deno.test({
+  name: "WebSocketProxy - handleRequest rejects gracefully on connection failure without leaking WebSockets",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const route = createTestRoute();
+    // Use unreachable host to force WebSocket connection failure
+    route.upstream.servers[0].host = "192.0.2.1";
+    route.upstream.servers[0].port = 1;
+    const proxy = new WebSocketProxy(route, {
+      maxRetries: 1,
+      timeout: 200,
+      retryDelay: 10,
+    });
+
+    const request = {
+      method: "GET" as const,
+      uri: "/ws/test",
+      version: "1.1" as const,
+      headers: {
+        upgrade: "websocket",
+        connection: "Upgrade",
+      },
+    };
+
+    const context = {
+      clientIP: "127.0.0.1",
+      startTime: Date.now(),
+      requestId: "test-ws-leak-1",
+    };
+
+    // Should not hang or leak — failed WebSocket objects should be .close()d
+    try {
+      await proxy.handleRequest(request, context);
+    } catch {
+      // Expected to fail — verifying no resource leak
+    }
+
+    const stats = proxy.getStats();
+    assertExists(stats);
+  },
+});
+
+Deno.test({
+  name: "WebSocketProxy - multiple retry failures close all WebSocket instances",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const route = createTestRoute();
+    route.upstream.servers[0].host = "192.0.2.1";
+    route.upstream.servers[0].port = 1;
+    const proxy = new WebSocketProxy(route, {
+      maxRetries: 2,
+      timeout: 200,
+      retryDelay: 10,
+    });
+
+    const request = {
+      method: "GET" as const,
+      uri: "/ws/test",
+      version: "1.1" as const,
+      headers: {
+        upgrade: "websocket",
+        connection: "Upgrade",
+      },
+    };
+
+    const context = {
+      clientIP: "127.0.0.1",
+      startTime: Date.now(),
+      requestId: "test-ws-leak-2",
+    };
+
+    try {
+      await proxy.handleRequest(request, context);
+    } catch {
+      // Expected
+    }
+
+    // Active connections should be 0 since all failed WebSockets were closed
+    const stats = proxy.getStats();
+    assertEquals(stats.activeConnections, 0, "No active connections should remain after all retries fail");
+  },
+});

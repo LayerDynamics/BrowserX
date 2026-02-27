@@ -784,9 +784,12 @@ export class ExecutionPlanner {
             // MATCHES uses regex directly
             if (binary.right.type === "LITERAL") {
               const pattern = String((binary.right as Literal).value);
-              return `(new RegExp(${JSON.stringify(pattern)}).test(String(${left})))`;
+              if (pattern.length > 1000) {
+                return `(false)`;
+              }
+              return `((s => { const t = String(s); return t.length > 10000 ? false : new RegExp(${JSON.stringify(pattern)}).test(t); })(${left}))`;
             }
-            return `((v => { try { return new RegExp(String(v)).test(String(${left})); } catch { return false; } })(${right}))`;
+            return `((v => { try { const p = String(v); if (p.length > 1000) return false; const t = String(${left}); if (t.length > 10000) return false; return new RegExp(p).test(t); } catch { return false; } })(${right}))`;
           }
 
           case "CONTAINS": {
@@ -929,7 +932,11 @@ export class ExecutionPlanner {
       "TO_JSON": "JSON.stringify",
     };
 
-    return mapping[funcName.toUpperCase()] || funcName.toLowerCase();
+    const mapped = mapping[funcName.toUpperCase()];
+    if (!mapped) {
+      throw new Error(`Unknown function: ${funcName}`);
+    }
+    return mapped;
   }
 
   /**

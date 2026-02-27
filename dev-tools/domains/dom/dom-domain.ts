@@ -405,6 +405,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async removeAttribute(params: RemoveAttributeParams): Promise<Record<string, unknown>> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node || node.nodeType !== DOMNodeType.ELEMENT) {
             throw new Error(`Element ${params.nodeId} not found`);
@@ -440,6 +441,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async getBoxModel(params: GetBoxModelParams): Promise<GetBoxModelResult> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node || node.nodeType !== DOMNodeType.ELEMENT) {
             throw new Error(`Element ${params.nodeId} not found`);
@@ -494,6 +496,7 @@ export class DOMDomain extends BaseDomain {
     }
 
     async requestChildNodes(params: RequestChildNodesParams): Promise<Record<string, unknown>> {
+        this.ensureNodeMapFresh();
         const node = this.nodeMap.get(params.nodeId);
         if (!node) {
             throw new Error(`Node ${params.nodeId} not found`);
@@ -566,6 +569,7 @@ export class DOMDomain extends BaseDomain {
      * Get the node map (for use by other domains like CSS, Overlay)
      */
     getNodeMap(): Map<NodeID, DOMNode> {
+        this.ensureNodeMapFresh();
         return this.nodeMap;
     }
 

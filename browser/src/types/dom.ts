@@ -1476,6 +1476,7 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
         // Full VP8L decoding is very involved. For lossless WebP, we decode the
         // ARGB pixel stream from the compressed bitstream.
         // Simplified: use inflate on the transform data if possible
+        if (width * height > 100_000_000) return null; // dimension cap to prevent OOM
         const pixels = new Uint8ClampedArray(width * height * 4);
 
         // VP8L pixel decoding requires its own Huffman + LZ77 decoder.
@@ -1552,6 +1553,7 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
         const height = ((data[frameStart + 9] << 8) | data[frameStart + 8]) & 0x3FFF;
 
         if (width === 0 || height === 0) return null;
+        if (width * height > 100_000_000) return null; // dimension cap to prevent OOM
 
         // VP8 lossy uses boolean arithmetic coding + DCT + loop filter.
         // Return correct dimensions with neutral fill for proper layout.

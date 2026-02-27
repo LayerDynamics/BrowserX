@@ -482,7 +482,7 @@ Deno.test("StorageManager - clearAllSessionStorage only clears session storage",
   await manager.getLocalStorage("https://example.com").setItem("key", "local", "https://example.com");
   await manager.getSessionStorage("https://example.com").setItem("key", "session", "https://example.com");
 
-  manager.clearAllSessionStorage();
+  await manager.clearAllSessionStorage();
 
   // Session storage should be cleared
   const session = manager.getSessionStorage("https://example.com");
@@ -698,4 +698,153 @@ Deno.test("StorageManager - quota error in write lock does not break subsequent 
   await storage.removeItem("data", url);
   await storage.setItem("small", "ok", url);
   assertEquals(storage.getItem("small"), "ok");
+});
+
+// ============================================================================
+// clearAllLocalStorage / clearAllSessionStorage
+// ============================================================================
+
+Deno.test("StorageManager - clearAllLocalStorage clears data across origins", async () => {
+  const quotaManager = new QuotaManager();
+  const manager = new StorageManager(quotaManager);
+
+  const url1 = "https://example.com";
+  const url2 = "https://other.com";
+
+  const ls1 = manager.getLocalStorage(url1);
+  const ls2 = manager.getLocalStorage(url2);
+
+  await ls1.setItem("a", "1", url1);
+  await ls2.setItem("b", "2", url2);
+
+  assertEquals(ls1.getItem("a"), "1");
+  assertEquals(ls2.getItem("b"), "2");
+
+  await manager.clearAllLocalStorage();
+
+  // After clearing, getting fresh storage should be empty
+  const ls1After = manager.getLocalStorage(url1);
+  const ls2After = manager.getLocalStorage(url2);
+  assertEquals(ls1After.length, 0);
+  assertEquals(ls2After.length, 0);
+});
+
+Deno.test("StorageManager - clearAllSessionStorage clears data across origins", async () => {
+  const quotaManager = new QuotaManager();
+  const manager = new StorageManager(quotaManager);
+
+  const url1 = "https://example.com";
+  const url2 = "https://other.com";
+
+  const ss1 = manager.getSessionStorage(url1);
+  const ss2 = manager.getSessionStorage(url2);
+
+  await ss1.setItem("x", "10", url1);
+  await ss2.setItem("y", "20", url2);
+
+  assertEquals(ss1.getItem("x"), "10");
+  assertEquals(ss2.getItem("y"), "20");
+
+  await manager.clearAllSessionStorage();
+
+  const ss1After = manager.getSessionStorage(url1);
+  const ss2After = manager.getSessionStorage(url2);
+  assertEquals(ss1After.length, 0);
+  assertEquals(ss2After.length, 0);
+});
+
+Deno.test("StorageManager - clearAllLocalStorage updates quota", async () => {
+  const quotaManager = new QuotaManager();
+  const manager = new StorageManager(quotaManager);
+
+  const url = "https://example.com";
+  const ls = manager.getLocalStorage(url);
+
+  await ls.setItem("data", "x".repeat(1000), url);
+  const usageBefore = quotaManager.getUsage(url);
+
+  // Should have some usage tracked
+  assertEquals(usageBefore > 0, true);
+
+  await manager.clearAllLocalStorage();
+
+  const usageAfter = quotaManager.getUsage(url);
+  assertEquals(usageAfter < usageBefore, true);
+});
+
+// ============================================================================
+// Write Lock Resilience
+// ============================================================================
+
+Deno.test("StorageManager - removeItem error does not break write lock", async () => {
+  const eventEmitter = new StorageEventEmitter();
+  // Create an emitter that throws on the first emit call
+  let emitCount = 0;
+  const originalEmit = eventEmitter.emit.bind(eventEmitter);
+  eventEmitter.emit = (event) => {
+    emitCount++;
+    if (emitCount === 1) {
+      throw new Error("Simulated removeItem error");
+    }
+    originalEmit(event);
+  };
+
+  const manager = new StorageManager(undefined, eventEmitter);
+  const storage = manager.getLocalStorage("https://example.com");
+  const url = "https://example.com/page";
+
+  // Set two items (bypass the throwing emitter by resetting count after)
+  emitCount = -10; // won't hit 1 during setup
+  await storage.setItem("a", "1", url);
+  await storage.setItem("b", "2", url);
+  emitCount = 0; // arm the throw for next emit
+
+  // removeItem should reject due to the thrown error
+  let removeRejected = false;
+  try {
+    await storage.removeItem("a", url);
+  } catch {
+    removeRejected = true;
+  }
+  assertEquals(removeRejected, true);
+
+  // Subsequent setItem should still work (lock not broken)
+  emitCount = 100; // disable throwing
+  await storage.setItem("c", "3", url);
+  assertEquals(storage.getItem("c"), "3");
+});
+
+Deno.test("StorageManager - clear error does not break write lock", async () => {
+  const eventEmitter = new StorageEventEmitter();
+  let shouldThrow = false;
+  const originalEmit = eventEmitter.emit.bind(eventEmitter);
+  eventEmitter.emit = (event) => {
+    if (shouldThrow) {
+      shouldThrow = false;
+      throw new Error("Simulated clear error");
+    }
+    originalEmit(event);
+  };
+
+  const manager = new StorageManager(undefined, eventEmitter);
+  const storage = manager.getLocalStorage("https://example.com");
+  const url = "https://example.com/page";
+
+  await storage.setItem("x", "1", url);
+  await storage.setItem("y", "2", url);
+
+  // Arm the throw for clear's emit
+  shouldThrow = true;
+
+  let clearRejected = false;
+  try {
+    await storage.clear(url);
+  } catch {
+    clearRejected = true;
+  }
+  assertEquals(clearRejected, true);
+
+  // Subsequent setItem should still work (lock not broken)
+  await storage.setItem("z", "3", url);
+  assertEquals(storage.getItem("z"), "3");
 });

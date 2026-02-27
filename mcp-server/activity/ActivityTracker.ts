@@ -85,7 +85,7 @@ export class ActivityTracker {
       sessionId.startsWith("/") ||
       !/^[a-zA-Z0-9_-]+$/.test(sessionId)
     ) {
-      throw new Error(`Invalid sessionId: contains unsafe characters: ${sessionId}`);
+      throw new Error("Invalid sessionId: contains unsafe characters");
     }
     return sessionId;
   }
@@ -103,8 +103,8 @@ export class ActivityTracker {
     url: string,
     timing: { total: number; breakdown?: Record<string, number> }
   ): Promise<void> {
-    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return;
+    this.sanitizeSessionId(sessionId);
     await this.initialize();
 
     const entry: ActivityEntry = {
@@ -113,7 +113,7 @@ export class ActivityTracker {
       type: "navigate",
       sessionId,
       url,
-      data: { url },
+      data: {},
       timing,
     };
 
@@ -132,8 +132,8 @@ export class ActivityTracker {
     width: number = 1920,
     height: number = 1080
   ): Promise<string> {
-    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return "";
+    this.sanitizeSessionId(sessionId);
     await this.initialize();
 
     const id = this.generateId();
@@ -186,6 +186,7 @@ export class ActivityTracker {
     timing?: { total: number; breakdown?: Record<string, number> }
   ): Promise<void> {
     if (!this.enabled) return;
+    if (sessionId) this.sanitizeSessionId(sessionId);
     await this.initialize();
 
     const entry: ActivityEntry = {
@@ -303,8 +304,8 @@ export class ActivityTracker {
     sessionId: string,
     metadata: Record<string, unknown>
   ): Promise<void> {
-    this.sanitizeSessionId(sessionId);
     if (!this.enabled) return;
+    this.sanitizeSessionId(sessionId);
     await this.initialize();
 
     const filePath = `${this.baseDir}/metadata/${sessionId}.json`;
@@ -375,8 +376,5 @@ export function initActivityTracker(baseDirOrOptions?: string | ActivityTrackerO
 
 /** Reset singleton — for testing only */
 export function resetActivityTracker(): void {
-  if (instance) {
-    instance.setEnabled(false);
-  }
   instance = null;
 }

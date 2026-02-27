@@ -414,12 +414,12 @@ Deno.test({
 // ============================================================================
 
 Deno.test({
-  name: "HealthMonitor - isHealthy returns true for unknown server (default healthy)",
+  name: "HealthMonitor - isHealthy returns false for unknown server (default unhealthy)",
   sanitizeResources: false,
   sanitizeOps: false,
   fn() {
     const monitor = new HealthMonitor(createTestConfig());
-    assertEquals(monitor.isHealthy("unknown-server"), true);
+    assertEquals(monitor.isHealthy("unknown-server"), false);
   },
 });
 
@@ -429,7 +429,7 @@ Deno.test({
   sanitizeOps: false,
   fn() {
     const monitor = new HealthMonitor(createTestConfig());
-    assertEquals(monitor.isHealthy("server-1"), true);
+    assertEquals(monitor.isHealthy("server-1"), false);
   },
 });
 
@@ -441,7 +441,7 @@ Deno.test({
     const monitor = new HealthMonitor(createTestConfig());
     const server = createTestServer();
 
-    assertEquals(monitor.isHealthy(server), true);
+    assertEquals(monitor.isHealthy(server), false);
   },
 });
 
@@ -450,7 +450,7 @@ Deno.test({
 // ============================================================================
 
 Deno.test({
-  name: "HealthMonitor - getHealthyServers returns all servers if not checked",
+  name: "HealthMonitor - getHealthyServers returns no servers if not checked",
   sanitizeResources: false,
   sanitizeOps: false,
   fn() {
@@ -461,7 +461,7 @@ Deno.test({
     ];
 
     const healthy = monitor.getHealthyServers(servers);
-    assertEquals(healthy.length, 2);
+    assertEquals(healthy.length, 0);
   },
 });
 
@@ -703,5 +703,178 @@ Deno.test({
     monitor.stop();
     assertEquals(monitor.isRunning(), false);
     assertEquals(monitor.getIntervalId(), undefined);
+  },
+});
+
+// ============================================================================
+// Task 9: Unchecked servers default to unhealthy
+// ============================================================================
+
+Deno.test({
+  name: "HealthMonitor - isHealthy returns false for unchecked servers",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const config = createTestConfig();
+    const monitor = new HealthMonitor(config);
+
+    // A server that has never been health-checked should be unhealthy
+    assertEquals(monitor.isHealthy("unknown-server"), false);
+  },
+});
+
+Deno.test({
+  name: "HealthMonitor - getHealthyServers excludes unchecked servers",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const config = createTestConfig();
+    const monitor = new HealthMonitor(config);
+
+    const servers = [
+      createTestServer({ id: "s1" }),
+      createTestServer({ id: "s2" }),
+    ];
+
+    // No servers have been checked, so none should be considered healthy
+    const healthy = monitor.getHealthyServers(servers);
+    assertEquals(healthy.length, 0);
+  },
+});
+
+Deno.test({
+  name: "HealthMonitor - createInitialState sets healthy to false",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const config = createTestConfig();
+    const monitor = new HealthMonitor(config);
+
+    // Register a server to trigger initial state creation
+    const servers = [createTestServer({ id: "new-server" })];
+    monitor.start(servers);
+
+    const state = monitor.getServerState("new-server");
+    assertExists(state);
+    assertEquals(state!.healthy, false);
+
+    monitor.stop();
+  },
+});
+
+// ============================================================================
+// Startup Traffic Blackout Fix Tests
+// ============================================================================
+
+Deno.test({
+  name: "HealthMonitor - servers are optimistically healthy during startup before first check completes",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const monitor = new HealthMonitor(createTestConfig({ interval: 60000 }));
+    const servers = [
+      createTestServer({ id: "startup-s1" }),
+      createTestServer({ id: "startup-s2" }),
+    ];
+
+    // Start monitoring — initial check fires async (not yet resolved)
+    monitor.start(servers);
+
+    // Before first check completes, isReady() should be false
+    assertEquals(monitor.isReady(), false);
+
+    // Servers should be optimistically healthy during startup window
+    assertEquals(monitor.isHealthy("startup-s1"), true);
+    assertEquals(monitor.isHealthy("startup-s2"), true);
+
+    // getHealthyServers should return all servers during startup
+    const healthy = monitor.getHealthyServers(servers);
+    assertEquals(healthy.length, 2);
+
+    monitor.stop();
+  },
+});
+
+Deno.test({
+  name: "HealthMonitor - isReady becomes true after first check completes",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const monitor = new HealthMonitor(createTestConfig({ interval: 60000, timeout: 100 }));
+    const servers = [createTestServer({ id: "ready-s1" })];
+
+    monitor.start(servers);
+    assertEquals(monitor.isReady(), false);
+
+    // Wait for first check to complete
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+
+    assertEquals(monitor.isReady(), true);
+
+    monitor.stop();
+  },
+});
+
+Deno.test({
+  name: "HealthMonitor - after first check, failed servers are unhealthy (not optimistic)",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const monitor = new HealthMonitor(createTestConfig({
+      interval: 60000,
+      timeout: 100,
+      unhealthyThreshold: 1,
+    }));
+    const servers = [createTestServer({ id: "post-check-s1", port: 99999 })];
+
+    monitor.start(servers);
+
+    // Wait for first check to complete (server on port 99999 will fail)
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+
+    assertEquals(monitor.isReady(), true);
+    // Server should now be unhealthy since check failed and threshold is 1
+    assertEquals(monitor.isHealthy("post-check-s1"), false);
+
+    monitor.stop();
+  },
+});
+
+Deno.test({
+  name: "HealthMonitor - reset clears isReady flag",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const monitor = new HealthMonitor(createTestConfig({ interval: 60000, timeout: 100 }));
+    const servers = [createTestServer({ id: "reset-s1" })];
+
+    monitor.start(servers);
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+
+    assertEquals(monitor.isReady(), true);
+
+    monitor.reset();
+    assertEquals(monitor.isReady(), false);
+
+    monitor.stop();
+  },
+});
+
+Deno.test({
+  name: "HealthMonitor - unknown servers still return false even during startup",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn() {
+    const monitor = new HealthMonitor(createTestConfig({ interval: 60000 }));
+    const servers = [createTestServer({ id: "known-s1" })];
+
+    monitor.start(servers);
+
+    // Known server is optimistically healthy
+    assertEquals(monitor.isHealthy("known-s1"), true);
+    // Unknown server (no state at all) returns false
+    assertEquals(monitor.isHealthy("totally-unknown"), false);
+
+    monitor.stop();
   },
 });

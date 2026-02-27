@@ -91,8 +91,16 @@ interface HuffmanNode {
 function buildHuffmanTree(): HuffmanNode {
   const root: HuffmanNode = {};
 
+  // Add symbols 0-255 plus EOS (symbol 256) to the tree
+  const allSymbols: Array<[number, number, number]> = [];
   for (let sym = 0; sym < 256; sym++) {
     const [code, bitLen] = HUFFMAN_TABLE[sym];
+    allSymbols.push([sym, code, bitLen]);
+  }
+  // EOS symbol (index 256): code 0x3fffffff, 30 bits
+  allSymbols.push([256, 0x3fffffff, 30]);
+
+  for (const [sym, code, bitLen] of allSymbols) {
     let node = root;
 
     for (let i = bitLen - 1; i >= 0; i--) {
@@ -121,22 +129,44 @@ export function decodeHuffman(encoded: Uint8Array): string {
   const decoded: number[] = [];
   let node = HUFFMAN_ROOT;
 
+  let bitsConsumedSinceLastSymbol = 0;
+
   for (let byteIdx = 0; byteIdx < encoded.length; byteIdx++) {
     const byte = encoded[byteIdx];
     for (let bitIdx = 7; bitIdx >= 0; bitIdx--) {
       const bit = (byte >> bitIdx) & 1;
       node = bit === 0 ? node.left! : node.right!;
+      bitsConsumedSinceLastSymbol++;
 
       if (node.symbol !== undefined) {
+        // RFC 7541 §5.2: EOS symbol MUST NOT appear in the decoded stream
+        if (node.symbol === 256) {
+          throw new Error("HPACK COMPRESSION_ERROR: EOS symbol decoded in Huffman stream");
+        }
         decoded.push(node.symbol);
         node = HUFFMAN_ROOT;
+        bitsConsumedSinceLastSymbol = 0;
       }
     }
   }
 
-  // Remaining bits must be padding (all 1s leading toward EOS)
-  // node should be on a path of all-right children from root
-  // This is valid per RFC 7541 §5.2
+  // RFC 7541 §5.2: Padding validation
+  // Padding MUST NOT exceed 7 bits
+  if (bitsConsumedSinceLastSymbol > 7) {
+    throw new Error("HPACK COMPRESSION_ERROR: Huffman padding exceeds 7 bits");
+  }
+
+  // Remaining padding bits MUST all be 1s (i.e., node reached only via right branches)
+  if (node !== HUFFMAN_ROOT) {
+    // Verify padding is all 1s by checking we're on the all-right path from root
+    let checkNode = HUFFMAN_ROOT;
+    for (let i = 0; i < bitsConsumedSinceLastSymbol; i++) {
+      checkNode = checkNode.right!;
+    }
+    if (checkNode !== node) {
+      throw new Error("HPACK COMPRESSION_ERROR: Huffman padding contains non-1 bits");
+    }
+  }
 
   return String.fromCharCode(...decoded);
 }
@@ -257,6 +287,7 @@ export const MAX_DECOMPRESSED_HEADER_SIZE = 65536;
  */
 export class HPACKCodec {
   private dynamicTable: Array<[string, string]> = [];
+  private dynamicTableStart = 0; // logical start index (entries before this are evicted)
   private maxDynamicTableSize = 4096;
   private currentDynamicTableSize = 0;
 
@@ -435,8 +466,10 @@ export class HPACKCodec {
     }
 
     const dynamicIndex = index - STATIC_TABLE.length;
-    if (dynamicIndex < this.dynamicTable.length) {
-      return this.dynamicTable[dynamicIndex];
+    const logicalLength = this.dynamicTable.length - this.dynamicTableStart;
+    if (dynamicIndex < logicalLength) {
+      // Index 0 = most recent entry = last element in backing array
+      return this.dynamicTable[this.dynamicTable.length - 1 - dynamicIndex];
     }
 
     throw new Error(`Invalid header index: ${index}`);
@@ -448,17 +481,27 @@ export class HPACKCodec {
   private addToDynamicTable(name: string, value: string): void {
     const entrySize = 32 + name.length + value.length;
 
-    // Evict entries if necessary
+    // Evict oldest entries (from logical front) if necessary
     while (
       this.currentDynamicTableSize + entrySize > this.maxDynamicTableSize &&
-      this.dynamicTable.length > 0
+      this.dynamicTableStart < this.dynamicTable.length
     ) {
-      const [oldName, oldValue] = this.dynamicTable.pop()!;
+      const [oldName, oldValue] = this.dynamicTable[this.dynamicTableStart];
       this.currentDynamicTableSize -= 32 + oldName.length + oldValue.length;
+      this.dynamicTableStart++;
     }
 
-    // Add new entry at beginning
-    this.dynamicTable.unshift([name, value]);
+    // Compact when more than half the backing array is dead entries
+    if (this.dynamicTableStart > 0 && this.dynamicTableStart >= this.dynamicTable.length) {
+      this.dynamicTable.length = 0;
+      this.dynamicTableStart = 0;
+    } else if (this.dynamicTableStart > 64 && this.dynamicTableStart >= (this.dynamicTable.length >>> 1)) {
+      this.dynamicTable = this.dynamicTable.slice(this.dynamicTableStart);
+      this.dynamicTableStart = 0;
+    }
+
+    // Add new entry at end — O(1) amortized
+    this.dynamicTable.push([name, value]);
     this.currentDynamicTableSize += entrySize;
   }
 
@@ -468,10 +511,17 @@ export class HPACKCodec {
   private updateDynamicTableSize(newSize: number): void {
     this.maxDynamicTableSize = newSize;
 
-    // Evict entries if necessary
-    while (this.currentDynamicTableSize > newSize && this.dynamicTable.length > 0) {
-      const [name, value] = this.dynamicTable.pop()!;
+    // Evict oldest entries if necessary
+    while (this.currentDynamicTableSize > newSize && this.dynamicTableStart < this.dynamicTable.length) {
+      const [name, value] = this.dynamicTable[this.dynamicTableStart];
       this.currentDynamicTableSize -= 32 + name.length + value.length;
+      this.dynamicTableStart++;
+    }
+
+    // Compact if all entries evicted
+    if (this.dynamicTableStart >= this.dynamicTable.length) {
+      this.dynamicTable.length = 0;
+      this.dynamicTableStart = 0;
     }
   }
 
@@ -479,7 +529,7 @@ export class HPACKCodec {
    * Encode integer with prefix
    */
   private encodeInteger(value: number, prefixBits: number, prefixMask: number): Uint8Array {
-    const maxPrefix = (1 << prefixBits) - 1;
+    const maxPrefix = (2 ** prefixBits) - 1;
 
     if (value < maxPrefix) {
       return new Uint8Array([prefixMask | value]);
@@ -505,7 +555,7 @@ export class HPACKCodec {
     offset: number,
     prefixBits: number,
   ): { value: number; bytesRead: number } {
-    const maxPrefix = (1 << prefixBits) - 1;
+    const maxPrefix = (2 ** prefixBits) - 1;
     const mask = maxPrefix;
 
     let value = buffer[offset] & mask;
@@ -525,7 +575,7 @@ export class HPACKCodec {
       const byte = buffer[offset + bytesRead];
       bytesRead++;
 
-      value += (byte & 0x7f) * (1 << (multiplier * 7));
+      value += (byte & 0x7f) * (2 ** (multiplier * 7));
       if (value > Number.MAX_SAFE_INTEGER) {
         throw new Error("HPACK integer overflow");
       }
