@@ -644,11 +644,13 @@ Deno.test({
       const result = await authManager.authenticate(credentials);
 
       assert(result.success);
-      assert(navigatedUrl.includes("https://auth.example.com/authorize"));
-      assert(navigatedUrl.includes("client_id=my-client-id"));
-      assert(navigatedUrl.includes("redirect_uri="));
-      assert(navigatedUrl.includes("response_type=code"));
-      assert(navigatedUrl.includes("scope=read+write"));
+      const parsed = new URL(navigatedUrl);
+      assertEquals(parsed.origin, "https://auth.example.com");
+      assertEquals(parsed.pathname, "/authorize");
+      assertEquals(parsed.searchParams.get("client_id"), "my-client-id");
+      assert(parsed.searchParams.has("redirect_uri"));
+      assertEquals(parsed.searchParams.get("response_type"), "code");
+      assertEquals(parsed.searchParams.get("scope"), "read write");
     } finally {
       restoreFetch();
     }
