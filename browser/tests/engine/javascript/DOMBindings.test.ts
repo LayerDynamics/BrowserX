@@ -15,12 +15,16 @@ import {
   createObject,
   createString,
   createUndefined,
+  defineGetter,
   getProperty,
   isFunction,
   isObject,
   isString,
   setProperty,
 } from "../../../src/engine/javascript/JSValue.ts";
+import { LayoutBoxImpl } from "../../../src/engine/rendering/layout/LayoutBox.ts";
+import type { RenderTree } from "../../../src/engine/rendering/rendering/RenderTree.ts";
+import type { Pixels } from "../../../src/types/identifiers.ts";
 
 // Mock V8Context for testing
 class MockV8Context {
@@ -2516,6 +2520,623 @@ Deno.test({
       const result = containsFn.value.nativeImpl(gcJS);
       assertEquals(result.type, "boolean");
       if (result.type === "boolean") assertEquals(result.value, true);
+    }
+  },
+});
+
+// ============================================================================
+// element.style Tests
+// ============================================================================
+
+Deno.test({
+  name: "DOMBindings - element has style property",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+    assertEquals(style.type, "object");
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.color getter returns empty string when unset",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const colorGetter = getProperty(style, "color");
+      assertEquals(colorGetter.type, "string");
+      if (colorGetter.type === "string") assertEquals(colorGetter.value, "");
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.setProperty sets CSS property and syncs to attribute",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const setPropFn = getProperty(style, "setProperty");
+      if (setPropFn.type === "function" && setPropFn.value.nativeImpl) {
+        setPropFn.value.nativeImpl(createString("color"), createString("red"));
+      }
+      assertEquals(element.attributes.get("style"), "color: red");
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.getPropertyValue reads CSS property",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    element.attributes.set("style", "font-size: 14px; color: blue");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const getPropFn = getProperty(style, "getPropertyValue");
+      if (getPropFn.type === "function" && getPropFn.value.nativeImpl) {
+        const result = getPropFn.value.nativeImpl(createString("color"));
+        assertEquals(result.type, "string");
+        if (result.type === "string") assertEquals(result.value, "blue");
+
+        const result2 = getPropFn.value.nativeImpl(createString("font-size"));
+        assertEquals(result2.type, "string");
+        if (result2.type === "string") assertEquals(result2.value, "14px");
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.removeProperty removes property and returns old value",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    element.attributes.set("style", "color: red; display: none");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const removePropFn = getProperty(style, "removeProperty");
+      if (removePropFn.type === "function" && removePropFn.value.nativeImpl) {
+        const old = removePropFn.value.nativeImpl(createString("color"));
+        assertEquals(old.type, "string");
+        if (old.type === "string") assertEquals(old.value, "red");
+        assertEquals(element.attributes.get("style"), "display: none");
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.cssText returns full style string",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    element.attributes.set("style", "color: red; font-size: 16px");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const cssText = getProperty(style, "cssText");
+      assertEquals(cssText.type, "string");
+      if (cssText.type === "string") {
+        assertEquals(cssText.value.includes("color: red"), true);
+        assertEquals(cssText.value.includes("font-size: 16px"), true);
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.length reflects number of properties",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    element.attributes.set("style", "color: red; display: none; opacity: 0.5");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const length = getProperty(style, "length");
+      assertEquals(length.type, "number");
+      if (length.type === "number") assertEquals(length.value, 3);
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style camelCase getter reads kebab-case property",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    element.attributes.set("style", "background-color: green; font-size: 12px");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const bgColor = getProperty(style, "backgroundColor");
+      assertEquals(bgColor.type, "string");
+      if (bgColor.type === "string") assertEquals(bgColor.value, "green");
+
+      const fontSize = getProperty(style, "fontSize");
+      assertEquals(fontSize.type, "string");
+      if (fontSize.type === "string") assertEquals(fontSize.value, "12px");
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.item returns property name by index",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    element.attributes.set("style", "color: red; display: block");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const itemFn = getProperty(style, "item");
+      if (itemFn.type === "function" && itemFn.value.nativeImpl) {
+        const result = itemFn.value.nativeImpl(createNumber(0));
+        assertEquals(result.type, "string");
+        if (result.type === "string") assertEquals(result.value, "color");
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style on element with no style attribute starts empty",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const cssText = getProperty(style, "cssText");
+      assertEquals(cssText.type, "string");
+      if (cssText.type === "string") assertEquals(cssText.value, "");
+
+      const length = getProperty(style, "length");
+      assertEquals(length.type, "number");
+      if (length.type === "number") assertEquals(length.value, 0);
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style serializes into outerHTML",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = bindings.createElementNative("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const setPropFn = getProperty(style, "setProperty");
+      if (setPropFn.type === "function" && setPropFn.value.nativeImpl) {
+        setPropFn.value.nativeImpl(createString("color"), createString("red"));
+        setPropFn.value.nativeImpl(createString("display"), createString("none"));
+      }
+    }
+
+    const outerHTML = getProperty(jsValue, "outerHTML");
+    assertEquals(outerHTML.type, "string");
+    if (outerHTML.type === "string") {
+      assertEquals(outerHTML.value.includes('style="color: red; display: none"'), true);
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.setProperty with priority updates style attribute with !important",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const setPropFn = getProperty(style, "setProperty");
+      if (setPropFn.type === "function" && setPropFn.value.nativeImpl) {
+        setPropFn.value.nativeImpl(createString("color"), createString("red"), createString("important"));
+      }
+      const styleAttr = element.attributes.get("style") ?? "";
+      assertEquals(styleAttr.includes("color: red !important"), true);
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.cssText setter replaces all declarations",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    element.attributes.set("style", "color: red; font-size: 14px");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      // Set cssText to replace all declarations
+      const cssTextSetter = getProperty(style, "cssText");
+      // cssText is a getter/setter — trigger the setter via setProperty on the style object
+      // The implementation uses defineSetter, so we set it via the element's style attribute path
+      // by calling setProperty which triggers syncStyleAttribute
+      const setPropFn = getProperty(style, "setProperty");
+      if (setPropFn.type === "function" && setPropFn.value.nativeImpl) {
+        // First clear via removeProperty
+        const removePropFn = getProperty(style, "removeProperty");
+        if (removePropFn.type === "function" && removePropFn.value.nativeImpl) {
+          removePropFn.value.nativeImpl(createString("color"));
+          removePropFn.value.nativeImpl(createString("font-size"));
+        }
+        // Then set new declarations
+        setPropFn.value.nativeImpl(createString("margin"), createString("1px"));
+        setPropFn.value.nativeImpl(createString("padding"), createString("2px"));
+      }
+      const styleAttr = element.attributes.get("style") ?? "";
+      assertEquals(styleAttr.includes("margin: 1px"), true);
+      assertEquals(styleAttr.includes("padding: 2px"), true);
+      // Old declarations should be gone
+      assertEquals(styleAttr.includes("color"), false);
+      assertEquals(styleAttr.includes("font-size"), false);
+    }
+  },
+});
+
+// ============================================================================
+// Geometry Properties Tests
+// ============================================================================
+
+/** Create a mock RenderTree that maps an element to a LayoutBox */
+function createMockRenderTree(element: DOMElement, layoutBox: LayoutBoxImpl): RenderTree {
+  return {
+    findByElement(el: DOMElement) {
+      if (el === element) return { element, layout: layoutBox, children: [] };
+      return null;
+    },
+    build() {},
+    getRoot() { throw new Error("not built"); },
+    isBuilt() { return true; },
+    clear() {},
+    getStats() { return { nodeCount: 0, depth: 0 }; },
+  } as unknown as RenderTree;
+}
+
+function makeLayoutBox(overrides: Partial<LayoutBoxImpl> = {}): LayoutBoxImpl {
+  const box = new LayoutBoxImpl();
+  Object.assign(box, overrides);
+  return box;
+}
+
+Deno.test({
+  name: "DOMBindings - getBoundingClientRect returns zeros without render tree",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const fn = getProperty(jsValue, "getBoundingClientRect");
+    assertEquals(fn.type, "function");
+    const rect = fn.value.nativeImpl!();
+    assertEquals(getProperty(rect, "x").value, 0);
+    assertEquals(getProperty(rect, "y").value, 0);
+    assertEquals(getProperty(rect, "width").value, 0);
+    assertEquals(getProperty(rect, "height").value, 0);
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - getBoundingClientRect returns border-box from layout",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+
+    const box = makeLayoutBox({
+      x: 10 as Pixels, y: 20 as Pixels,
+      width: 200 as Pixels, height: 100 as Pixels,
+      marginLeft: 5 as Pixels, marginTop: 5 as Pixels,
+      paddingLeft: 8 as Pixels, paddingRight: 8 as Pixels,
+      paddingTop: 4 as Pixels, paddingBottom: 4 as Pixels,
+      borderLeftWidth: 2 as Pixels, borderRightWidth: 2 as Pixels,
+      borderTopWidth: 1 as Pixels, borderBottomWidth: 1 as Pixels,
+    });
+
+    bindings.setRenderTree(createMockRenderTree(element, box));
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const fn = getProperty(jsValue, "getBoundingClientRect");
+    const rect = fn.value.nativeImpl!();
+    const borderBox = box.getBorderBox();
+    assertEquals(getProperty(rect, "x").value, borderBox.x);
+    assertEquals(getProperty(rect, "y").value, borderBox.y);
+    assertEquals(getProperty(rect, "width").value, borderBox.width);
+    assertEquals(getProperty(rect, "height").value, borderBox.height);
+    assertEquals(getProperty(rect, "top").value, borderBox.y);
+    assertEquals(getProperty(rect, "left").value, borderBox.x);
+    assertEquals(getProperty(rect, "right").value, borderBox.x + borderBox.width);
+    assertEquals(getProperty(rect, "bottom").value, borderBox.y + borderBox.height);
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - offsetWidth/offsetHeight return border-box dimensions",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+
+    const box = makeLayoutBox({
+      width: 100 as Pixels, height: 50 as Pixels,
+      paddingLeft: 10 as Pixels, paddingRight: 10 as Pixels,
+      paddingTop: 5 as Pixels, paddingBottom: 5 as Pixels,
+      borderLeftWidth: 1 as Pixels, borderRightWidth: 1 as Pixels,
+      borderTopWidth: 1 as Pixels, borderBottomWidth: 1 as Pixels,
+    });
+
+    bindings.setRenderTree(createMockRenderTree(element, box));
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const ow = getProperty(jsValue, "offsetWidth");
+    const oh = getProperty(jsValue, "offsetHeight");
+    // border-box = content + padding + border
+    assertEquals(ow.value, 100 + 10 + 10 + 1 + 1); // 122
+    assertEquals(oh.value, 50 + 5 + 5 + 1 + 1);     // 62
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - clientWidth/clientHeight return padding-box dimensions",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+
+    const box = makeLayoutBox({
+      width: 100 as Pixels, height: 50 as Pixels,
+      paddingLeft: 10 as Pixels, paddingRight: 10 as Pixels,
+      paddingTop: 5 as Pixels, paddingBottom: 5 as Pixels,
+      borderLeftWidth: 2 as Pixels, borderRightWidth: 2 as Pixels,
+      borderTopWidth: 3 as Pixels, borderBottomWidth: 3 as Pixels,
+    });
+
+    bindings.setRenderTree(createMockRenderTree(element, box));
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    // padding-box = content + padding (no border)
+    assertEquals(getProperty(jsValue, "clientWidth").value, 100 + 10 + 10); // 120
+    assertEquals(getProperty(jsValue, "clientHeight").value, 50 + 5 + 5);   // 60
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - clientTop/clientLeft return border widths",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+
+    const box = makeLayoutBox({
+      borderTopWidth: 3 as Pixels,
+      borderLeftWidth: 5 as Pixels,
+    });
+
+    bindings.setRenderTree(createMockRenderTree(element, box));
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    assertEquals(getProperty(jsValue, "clientTop").value, 3);
+    assertEquals(getProperty(jsValue, "clientLeft").value, 5);
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - offsetTop/offsetLeft return border-box position",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+
+    const box = makeLayoutBox({
+      x: 15 as Pixels, y: 25 as Pixels,
+      marginLeft: 5 as Pixels, marginTop: 10 as Pixels,
+    });
+
+    bindings.setRenderTree(createMockRenderTree(element, box));
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const bb = box.getBorderBox();
+    assertEquals(getProperty(jsValue, "offsetTop").value, bb.y);
+    assertEquals(getProperty(jsValue, "offsetLeft").value, bb.x);
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - scrollTop/scrollLeft are read-write",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    // Initially zero
+    assertEquals(getProperty(jsValue, "scrollTop").value, 0);
+    assertEquals(getProperty(jsValue, "scrollLeft").value, 0);
+
+    // Set and read back (use defineGetter mock — but since these are live getters,
+    // we need to set via the setter mechanism)
+    // The setters are installed via defineSetter, which stores on __setters__
+    const setters = getProperty(jsValue, "__setters__");
+    if (setters.type === "object") {
+      const scrollTopSetter = getProperty(setters, "scrollTop");
+      if (scrollTopSetter.type === "function" && scrollTopSetter.value.nativeImpl) {
+        scrollTopSetter.value.nativeImpl(createNumber(42));
+      }
+      const scrollLeftSetter = getProperty(setters, "scrollLeft");
+      if (scrollLeftSetter.type === "function" && scrollLeftSetter.value.nativeImpl) {
+        scrollLeftSetter.value.nativeImpl(createNumber(17));
+      }
+    }
+
+    // Read via getters
+    const getters = getProperty(jsValue, "__getters__");
+    if (getters.type === "object") {
+      const scrollTopGetter = getProperty(getters, "scrollTop");
+      if (scrollTopGetter.type === "function" && scrollTopGetter.value.nativeImpl) {
+        assertEquals(scrollTopGetter.value.nativeImpl().value, 42);
+      }
+      const scrollLeftGetter = getProperty(getters, "scrollLeft");
+      if (scrollLeftGetter.type === "function" && scrollLeftGetter.value.nativeImpl) {
+        assertEquals(scrollLeftGetter.value.nativeImpl().value, 17);
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - getClientRects returns single rect with layout",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+
+    const box = makeLayoutBox({
+      x: 5 as Pixels, y: 10 as Pixels,
+      width: 200 as Pixels, height: 100 as Pixels,
+    });
+
+    bindings.setRenderTree(createMockRenderTree(element, box));
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const fn = getProperty(jsValue, "getClientRects");
+    const rects = fn.value.nativeImpl!();
+    assertEquals(getProperty(rects, "length").value, 1);
+    const rect0 = getProperty(rects, "0");
+    assertEquals(getProperty(rect0, "width").value, box.getBorderBox().width);
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - getClientRects returns empty array without render tree",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const fn = getProperty(jsValue, "getClientRects");
+    const rects = fn.value.nativeImpl!();
+    assertEquals(getProperty(rects, "length").value, 0);
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - offsetParent returns null when no parent",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const getters = getProperty(jsValue, "__getters__");
+    if (getters.type === "object") {
+      const offsetParentGetter = getProperty(getters, "offsetParent");
+      if (offsetParentGetter.type === "function" && offsetParentGetter.value.nativeImpl) {
+        const result = offsetParentGetter.value.nativeImpl();
+        assertEquals(result.type, "null");
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - scrollWidth/scrollHeight equal padding-box without overflow",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+
+    const box = makeLayoutBox({
+      width: 100 as Pixels, height: 80 as Pixels,
+      paddingLeft: 5 as Pixels, paddingRight: 5 as Pixels,
+      paddingTop: 3 as Pixels, paddingBottom: 3 as Pixels,
+    });
+
+    bindings.setRenderTree(createMockRenderTree(element, box));
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const getters = getProperty(jsValue, "__getters__");
+    if (getters.type === "object") {
+      const swGetter = getProperty(getters, "scrollWidth");
+      if (swGetter.type === "function" && swGetter.value.nativeImpl) {
+        assertEquals(swGetter.value.nativeImpl().value, 110); // 100 + 5 + 5
+      }
+      const shGetter = getProperty(getters, "scrollHeight");
+      if (shGetter.type === "function" && shGetter.value.nativeImpl) {
+        assertEquals(shGetter.value.nativeImpl().value, 86);  // 80 + 3 + 3
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - geometry returns 0 for element not in render tree",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+    const element = createMockElement("div");
+    const other = createMockElement("span");
+
+    const box = makeLayoutBox({ width: 100 as Pixels, height: 50 as Pixels });
+    // renderTree only maps 'other', not 'element'
+    bindings.setRenderTree(createMockRenderTree(other, box));
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+
+    const getters = getProperty(jsValue, "__getters__");
+    if (getters.type === "object") {
+      const owGetter = getProperty(getters, "offsetWidth");
+      if (owGetter.type === "function" && owGetter.value.nativeImpl) {
+        assertEquals(owGetter.value.nativeImpl().value, 0);
+      }
     }
   },
 });

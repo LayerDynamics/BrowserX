@@ -13,7 +13,7 @@ import { BaseDomain } from "../../domains/base-domain.ts";
 import type { DomainName, ProtocolRequest, ProtocolResponse } from "../../protocol/types.ts";
 import type { Browser } from "../../../browser/src/main.ts";
 import { createMockBrowser, createMockContext } from "../helpers/mocks.ts";
-import { randomPort, wait } from "../helpers/test-utils.ts";
+import { wait } from "../helpers/test-utils.ts";
 
 // Test options to disable leak checking for E2E tests
 const testOpts = { sanitizeOps: false, sanitizeResources: false };
@@ -60,9 +60,7 @@ class E2ETestDomain extends BaseDomain {
 function createTestServer(): {
     server: DevToolsServer;
     domain: E2ETestDomain;
-    port: number;
 } {
-    const port = randomPort();
     const eventBus = new EventBus();
     const browser = createMockBrowser();
     const registry = new DomainRegistry();
@@ -75,10 +73,10 @@ function createTestServer(): {
     const server = new DevToolsServer(
         browser as unknown as Browser,
         registry,
-        { port, host: "127.0.0.1" },
+        { port: 0, host: "127.0.0.1" },
     );
 
-    return { server, domain, port };
+    return { server, domain };
 }
 
 // ============================================================================
@@ -86,11 +84,11 @@ function createTestServer(): {
 // ============================================================================
 
 Deno.test({ name: "WebSocket - connection upgrade on /devtools/page/*", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         // Create WebSocket connection
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
@@ -112,11 +110,11 @@ Deno.test({ name: "WebSocket - connection upgrade on /devtools/page/*", ...testO
 }});
 
 Deno.test({ name: "WebSocket - request-response round trip", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
 
@@ -155,11 +153,11 @@ Deno.test({ name: "WebSocket - request-response round trip", ...testOpts, fn: as
 }});
 
 Deno.test({ name: "WebSocket - domain method returns correct result", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
 
@@ -211,11 +209,11 @@ Deno.test({ name: "WebSocket - domain method returns correct result", ...testOpt
 }});
 
 Deno.test({ name: "WebSocket - echo method returns params", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
 
@@ -257,11 +255,11 @@ Deno.test({ name: "WebSocket - echo method returns params", ...testOpts, fn: asy
 }});
 
 Deno.test({ name: "WebSocket - error response for method before enable", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
 
@@ -295,11 +293,11 @@ Deno.test({ name: "WebSocket - error response for method before enable", ...test
 }});
 
 Deno.test({ name: "WebSocket - error response for invalid JSON", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
 
@@ -332,11 +330,11 @@ Deno.test({ name: "WebSocket - error response for invalid JSON", ...testOpts, fn
 }});
 
 Deno.test({ name: "WebSocket - multiple requests sequence", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
 
@@ -395,11 +393,11 @@ Deno.test({ name: "WebSocket - multiple requests sequence", ...testOpts, fn: asy
 }});
 
 Deno.test({ name: "WebSocket - connection close cleanup", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
 
@@ -427,11 +425,11 @@ Deno.test({ name: "WebSocket - connection close cleanup", ...testOpts, fn: async
 }});
 
 Deno.test({ name: "WebSocket - multiple concurrent connections", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         // Open multiple connections
         const ws1 = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/target1`);
@@ -466,11 +464,11 @@ Deno.test({ name: "WebSocket - multiple concurrent connections", ...testOpts, fn
 }});
 
 Deno.test({ name: "WebSocket - binary message handling", ...testOpts, fn: async () => {
-    const { server, port } = createTestServer();
+    const { server } = createTestServer();
 
     try {
         server.start();
-        await wait(100);
+        const port = await server.waitUntilListening();
 
         const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/default`);
         ws.binaryType = "arraybuffer";

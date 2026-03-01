@@ -11,7 +11,9 @@ A high-performance, multi-layered HTTP/HTTPS proxy engine built with TypeScript 
 - **Middleware System**: Extensible request/response processing pipeline
 - **Connection Pooling**: Efficient connection reuse with configurable limits
 - **Graceful Shutdown**: Safe termination with connection draining
-- **Protocol Support**: HTTP/1.1, HTTPS (HTTP/2 planned)
+- **Protocol Support**: HTTP/1.1, HTTP/2, HTTP/3 (QUIC via transportx), HTTPS, WebSocket, SSE
+- **Proxy Types**: Reverse proxy, load balancer, auth proxy, WebSocket proxy, SSE proxy, TLS proxy, event-driven proxy
+- **Test Coverage**: 1878+ tests across 65 test files
 
 ## Architecture
 
@@ -30,7 +32,7 @@ The proxy engine follows a layered architecture:
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Proxy Type Layer                              │
-│  (Reverse proxy, load balancer proxy)                          │
+│  (Reverse, load balancer, auth, WebSocket, SSE, TLS, event)    │
 └─────────────────────────────────────────────────────────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -40,7 +42,7 @@ The proxy engine follows a layered architecture:
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Transport Protocol Layer                      │
-│  (HTTP/1.1, HTTPS, WebSocket, TLS)                             │
+│  (HTTP/1.1, HTTP/2, HTTP/3, HTTPS, WebSocket, SSE, TLS)        │
 └─────────────────────────────────────────────────────────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -341,10 +343,13 @@ deno check mod.ts
 - [x] Middleware system
 - [x] Connection pooling
 - [x] Graceful shutdown
-- [ ] HTTP/2 support
-- [ ] HTTP/3 support
-- [ ] WebSocket proxying
-- [ ] Server-Sent Events proxying
+- [x] HTTP/2 support (frames, HPACK, streams, GOAWAY)
+- [x] HTTP/3 support (QUIC via transportx crate)
+- [x] WebSocket proxying (full duplex, frame handling)
+- [x] Server-Sent Events proxying (connection management)
+- [x] TLS proxy (passthrough and termination modes, ALPN negotiation)
+- [x] Event-driven proxy (event-based request routing)
+- [x] Auth proxy (Bearer, Basic, OAuth)
 - [ ] Metrics server (Prometheus format)
 - [ ] Admin API
 - [ ] Configuration hot-reload

@@ -136,27 +136,39 @@ export class ReverseProxy {
       return this.createErrorResponse(503, "Failed to select upstream server");
     }
 
-    // Forward request directly — UpstreamClient already handles retries
-    // via its built-in retry logic, so no outer retry loop needed.
-    try {
-      const response = await this.forwardRequest(request, server, context);
+    // Retry loop with configurable delay
+    const maxRetries = this.config.maxRetries ?? 0;
+    const retryDelay = this.config.retryDelay ?? 0;
+    let lastError: Error | undefined;
 
-      // Record success
-      const responseTime = Date.now() - startTime;
-      this.loadBalancer.recordSuccess(server.id, responseTime);
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const attemptStart = Date.now();
+        const response = await this.forwardRequest(request, server, context);
 
-      return response;
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
+        // Record success using per-attempt timing (not cumulative retry time)
+        const responseTime = Date.now() - attemptStart;
+        this.loadBalancer.recordSuccess(server.id, responseTime);
 
-      // Record failure
-      this.loadBalancer.recordFailure(server.id);
+        return response;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
 
-      return this.createErrorResponse(
-        502,
-        `Bad Gateway: ${err.message}`,
-      );
+        // Record failure
+        this.loadBalancer.recordFailure(server.id);
+
+        // Wait before retrying (skip delay on last attempt)
+        if (attempt < maxRetries && retryDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        }
+      }
     }
+
+    const totalDuration = Date.now() - startTime;
+    return this.createErrorResponse(
+      502,
+      `Bad Gateway after ${totalDuration}ms: ${lastError?.message ?? "Unknown error"}`,
+    );
   }
 
   /**
@@ -229,8 +241,11 @@ export class ReverseProxy {
 
     // Add X-Forwarded-* headers
     if (this.config.addForwardedHeaders !== false) {
-      // Don't trust incoming X-Forwarded-For from untrusted clients
-      headers["x-forwarded-for"] = context.clientIP;
+      // Append client IP to existing X-Forwarded-For chain (or start new one)
+      const existing = request.headers["x-forwarded-for"];
+      headers["x-forwarded-for"] = existing
+        ? `${existing}, ${context.clientIP}`
+        : context.clientIP;
 
       // X-Forwarded-Proto
       headers["x-forwarded-proto"] = context.protocol;

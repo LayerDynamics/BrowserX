@@ -61,9 +61,25 @@ await runtime.shutdown();
 
 ### Metrics & Health
 
-- **Unified Metrics**: Collect metrics from all components
-- **Health Checks**: Monitor component health status
+- **Unified Metrics**: Collect metrics from all components via `UnifiedMetricsCollector`
+- **Health Checks**: Monitor component health status via `HealthChecker` with `registerHandler()`
 - **Export Formats**: Prometheus, JSON
+
+### Plugin System (98 tests)
+
+- **PluginManager**: Topological sort activation via GraphX DAG, reverse deactivation order
+- **PluginContext**: Scoped API for plugins to register commands, providers, and disposables
+- **PluginRegistry**: Discovery, validation, and storage of plugin metadata
+- **PluginLoader**: Dynamic plugin loading with dependency resolution
+- **Disposable Pattern**: All contributions return `Disposable` for automatic cleanup
+- **Configuration**: Plugins are opt-in (`enabled: false` by default)
+
+### Lifecycle Management
+
+- **LifecycleManager**: State machine (STOPPED → STARTING → RUNNING → STOPPING → STOPPED)
+- **EventCoordinator**: Internal event routing with `emitExternalEvent()` for external components
+- **Component IDs**: Includes `"session-manager"` for MCP integration
+- **Runtime Events**: `session_created`, `session_closed`, `session_expired`
 
 ## Configuration
 
@@ -193,12 +209,15 @@ Runtime
 │   ├── BrowserXRuntime.ts   # Main runtime class
 │   ├── types.ts             # Type definitions
 │   ├── config/              # Configuration presets
-│   ├── lifecycle/           # Init/shutdown sequences
-│   ├── events/              # Event coordination
-│   ├── resources/           # Browser pool
+│   ├── lifecycle/           # Init/shutdown sequences (LifecycleManager)
+│   ├── events/              # Event coordination (EventCoordinator)
+│   ├── resources/           # Browser pool (acquire/release pattern)
 │   ├── signals/             # Signal handling
-│   └── metrics/             # Metrics & health
+│   ├── metrics/             # Metrics & health (UnifiedMetricsCollector, HealthChecker)
+│   └── plugins/             # Plugin system (PluginManager, PluginContext, PluginRegistry, PluginLoader)
 └── tests/
+    ├── unit/plugins/        # 98 plugin unit tests
+    └── integration/         # Plugin integration tests
 ```
 
 ## Integration

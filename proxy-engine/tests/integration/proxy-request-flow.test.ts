@@ -112,23 +112,28 @@ Deno.test("proxy-request-flow: returns 502 when upstream is unreachable", async 
   const route = makeRoute("r1", "/api/*", servers);
   const proxy = new ReverseProxy(route, { timeout: 1000, maxRetries: 0 });
 
-  const response = await proxy.handleRequest(
-    makeRequest("GET", "/api/test"),
-    makeContext(),
-  );
+  try {
+    const response = await proxy.handleRequest(
+      makeRequest("GET", "/api/test"),
+      makeContext(),
+    );
 
-  assertEquals(response.statusCode, 502);
-  const body = JSON.parse(new TextDecoder().decode(response.body));
-  assertStringIncludes(body.error, "Bad Gateway");
+    assertEquals(response.statusCode, 502);
+    const body = JSON.parse(new TextDecoder().decode(response.body));
+    assertStringIncludes(body.error, "Bad Gateway");
+  } finally {
+    await proxy.shutdown();
+  }
 });
 
 Deno.test("proxy-request-flow: forwards request to real upstream and gets response", async () => {
-  // Start a real Deno HTTP server as upstream
+  // Start a real Deno HTTP server as upstream on OS-assigned port
   const ac = new AbortController();
+  let upstreamPort = 0;
   const server = Deno.serve({
-    port: 18901,
+    port: 0,
     signal: ac.signal,
-    onListen: () => {},
+    onListen: ({ port }) => { upstreamPort = port; },
   }, (req) => {
     const url = new URL(req.url);
     return new Response(JSON.stringify({
@@ -142,7 +147,7 @@ Deno.test("proxy-request-flow: forwards request to real upstream and gets respon
   });
 
   try {
-    const servers = [makeServer("s1", "127.0.0.1", 18901)];
+    const servers = [makeServer("s1", "127.0.0.1", upstreamPort)];
     const route = makeRoute("r1", "/api/.*", servers);
     const proxy = new ReverseProxy(route, { addForwardedHeaders: true });
 
@@ -156,6 +161,8 @@ Deno.test("proxy-request-flow: forwards request to real upstream and gets respon
     assertEquals(body.path, "/api/users");
     assertEquals(body.method, "GET");
     assertEquals(body.forwarded, "10.0.0.1");
+
+    await proxy.shutdown();
   } finally {
     ac.abort();
     await server.finished;
@@ -164,10 +171,11 @@ Deno.test("proxy-request-flow: forwards request to real upstream and gets respon
 
 Deno.test("proxy-request-flow: preserveHost keeps original Host header", async () => {
   const ac = new AbortController();
+  let upstreamPort = 0;
   const server = Deno.serve({
-    port: 18902,
+    port: 0,
     signal: ac.signal,
-    onListen: () => {},
+    onListen: ({ port }) => { upstreamPort = port; },
   }, (req) => {
     return new Response(JSON.stringify({
       host: req.headers.get("host"),
@@ -175,7 +183,7 @@ Deno.test("proxy-request-flow: preserveHost keeps original Host header", async (
   });
 
   try {
-    const servers = [makeServer("s1", "127.0.0.1", 18902)];
+    const servers = [makeServer("s1", "127.0.0.1", upstreamPort)];
     const route = makeRoute("r1", "/.*", servers);
     const proxy = new ReverseProxy(route, { preserveHost: true });
 
@@ -187,6 +195,8 @@ Deno.test("proxy-request-flow: preserveHost keeps original Host header", async (
     assertEquals(response.statusCode, 200);
     const body = JSON.parse(new TextDecoder().decode(response.body));
     assertEquals(body.host, "www.example.com");
+
+    await proxy.shutdown();
   } finally {
     ac.abort();
     await server.finished;
@@ -195,10 +205,11 @@ Deno.test("proxy-request-flow: preserveHost keeps original Host header", async (
 
 Deno.test("proxy-request-flow: response status and headers propagate from upstream", async () => {
   const ac = new AbortController();
+  let upstreamPort = 0;
   const server = Deno.serve({
-    port: 18903,
+    port: 0,
     signal: ac.signal,
-    onListen: () => {},
+    onListen: ({ port }) => { upstreamPort = port; },
   }, () => {
     return new Response("Not Found Here", {
       status: 404,
@@ -207,7 +218,7 @@ Deno.test("proxy-request-flow: response status and headers propagate from upstre
   });
 
   try {
-    const servers = [makeServer("s1", "127.0.0.1", 18903)];
+    const servers = [makeServer("s1", "127.0.0.1", upstreamPort)];
     const route = makeRoute("r1", "/.*", servers);
     const proxy = new ReverseProxy(route);
 
@@ -218,6 +229,8 @@ Deno.test("proxy-request-flow: response status and headers propagate from upstre
 
     assertEquals(response.statusCode, 404);
     assertEquals(response.headers["x-custom"], "value123");
+
+    await proxy.shutdown();
   } finally {
     ac.abort();
     await server.finished;
@@ -227,10 +240,11 @@ Deno.test("proxy-request-flow: response status and headers propagate from upstre
 Deno.test("proxy-request-flow: retry on upstream failure then succeed", async () => {
   let requestCount = 0;
   const ac = new AbortController();
+  let upstreamPort = 0;
   const server = Deno.serve({
-    port: 18904,
+    port: 0,
     signal: ac.signal,
-    onListen: () => {},
+    onListen: ({ port }) => { upstreamPort = port; },
   }, () => {
     requestCount++;
     if (requestCount <= 1) {
@@ -241,7 +255,7 @@ Deno.test("proxy-request-flow: retry on upstream failure then succeed", async ()
   });
 
   try {
-    const servers = [makeServer("s1", "127.0.0.1", 18904)];
+    const servers = [makeServer("s1", "127.0.0.1", upstreamPort)];
     const route = makeRoute("r1", "/.*", servers);
     // Note: retries happen in UpstreamClient; ReverseProxy also has retry loop
     const proxy = new ReverseProxy(route, { maxRetries: 0 });
@@ -255,6 +269,8 @@ Deno.test("proxy-request-flow: retry on upstream failure then succeed", async ()
     // The upstream returned 500, proxy forwards it
     assertEquals(response.statusCode, 500);
     assert(requestCount >= 1);
+
+    await proxy.shutdown();
   } finally {
     ac.abort();
     await server.finished;
@@ -348,10 +364,11 @@ Deno.test("proxy-request-flow: GatewayServer initializes proxies for all routes"
 
 Deno.test("proxy-request-flow: POST request with body forwards correctly", async () => {
   const ac = new AbortController();
+  let upstreamPort = 0;
   const server = Deno.serve({
-    port: 18905,
+    port: 0,
     signal: ac.signal,
-    onListen: () => {},
+    onListen: ({ port }) => { upstreamPort = port; },
   }, async (req) => {
     const body = await req.text();
     return new Response(JSON.stringify({
@@ -362,7 +379,7 @@ Deno.test("proxy-request-flow: POST request with body forwards correctly", async
   });
 
   try {
-    const servers = [makeServer("s1", "127.0.0.1", 18905)];
+    const servers = [makeServer("s1", "127.0.0.1", upstreamPort)];
     const route = makeRoute("r1", "/.*", servers);
     const proxy = new ReverseProxy(route);
 
@@ -385,6 +402,42 @@ Deno.test("proxy-request-flow: POST request with body forwards correctly", async
     const respBody = JSON.parse(new TextDecoder().decode(response.body));
     assertEquals(respBody.method, "POST");
     assertEquals(respBody.contentType, "application/json");
+
+    await proxy.shutdown();
+  } finally {
+    ac.abort();
+    await server.finished;
+  }
+});
+
+Deno.test("proxy-request-flow: appends x-forwarded-for when header already present", async () => {
+  const ac = new AbortController();
+  let upstreamPort = 0;
+  const server = Deno.serve({
+    port: 0,
+    signal: ac.signal,
+    onListen: ({ port }) => { upstreamPort = port; },
+  }, (req) => {
+    return new Response(JSON.stringify({
+      xff: req.headers.get("x-forwarded-for"),
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+
+  try {
+    const servers = [makeServer("s1", "127.0.0.1", upstreamPort)];
+    const route = makeRoute("r1", "/.*", servers);
+    const proxy = new ReverseProxy(route, { addForwardedHeaders: true });
+
+    const response = await proxy.handleRequest(
+      makeRequest("GET", "/test", { "x-forwarded-for": "1.2.3.4" }),
+      makeContext("203.0.113.42"),
+    );
+
+    assertEquals(response.statusCode, 200);
+    const body = JSON.parse(new TextDecoder().decode(response.body));
+    assertEquals(body.xff, "1.2.3.4, 203.0.113.42");
+
+    await proxy.shutdown();
   } finally {
     ac.abort();
     await server.finished;

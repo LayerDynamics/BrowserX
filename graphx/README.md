@@ -321,6 +321,16 @@ const svg = renderer.render();
 - `DEFAULT_LIGHT_THEME` - Built-in light theme
 - `DEFAULT_DARK_THEME` - Built-in dark theme
 
+## BrowserX Integration
+
+GraphX is integrated across the BrowserX codebase as a cross-cutting dependency:
+
+- **Runtime PluginManager**: Uses `DAG` + `topologicalSort()` + `CycleError` for plugin activation ordering
+- **Query Engine DependencyGraphBuilder**: Backed by `DiGraph` via `WeakMap` store for topo sort and cycle detection
+- **Query Engine DependencyResolver**: `resolve()` uses `topologicalSort()`
+- **Visualization modules**: DOM tree, render tree, execution plan, route topology → SVG via GraphX layouts
+- **MCP tools**: `browserx_visualize_dom`, `browserx_dependency_graph`, `browserx_plugin_graph`
+
 ## Development
 
 ```bash

@@ -5,7 +5,7 @@
  * Provides the root of the render tree for layout and painting.
  */
 
-import type { DOMNode } from "../../../types/dom.ts";
+import type { DOMElement, DOMNode } from "../../../types/dom.ts";
 import type { StyleResolver } from "../css-parser/StyleResolver.ts";
 import { RenderTreeBuilder } from "./RenderTreeBuilder.ts";
 import { RenderObject } from "./RenderObject.ts";
@@ -41,6 +41,23 @@ export class RenderTree {
    */
   isBuilt(): boolean {
     return this.root !== null;
+  }
+
+  /**
+   * Find RenderObject for a given DOM element by walking the tree
+   */
+  findByElement(element: DOMElement): RenderObject | null {
+    if (!this.root) return null;
+    return this.findByElementRecursive(this.root, element);
+  }
+
+  private findByElementRecursive(node: RenderObject, target: DOMElement): RenderObject | null {
+    if (node.element === target) return node;
+    for (const child of node.children) {
+      const found = this.findByElementRecursive(child, target);
+      if (found) return found;
+    }
+    return null;
   }
 
   /**

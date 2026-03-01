@@ -46,6 +46,20 @@ cargo build --release -p bytecodex
 deno run --allow-all gen_bindings.ts
 ```
 
+## BrowserX Integration
+
+bytecodex is integrated into the browser engine's V8 compiler:
+
+```typescript
+import { V8Compiler } from "@browserx/browser";
+
+// Compile with bytecodex optimization pass
+const bytecode = V8Compiler.compile(source, { optimize: true });
+```
+
+- 15 Rust tests in the bytecodex crate
+- 34 bytecode ops integration tests + 721 total JS engine tests in browser engine
+
 ## Test
 
 ```bash

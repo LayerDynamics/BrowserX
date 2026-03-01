@@ -375,7 +375,7 @@ export class HealthMonitor {
   private createInitialState(serverId: string): ServerHealthState {
     return {
       serverId,
-      healthy: false, // Unhealthy until first check passes
+      healthy: true, // Assume healthy until a check fails (optimistic start)
       consecutiveSuccesses: 0,
       consecutiveFailures: 0,
       lastCheckAt: 0,

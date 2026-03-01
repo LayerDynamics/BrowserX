@@ -43,6 +43,10 @@ export class DevToolsServer {
     private connections: Map<string, DevToolsConnection> = new Map();
     private sessions: Map<string, DevToolsSession> = new Map();
     private server: Deno.HttpServer | null = null;
+    /** The actual port the server is listening on (resolved after start) */
+    public listeningPort: number = 0;
+    private listeningPromiseResolve?: () => void;
+    private listeningPromise: Promise<void>;
 
 
     constructor(
@@ -58,6 +62,17 @@ export class DevToolsServer {
         this.browser = browser;
         this.registry = registry;
         this.registryFactory = registryFactory ?? null;
+        this.listeningPromise = new Promise<void>((resolve) => {
+            this.listeningPromiseResolve = resolve;
+        });
+    }
+
+    /**
+     * Wait until the server is listening and the actual port is known.
+     */
+    async waitUntilListening(): Promise<number> {
+        await this.listeningPromise;
+        return this.listeningPort;
     }
 
     /**
@@ -75,12 +90,14 @@ export class DevToolsServer {
                 port: this.config.port,
                 hostname: this.config.host,
                 onListen: ({ hostname, port }) => {
+                    this.listeningPort = port;
                     console.log(
                         `DevTools server listening on http://${hostname}:${port}`,
                     );
                     console.log(
                         `DevTools URL: devtools://devtools/bundled/inspector.html?ws=${hostname}:${port}/devtools/page/default`,
                     );
+                    this.listeningPromiseResolve?.();
                 },
             },
             (request: Request): Response => {

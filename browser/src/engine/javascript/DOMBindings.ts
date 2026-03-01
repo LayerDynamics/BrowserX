@@ -9,6 +9,8 @@
 import type { DOMDocument, DOMElement, DOMNode } from "../../types/dom.ts";
 import { DOMNodeType } from "../../types/dom.ts";
 import type { NodeID } from "../../types/identifiers.ts";
+import type { LayoutBox } from "../../types/rendering.ts";
+import type { RenderTree } from "../rendering/rendering/RenderTree.ts";
 import { V8Context } from "./V8Context.ts";
 import { BytecodeGenerator, type ProgramNode } from "./V8Compiler.ts";
 import {
@@ -92,6 +94,7 @@ export interface JSElement extends JSNode {
   attributes: NamedNodeMap;
   innerHTML: string;
   outerHTML: string;
+  style: CSSStyleDeclarationLike;
 
   // Methods
   getAttribute(name: string): string | null;
@@ -115,6 +118,19 @@ export interface JSElement extends JSNode {
     options?: EventListenerOptions,
   ): void;
   dispatchEvent(event: Event): boolean;
+}
+
+/**
+ * CSS Style Declaration (subset of CSSStyleDeclaration)
+ * Supports reading/writing inline styles via element.style.propertyName
+ */
+export interface CSSStyleDeclarationLike {
+  cssText: string;
+  length: number;
+  getPropertyValue(property: string): string;
+  setProperty(property: string, value: string, priority?: string): void;
+  removeProperty(property: string): string;
+  item(index: number): string;
 }
 
 /**
@@ -278,9 +294,28 @@ export class DOMBindings {
   private jsValueNodeMap: Map<number, DOMNode> = new Map();
   private jsValueCacheByNode: WeakMap<DOMNode, JSValue> = new WeakMap();
   private nextSyntheticNodeId: number = 100000;
+  private renderTree: RenderTree | null = null;
 
   constructor(context: V8Context) {
     this.context = context;
+  }
+
+  /**
+   * Set render tree for geometry property resolution.
+   * Must be called after layout is computed so geometry APIs return real values.
+   */
+  setRenderTree(renderTree: RenderTree): void {
+    this.renderTree = renderTree;
+  }
+
+  /**
+   * Look up computed LayoutBox for an element via the render tree.
+   * Returns null if no render tree or element has no render object.
+   */
+  private getLayoutForElement(element: DOMElement): LayoutBox | null {
+    if (!this.renderTree) return null;
+    const renderObj = this.renderTree.findByElement(element);
+    return renderObj?.layout ?? null;
   }
 
   /**
@@ -825,6 +860,9 @@ export class DOMBindings {
       createString(element.className ?? element.attributes?.get("class") ?? ""),
     );
 
+    // style — CSSStyleDeclaration-like object backed by the element's style attribute
+    this.installStyleProperty(obj, element);
+
     // getAttribute
     setProperty(
       obj,
@@ -1083,6 +1121,355 @@ export class DOMBindings {
         return createBoolean(true);
       }, 1),
     );
+
+    // Install geometry properties (getBoundingClientRect, offset*, client*, scroll*)
+    this.installGeometryProperties(obj, element);
+
+    // Install form-specific bindings based on tag name
+    this.installFormElementBindings(obj, element);
+  }
+
+  /**
+   * Install geometry properties on element:
+   * getBoundingClientRect(), getClientRects(),
+   * offsetWidth, offsetHeight, offsetTop, offsetLeft, offsetParent,
+   * clientWidth, clientHeight, clientTop, clientLeft,
+   * scrollWidth, scrollHeight, scrollTop, scrollLeft
+   */
+  private installGeometryProperties(obj: JSValue, element: DOMElement): void {
+    // Helper: create a DOMRect-like JSValue
+    const makeDOMRect = (x: number, y: number, width: number, height: number): JSValue => {
+      const rect = createObject();
+      setProperty(rect, "x", createNumber(x));
+      setProperty(rect, "y", createNumber(y));
+      setProperty(rect, "width", createNumber(width));
+      setProperty(rect, "height", createNumber(height));
+      setProperty(rect, "top", createNumber(y));
+      setProperty(rect, "right", createNumber(x + width));
+      setProperty(rect, "bottom", createNumber(y + height));
+      setProperty(rect, "left", createNumber(x));
+      return rect;
+    };
+
+    // getBoundingClientRect()
+    setProperty(
+      obj,
+      "getBoundingClientRect",
+      createNativeFunction("getBoundingClientRect", () => {
+        const layout = this.getLayoutForElement(element);
+        if (!layout) return makeDOMRect(0, 0, 0, 0);
+        const borderBox = layout.getBorderBox();
+        return makeDOMRect(borderBox.x, borderBox.y, borderBox.width, borderBox.height);
+      }, 0),
+    );
+
+    // getClientRects() — returns array with single rect (no fragmentation)
+    setProperty(
+      obj,
+      "getClientRects",
+      createNativeFunction("getClientRects", () => {
+        const layout = this.getLayoutForElement(element);
+        const arr = createObject();
+        if (layout) {
+          const borderBox = layout.getBorderBox();
+          setProperty(arr, "0", makeDOMRect(borderBox.x, borderBox.y, borderBox.width, borderBox.height));
+          setProperty(arr, "length", createNumber(1));
+        } else {
+          setProperty(arr, "length", createNumber(0));
+        }
+        return arr;
+      }, 0),
+    );
+
+    // offsetWidth = border-box width (content + padding + border)
+    defineGetter(obj, "offsetWidth", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      const bb = layout.getBorderBox();
+      return createNumber(bb.width);
+    });
+
+    // offsetHeight = border-box height
+    defineGetter(obj, "offsetHeight", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      const bb = layout.getBorderBox();
+      return createNumber(bb.height);
+    });
+
+    // offsetTop = border-box y relative to offsetParent
+    defineGetter(obj, "offsetTop", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      const bb = layout.getBorderBox();
+      return createNumber(bb.y);
+    });
+
+    // offsetLeft = border-box x relative to offsetParent
+    defineGetter(obj, "offsetLeft", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      const bb = layout.getBorderBox();
+      return createNumber(bb.x);
+    });
+
+    // offsetParent — nearest positioned ancestor or body
+    defineGetter(obj, "offsetParent", () => {
+      let current = element.parentNode;
+      while (current) {
+        if ((current as DOMElement).tagName === "body") {
+          return this.wrapNodeAsJSValue(current as DOMNode);
+        }
+        const pos = (current as DOMElement).attributes?.get("style") ?? "";
+        if (/position\s*:\s*(relative|absolute|fixed|sticky)/.test(pos)) {
+          return this.wrapNodeAsJSValue(current as DOMNode);
+        }
+        current = current.parentNode;
+      }
+      return createNull();
+    });
+
+    // clientWidth = padding-box width (content + padding, no border)
+    defineGetter(obj, "clientWidth", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      const pb = layout.getPaddingBox();
+      return createNumber(pb.width);
+    });
+
+    // clientHeight = padding-box height
+    defineGetter(obj, "clientHeight", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      const pb = layout.getPaddingBox();
+      return createNumber(pb.height);
+    });
+
+    // clientTop = border-top-width
+    defineGetter(obj, "clientTop", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      return createNumber(layout.borderTopWidth);
+    });
+
+    // clientLeft = border-left-width
+    defineGetter(obj, "clientLeft", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      return createNumber(layout.borderLeftWidth);
+    });
+
+    // scrollWidth — content width (includes overflow); without overflow tracking, same as clientWidth
+    defineGetter(obj, "scrollWidth", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      const pb = layout.getPaddingBox();
+      return createNumber(pb.width);
+    });
+
+    // scrollHeight — content height (includes overflow)
+    defineGetter(obj, "scrollHeight", () => {
+      const layout = this.getLayoutForElement(element);
+      if (!layout) return createNumber(0);
+      const pb = layout.getPaddingBox();
+      return createNumber(pb.height);
+    });
+
+    // scrollTop / scrollLeft — mutable scroll offsets (stored on element)
+    const scrollState = { top: 0, left: 0 };
+
+    defineGetter(obj, "scrollTop", () => createNumber(scrollState.top));
+    defineSetter(obj, "scrollTop", (v: JSValue) => {
+      scrollState.top = v.type === "number" ? v.value : parseFloat(toString(v)) || 0;
+    });
+
+    defineGetter(obj, "scrollLeft", () => createNumber(scrollState.left));
+    defineSetter(obj, "scrollLeft", (v: JSValue) => {
+      scrollState.left = v.type === "number" ? v.value : parseFloat(toString(v)) || 0;
+    });
+  }
+
+  /**
+   * Convert a CSS property name from camelCase to kebab-case
+   */
+  private camelToKebab(name: string): string {
+    return name.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+  }
+
+  /**
+   * Parse a CSS style string into a Map of property→value
+   */
+  private parseStyleString(styleStr: string): Map<string, string> {
+    const map = new Map<string, string>();
+    if (!styleStr) return map;
+    const declarations = styleStr.split(";").map((s) => s.trim()).filter(Boolean);
+    for (const decl of declarations) {
+      const colonIdx = decl.indexOf(":");
+      if (colonIdx === -1) continue;
+      const prop = decl.substring(0, colonIdx).trim();
+      const val = decl.substring(colonIdx + 1).trim();
+      if (prop && val) map.set(prop, val);
+    }
+    return map;
+  }
+
+  /**
+   * Serialize a style Map back to a CSS style string
+   */
+  private serializeStyleMap(map: Map<string, string>): string {
+    const parts: string[] = [];
+    for (const [prop, val] of map) {
+      parts.push(`${prop}: ${val}`);
+    }
+    return parts.join("; ");
+  }
+
+  /**
+   * Sync the style Map back to the element's "style" attribute
+   */
+  private syncStyleAttribute(element: DOMElement, styleMap: Map<string, string>): void {
+    if (!element.attributes) {
+      element.attributes = new Map<string, string>();
+    }
+    const serialized = this.serializeStyleMap(styleMap);
+    if (serialized) {
+      element.attributes.set("style", serialized);
+    } else {
+      element.attributes.delete("style");
+    }
+  }
+
+  /**
+   * Install the `style` property on an element JSValue.
+   * Creates a CSSStyleDeclaration-like object supporting:
+   * - camelCase property access: element.style.backgroundColor = "red"
+   * - methods: getPropertyValue, setProperty, removeProperty, item
+   * - cssText getter/setter
+   * - Syncs with the element's "style" attribute
+   */
+  private installStyleProperty(obj: JSValue, element: DOMElement): void {
+    const existingStyle = element.attributes?.get("style") ?? "";
+    const styleMap = this.parseStyleString(existingStyle);
+
+    const styleObj = createObject();
+
+    // style is a live getter so cssText/length stay current
+    defineGetter(obj, "style", () => {
+      setProperty(styleObj, "cssText", createString(this.serializeStyleMap(styleMap)));
+      setProperty(styleObj, "length", createNumber(styleMap.size));
+      return styleObj;
+    });
+
+    setProperty(styleObj, "cssText", createString(existingStyle));
+    defineSetter(styleObj, "cssText", (v: JSValue) => {
+      const newCss = isString(v) ? v.value : toString(v);
+      styleMap.clear();
+      const parsed = this.parseStyleString(newCss);
+      for (const [k, val] of parsed) {
+        styleMap.set(k, val);
+      }
+      this.syncStyleAttribute(element, styleMap);
+    });
+
+    setProperty(styleObj, "length", createNumber(styleMap.size));
+
+    // getPropertyValue(property)
+    setProperty(
+      styleObj,
+      "getPropertyValue",
+      createNativeFunction("getPropertyValue", (...args: JSValue[]) => {
+        const prop = isString(args[0]) ? args[0].value : toString(args[0]);
+        const kebab = prop.includes("-") ? prop : this.camelToKebab(prop);
+        return createString(styleMap.get(kebab) ?? "");
+      }, 1),
+    );
+
+    // setProperty(property, value, priority?)
+    setProperty(
+      styleObj,
+      "setProperty",
+      createNativeFunction("setProperty", (...args: JSValue[]) => {
+        const prop = isString(args[0]) ? args[0].value : toString(args[0]);
+        const value = isString(args[1]) ? args[1].value : toString(args[1]);
+        const kebab = prop.includes("-") ? prop : this.camelToKebab(prop);
+        if (value === "" || value === "undefined") {
+          styleMap.delete(kebab);
+        } else {
+          const priority = args[2] && isString(args[2]) ? args[2].value : "";
+          const fullValue = priority === "important" ? `${value} !important` : value;
+          styleMap.set(kebab, fullValue);
+        }
+        this.syncStyleAttribute(element, styleMap);
+        return createUndefined();
+      }, 2),
+    );
+
+    // removeProperty(property)
+    setProperty(
+      styleObj,
+      "removeProperty",
+      createNativeFunction("removeProperty", (...args: JSValue[]) => {
+        const prop = isString(args[0]) ? args[0].value : toString(args[0]);
+        const kebab = prop.includes("-") ? prop : this.camelToKebab(prop);
+        const old = styleMap.get(kebab) ?? "";
+        styleMap.delete(kebab);
+        this.syncStyleAttribute(element, styleMap);
+        return createString(old);
+      }, 1),
+    );
+
+    // item(index)
+    setProperty(
+      styleObj,
+      "item",
+      createNativeFunction("item", (...args: JSValue[]) => {
+        const idx = args[0]?.type === "number" ? args[0].value : 0;
+        const keys = Array.from(styleMap.keys());
+        return idx >= 0 && idx < keys.length ? createString(keys[idx]) : createString("");
+      }, 1),
+    );
+
+    // Install common CSS property getters/setters for camelCase access
+    const commonProperties = [
+      "color", "background", "backgroundColor", "backgroundImage", "backgroundSize",
+      "backgroundPosition", "backgroundRepeat",
+      "display", "visibility", "opacity", "overflow", "overflowX", "overflowY",
+      "position", "top", "right", "bottom", "left", "zIndex",
+      "width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight",
+      "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
+      "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+      "border", "borderTop", "borderRight", "borderBottom", "borderLeft",
+      "borderWidth", "borderStyle", "borderColor", "borderRadius",
+      "font", "fontFamily", "fontSize", "fontWeight", "fontStyle",
+      "lineHeight", "letterSpacing", "textAlign", "textDecoration", "textTransform",
+      "whiteSpace", "wordBreak", "wordWrap",
+      "float", "clear",
+      "flex", "flexDirection", "flexWrap", "justifyContent", "alignItems", "alignSelf",
+      "gap", "rowGap", "columnGap",
+      "gridTemplateColumns", "gridTemplateRows", "gridColumn", "gridRow",
+      "cursor", "pointerEvents", "userSelect",
+      "transform", "transition", "animation",
+      "boxShadow", "textShadow", "outline",
+      "content", "listStyle", "listStyleType",
+      "verticalAlign", "tableLayout", "borderCollapse",
+      "boxSizing",
+    ];
+
+    for (const camelProp of commonProperties) {
+      const kebabProp = this.camelToKebab(camelProp);
+      defineGetter(styleObj, camelProp, () => {
+        return createString(styleMap.get(kebabProp) ?? "");
+      });
+      defineSetter(styleObj, camelProp, (v: JSValue) => {
+        const value = isString(v) ? v.value : toString(v);
+        if (value === "" || value === "undefined") {
+          styleMap.delete(kebabProp);
+        } else {
+          styleMap.set(kebabProp, value);
+        }
+        this.syncStyleAttribute(element, styleMap);
+      });
+    }
   }
 
   /**
@@ -1323,6 +1710,286 @@ export class DOMBindings {
     );
 
     // Event handling on document — functional implementation at lines 1052-1075 is authoritative
+  }
+
+  // =========================================================================
+  // Form Element Bindings
+  // =========================================================================
+
+  /**
+   * Install tag-specific form element property bindings.
+   * Exposes value, checked, disabled, name, etc. as direct properties
+   * mirroring HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement,
+   * HTMLFormElement, and HTMLButtonElement interfaces.
+   */
+  private installFormElementBindings(obj: JSValue, element: DOMElement): void {
+    const tag = element.tagName?.toLowerCase() ?? "";
+
+    // Helper: find closest <form> ancestor
+    const findFormAncestor = (): JSValue => {
+      let current: DOMNode | null = element.parentNode;
+      while (current) {
+        if (
+          current.nodeType === DOMNodeType.ELEMENT &&
+          (current as DOMElement).tagName?.toLowerCase() === "form"
+        ) {
+          return this.wrapNodeAsJSValue(current);
+        }
+        current = current.parentNode;
+      }
+      return createNull();
+    };
+
+    // Helper: string attribute getter/setter
+    const bindStringAttr = (prop: string, attr: string, defaultVal = "") => {
+      defineGetter(obj, prop, () =>
+        createString(element.attributes?.get(attr) ?? defaultVal)
+      );
+      defineSetter(obj, prop, (v: JSValue) => {
+        const val = isString(v) ? v.value : toString(v);
+        if (!element.attributes) element.attributes = new Map<string, string>();
+        element.attributes.set(attr, val);
+      });
+    };
+
+    // Helper: boolean attribute getter/setter (presence-based)
+    const bindBooleanAttr = (prop: string, attr: string) => {
+      defineGetter(obj, prop, () =>
+        createBoolean(element.attributes?.has(attr) ?? false)
+      );
+      defineSetter(obj, prop, (v: JSValue) => {
+        const boolVal = isBoolean(v) ? v.value : toString(v) === "true";
+        if (!element.attributes) element.attributes = new Map<string, string>();
+        if (boolVal) {
+          element.attributes.set(attr, "");
+        } else {
+          element.attributes.delete(attr);
+        }
+      });
+    };
+
+    // Helper: numeric attribute getter/setter
+    const bindNumericAttr = (prop: string, attr: string, defaultVal: number) => {
+      defineGetter(obj, prop, () => {
+        const raw = element.attributes?.get(attr);
+        return createNumber(raw !== undefined ? parseInt(raw, 10) || defaultVal : defaultVal);
+      });
+      defineSetter(obj, prop, (v: JSValue) => {
+        const num = v.type === "number" ? v.value : parseInt(toString(v), 10) || 0;
+        if (!element.attributes) element.attributes = new Map<string, string>();
+        element.attributes.set(attr, String(num));
+      });
+    };
+
+    switch (tag) {
+      case "input": {
+        // value — programmatic override via closure (mirrors real browser behavior)
+        let _inputValue: string | undefined;
+        defineGetter(obj, "value", () =>
+          createString(_inputValue ?? element.attributes?.get("value") ?? "")
+        );
+        defineSetter(obj, "value", (v: JSValue) => {
+          _inputValue = isString(v) ? v.value : toString(v);
+        });
+
+        bindStringAttr("type", "type", "text");
+        bindStringAttr("name", "name");
+        bindStringAttr("placeholder", "placeholder");
+
+        // checked — boolean attribute
+        defineGetter(obj, "checked", () => createBoolean(element.attributes?.has("checked") ?? false));
+        defineSetter(obj, "checked", (v: JSValue) => {
+          const boolVal = isBoolean(v) ? v.value : toString(v) === "true";
+          if (!element.attributes) element.attributes = new Map<string, string>();
+          if (boolVal) element.attributes.set("checked", "");
+          else element.attributes.delete("checked");
+        });
+
+        bindBooleanAttr("disabled", "disabled");
+        bindBooleanAttr("readOnly", "readonly");
+        bindBooleanAttr("required", "required");
+        defineGetter(obj, "form", findFormAncestor);
+
+        // focus/blur/select — no-op in headless
+        setProperty(obj, "focus", createNativeFunction("focus", () => createUndefined(), 0));
+        setProperty(obj, "blur", createNativeFunction("blur", () => createUndefined(), 0));
+        setProperty(obj, "select", createNativeFunction("select", () => createUndefined(), 0));
+        break;
+      }
+
+      case "select": {
+        let _selectedIndex = -1;
+
+        // options — getter returns all descendant <option> elements (including those in <optgroup>)
+        const getOptions = (): DOMNode[] => {
+          const opts: DOMNode[] = [];
+          const collectOptions = (parent: DOMNode) => {
+            for (const child of parent.childNodes ?? []) {
+              if (child.nodeType === DOMNodeType.ELEMENT) {
+                const tag = (child as DOMElement).tagName?.toLowerCase();
+                if (tag === "option") {
+                  opts.push(child);
+                } else if (tag === "optgroup") {
+                  collectOptions(child);
+                }
+              }
+            }
+          };
+          collectOptions(element);
+          return opts;
+        };
+
+        defineGetter(obj, "options", () => {
+          const opts = getOptions();
+          const arr = createObject();
+          for (let i = 0; i < opts.length; i++) {
+            setProperty(arr, String(i), this.wrapNodeAsJSValue(opts[i]));
+          }
+          setProperty(arr, "length", createNumber(opts.length));
+          return arr;
+        });
+
+        defineGetter(obj, "selectedIndex", () => {
+          const opts = getOptions();
+          if (_selectedIndex >= 0 && _selectedIndex < opts.length) return createNumber(_selectedIndex);
+          return createNumber(opts.length > 0 ? 0 : -1);
+        });
+        defineSetter(obj, "selectedIndex", (v: JSValue) => {
+          _selectedIndex = v.type === "number" ? v.value : parseInt(toString(v), 10) || 0;
+        });
+
+        defineGetter(obj, "value", () => {
+          const opts = getOptions();
+          const idx = _selectedIndex >= 0 ? _selectedIndex : (opts.length > 0 ? 0 : -1);
+          if (idx >= 0 && idx < opts.length) {
+            const opt = opts[idx] as DOMElement;
+            return createString(
+              opt.attributes?.get("value") ?? this.computeTextContent(opt as DOMNode) ?? ""
+            );
+          }
+          return createString("");
+        });
+        defineSetter(obj, "value", (v: JSValue) => {
+          const target = isString(v) ? v.value : toString(v);
+          const opts = getOptions();
+          for (let i = 0; i < opts.length; i++) {
+            const opt = opts[i] as DOMElement;
+            const optVal = opt.attributes?.get("value") ?? this.computeTextContent(opt as DOMNode) ?? "";
+            if (optVal === target) {
+              _selectedIndex = i;
+              return;
+            }
+          }
+        });
+
+        bindBooleanAttr("disabled", "disabled");
+        bindStringAttr("name", "name");
+        bindBooleanAttr("multiple", "multiple");
+        defineGetter(obj, "form", findFormAncestor);
+        break;
+      }
+
+      case "textarea": {
+        // value — initial value from text content, programmatic override via closure
+        let _textareaValue: string | undefined;
+        defineGetter(obj, "value", () =>
+          createString(_textareaValue ?? this.computeTextContent(element as DOMNode) ?? "")
+        );
+        defineSetter(obj, "value", (v: JSValue) => {
+          _textareaValue = isString(v) ? v.value : toString(v);
+        });
+
+        bindBooleanAttr("disabled", "disabled");
+        bindStringAttr("name", "name");
+        bindStringAttr("placeholder", "placeholder");
+        bindBooleanAttr("readOnly", "readonly");
+        bindBooleanAttr("required", "required");
+        bindNumericAttr("rows", "rows", 2);
+        bindNumericAttr("cols", "cols", 20);
+        defineGetter(obj, "form", findFormAncestor);
+        break;
+      }
+
+      case "form": {
+        bindStringAttr("action", "action");
+
+        // method — default "get"
+        defineGetter(obj, "method", () =>
+          createString(element.attributes?.get("method")?.toLowerCase() ?? "get")
+        );
+        defineSetter(obj, "method", (v: JSValue) => {
+          const val = isString(v) ? v.value : toString(v);
+          if (!element.attributes) element.attributes = new Map<string, string>();
+          element.attributes.set("method", val.toLowerCase());
+        });
+
+        // elements — all descendant input/select/textarea/button
+        const FORM_TAGS = new Set(["input", "select", "textarea", "button"]);
+        const collectFormElements = (node: DOMNode, results: DOMNode[]) => {
+          for (const child of node.childNodes ?? []) {
+            if (child.nodeType === DOMNodeType.ELEMENT) {
+              if (FORM_TAGS.has((child as DOMElement).tagName?.toLowerCase() ?? "")) {
+                results.push(child);
+              }
+              collectFormElements(child, results);
+            }
+          }
+        };
+
+        defineGetter(obj, "elements", () => {
+          const elems: DOMNode[] = [];
+          collectFormElements(element as DOMNode, elems);
+          const arr = createObject();
+          for (let i = 0; i < elems.length; i++) {
+            setProperty(arr, String(i), this.wrapNodeAsJSValue(elems[i]));
+          }
+          setProperty(arr, "length", createNumber(elems.length));
+          return arr;
+        });
+
+        defineGetter(obj, "length", () => {
+          const elems: DOMNode[] = [];
+          collectFormElements(element as DOMNode, elems);
+          return createNumber(elems.length);
+        });
+
+        // submit() / reset() — dispatch events
+        setProperty(obj, "submit", createNativeFunction("submit", () => {
+          const event = createObject();
+          setProperty(event, "type", createString("submit"));
+          setProperty(event, "target", obj);
+          const dispatchFn = getProperty(obj, "dispatchEvent");
+          if (isFunction(dispatchFn) && dispatchFn.value.nativeImpl) {
+            dispatchFn.value.nativeImpl(event);
+          }
+          return createUndefined();
+        }, 0));
+
+        setProperty(obj, "reset", createNativeFunction("reset", () => {
+          const event = createObject();
+          setProperty(event, "type", createString("reset"));
+          setProperty(event, "target", obj);
+          const dispatchFn = getProperty(obj, "dispatchEvent");
+          if (isFunction(dispatchFn) && dispatchFn.value.nativeImpl) {
+            dispatchFn.value.nativeImpl(event);
+          }
+          return createUndefined();
+        }, 0));
+        break;
+      }
+
+      case "button": {
+        bindStringAttr("type", "type", "submit");
+        bindBooleanAttr("disabled", "disabled");
+        bindStringAttr("name", "name");
+        bindStringAttr("value", "value");
+        defineGetter(obj, "form", findFormAncestor);
+        break;
+      }
+
+      default:
+        break;
+    }
   }
 
   // =========================================================================
