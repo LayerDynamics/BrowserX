@@ -1820,15 +1820,22 @@ export class DOMBindings {
       case "select": {
         let _selectedIndex = -1;
 
-        // options — getter returns array-like of child <option> elements
+        // options — getter returns all descendant <option> elements (including those in <optgroup>)
         const getOptions = (): DOMNode[] => {
           const opts: DOMNode[] = [];
-          for (const child of element.childNodes ?? []) {
-            if (child.nodeType === DOMNodeType.ELEMENT &&
-              (child as DOMElement).tagName?.toLowerCase() === "option") {
-              opts.push(child);
+          const collectOptions = (parent: DOMNode) => {
+            for (const child of parent.childNodes ?? []) {
+              if (child.nodeType === DOMNodeType.ELEMENT) {
+                const tag = (child as DOMElement).tagName?.toLowerCase();
+                if (tag === "option") {
+                  opts.push(child);
+                } else if (tag === "optgroup") {
+                  collectOptions(child);
+                }
+              }
             }
-          }
+          };
+          collectOptions(element);
           return opts;
         };
 

@@ -409,3 +409,37 @@ Deno.test("proxy-request-flow: POST request with body forwards correctly", async
     await server.finished;
   }
 });
+
+Deno.test("proxy-request-flow: appends x-forwarded-for when header already present", async () => {
+  const ac = new AbortController();
+  let upstreamPort = 0;
+  const server = Deno.serve({
+    port: 0,
+    signal: ac.signal,
+    onListen: ({ port }) => { upstreamPort = port; },
+  }, (req) => {
+    return new Response(JSON.stringify({
+      xff: req.headers.get("x-forwarded-for"),
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+
+  try {
+    const servers = [makeServer("s1", "127.0.0.1", upstreamPort)];
+    const route = makeRoute("r1", "/.*", servers);
+    const proxy = new ReverseProxy(route, { addForwardedHeaders: true });
+
+    const response = await proxy.handleRequest(
+      makeRequest("GET", "/test", { "x-forwarded-for": "1.2.3.4" }),
+      makeContext("203.0.113.42"),
+    );
+
+    assertEquals(response.statusCode, 200);
+    const body = JSON.parse(new TextDecoder().decode(response.body));
+    assertEquals(body.xff, "1.2.3.4, 203.0.113.42");
+
+    await proxy.shutdown();
+  } finally {
+    ac.abort();
+    await server.finished;
+  }
+});

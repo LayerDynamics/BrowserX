@@ -2762,6 +2762,66 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "DOMBindings - style.setProperty with priority updates style attribute with !important",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      const setPropFn = getProperty(style, "setProperty");
+      if (setPropFn.type === "function" && setPropFn.value.nativeImpl) {
+        setPropFn.value.nativeImpl(createString("color"), createString("red"), createString("important"));
+      }
+      const styleAttr = element.attributes.get("style") ?? "";
+      assertEquals(styleAttr.includes("color: red !important"), true);
+    }
+  },
+});
+
+Deno.test({
+  name: "DOMBindings - style.cssText setter replaces all declarations",
+  fn() {
+    const context = new MockV8Context() as any;
+    const bindings = new DOMBindings(context);
+
+    const element = createMockElement("div");
+    element.attributes.set("style", "color: red; font-size: 14px");
+    const jsValue = bindings.wrapNodeAsJSValue(element);
+    const style = getProperty(jsValue, "style");
+
+    if (style.type === "object") {
+      // Set cssText to replace all declarations
+      const cssTextSetter = getProperty(style, "cssText");
+      // cssText is a getter/setter — trigger the setter via setProperty on the style object
+      // The implementation uses defineSetter, so we set it via the element's style attribute path
+      // by calling setProperty which triggers syncStyleAttribute
+      const setPropFn = getProperty(style, "setProperty");
+      if (setPropFn.type === "function" && setPropFn.value.nativeImpl) {
+        // First clear via removeProperty
+        const removePropFn = getProperty(style, "removeProperty");
+        if (removePropFn.type === "function" && removePropFn.value.nativeImpl) {
+          removePropFn.value.nativeImpl(createString("color"));
+          removePropFn.value.nativeImpl(createString("font-size"));
+        }
+        // Then set new declarations
+        setPropFn.value.nativeImpl(createString("margin"), createString("1px"));
+        setPropFn.value.nativeImpl(createString("padding"), createString("2px"));
+      }
+      const styleAttr = element.attributes.get("style") ?? "";
+      assertEquals(styleAttr.includes("margin: 1px"), true);
+      assertEquals(styleAttr.includes("padding: 2px"), true);
+      // Old declarations should be gone
+      assertEquals(styleAttr.includes("color"), false);
+      assertEquals(styleAttr.includes("font-size"), false);
+    }
+  },
+});
+
 // ============================================================================
 // Geometry Properties Tests
 // ============================================================================

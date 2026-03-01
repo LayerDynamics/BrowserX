@@ -143,10 +143,11 @@ export class ReverseProxy {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
+        const attemptStart = Date.now();
         const response = await this.forwardRequest(request, server, context);
 
-        // Record success
-        const responseTime = Date.now() - startTime;
+        // Record success using per-attempt timing (not cumulative retry time)
+        const responseTime = Date.now() - attemptStart;
         this.loadBalancer.recordSuccess(server.id, responseTime);
 
         return response;
@@ -163,9 +164,10 @@ export class ReverseProxy {
       }
     }
 
+    const totalDuration = Date.now() - startTime;
     return this.createErrorResponse(
       502,
-      `Bad Gateway: ${lastError?.message ?? "Unknown error"}`,
+      `Bad Gateway after ${totalDuration}ms: ${lastError?.message ?? "Unknown error"}`,
     );
   }
 

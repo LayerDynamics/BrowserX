@@ -27,7 +27,7 @@ All packages are designed to work together as an integrated system, but each is 
 - **pixpane** - Native windowing: cross-platform windows, GPU rendering via wgpu, immediate-mode UI with egui
 - **webgpu_x** - GPU compute: WebGPU bindings for compute shaders, texture readback, and bind group management
 - **bytecodex** - Bytecode optimization: constant folding, dead store elimination, peephole optimization, validation
-- **transportx** - QUIC/HTTP3 transport: connection management, stream multiplexing via quiche FFI
+- **transportx** - QUIC/HTTP/3 transport: connection management, stream multiplexing via quiche FFI
 
 ### Built to Work Together
 
@@ -138,7 +138,7 @@ Understanding the Layers:
 
 ┌──────────────────┐  ┌──────────────────┐
 │ bytecodex (Rust) │  │ transportx(Rust) │
-│ - Const folding  │  │ - QUIC/HTTP3     │
+│ - Const folding  │  │ - QUIC/HTTP/3     │
 │ - Dead store     │  │ - Stream mux     │
 │ - Peephole (FFI) │  │ - quiche (FFI)   │
 └──────────────────┘  └──────────────────┘
@@ -220,7 +220,7 @@ BrowserX/
 │   ├── bytecodex/          # Bytecode optimizer (Rust)
 │   │   └── src/            # Constant folding, dead store elimination, peephole
 │   │
-│   └── transportx/         # QUIC/HTTP3 transport (Rust)
+│   └── transportx/         # QUIC/HTTP/3 transport (Rust)
 │       └── src/            # Connection management, stream mux via quiche
 │
 ├── resources/               # Reference implementations and dependencies
@@ -559,7 +559,7 @@ cd crates/webgpu_x && cargo test
 
 **transportx** :
 
-- QUIC/HTTP3 transport: Connection management and stream multiplexing via quiche FFI
+- QUIC/HTTP/3 transport: Connection management and stream multiplexing via quiche FFI
 
 ### 🚧 In Progress
 

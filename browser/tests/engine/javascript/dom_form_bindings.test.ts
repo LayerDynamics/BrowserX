@@ -217,6 +217,32 @@ Deno.test("select: options returns array-like", () => {
   assertEquals((len as { value: number }).value, 2);
 });
 
+Deno.test("select: disabled and multiple reflect attributes", () => {
+  const { bindings } = setup();
+  // With disabled/multiple attributes
+  const selWith = createAndWrap(bindings, "select", { disabled: "", multiple: "" });
+  assertEquals((getProperty(selWith, "disabled") as { value: boolean }).value, true);
+  assertEquals((getProperty(selWith, "multiple") as { value: boolean }).value, true);
+
+  // Without attributes
+  const selWithout = createAndWrap(bindings, "select");
+  assertEquals((getProperty(selWithout, "disabled") as { value: boolean }).value, false);
+  assertEquals((getProperty(selWithout, "multiple") as { value: boolean }).value, false);
+});
+
+Deno.test("select: form getter returns ancestor form", () => {
+  const { bindings } = setup();
+  const formEl = bindings.createElementNative("form");
+  const selectEl = bindings.createElementNative("select");
+  bindings.appendChildNative(formEl, selectEl);
+
+  const wrappedSelect = bindings.wrapNodeAsJSValue(selectEl);
+  const form = getProperty(wrappedSelect, "form");
+  assertEquals(form.type, "object");
+  const formTag = getProperty(form, "tagName");
+  assertEquals((formTag as { value: string }).value, "FORM");
+});
+
 Deno.test("select: name getter", () => {
   const { bindings } = setup();
   const sel = createAndWrap(bindings, "select", { name: "country" });
@@ -264,6 +290,26 @@ Deno.test("textarea: rows/cols from attributes", () => {
   const wrapped = createAndWrap(bindings, "textarea", { rows: "10", cols: "50" });
   assertEquals((getProperty(wrapped, "rows") as { value: number }).value, 10);
   assertEquals((getProperty(wrapped, "cols") as { value: number }).value, 50);
+});
+
+Deno.test("textarea: name and placeholder bindings", () => {
+  const { bindings } = setup();
+  const wrapped = createAndWrap(bindings, "textarea", { name: "message", placeholder: "Type here" });
+  assertEquals((getProperty(wrapped, "name") as { value: string }).value, "message");
+  assertEquals((getProperty(wrapped, "placeholder") as { value: string }).value, "Type here");
+});
+
+Deno.test("textarea: form getter returns ancestor form", () => {
+  const { bindings } = setup();
+  const formEl = bindings.createElementNative("form");
+  const textareaEl = bindings.createElementNative("textarea");
+  bindings.appendChildNative(formEl, textareaEl);
+
+  const wrappedTextarea = bindings.wrapNodeAsJSValue(textareaEl);
+  const form = getProperty(wrappedTextarea, "form");
+  assertEquals(form.type, "object");
+  const formTag = getProperty(form, "tagName");
+  assertEquals((formTag as { value: string }).value, "FORM");
 });
 
 Deno.test("textarea: disabled/readOnly/required", () => {
@@ -372,6 +418,40 @@ Deno.test("form: submit() dispatches submit event", () => {
   assertEquals(eventFired, true);
 });
 
+Deno.test("form: reset() dispatches reset event", () => {
+  const { bindings } = setup();
+  const form = createAndWrap(bindings, "form");
+  let eventFired = false;
+
+  // Add event listener
+  const addListener = getProperty(form, "addEventListener");
+  if (isFunction(addListener) && addListener.value.nativeImpl) {
+    const callback = {
+      type: "function" as const,
+      value: {
+        name: "onReset",
+        params: [],
+        code: null,
+        isNative: true,
+        nativeImpl: (_evt: JSValue) => {
+          eventFired = true;
+          return { type: "undefined" as const, value: undefined };
+        },
+      },
+      __getters: undefined,
+      __setters: undefined,
+    };
+    addListener.value.nativeImpl(createString("reset"), callback);
+  }
+
+  // Call reset
+  const resetFn = getProperty(form, "reset");
+  if (isFunction(resetFn) && resetFn.value.nativeImpl) {
+    resetFn.value.nativeImpl();
+  }
+  assertEquals(eventFired, true);
+});
+
 // =========================================================================
 // HTMLButtonElement
 // =========================================================================
@@ -406,6 +486,19 @@ Deno.test("button: form getter returns null without ancestor form", () => {
   const { bindings } = setup();
   const btn = createAndWrap(bindings, "button");
   assertEquals(getProperty(btn, "form").type, "null");
+});
+
+Deno.test("button: form getter returns nearest ancestor form", () => {
+  const { bindings } = setup();
+  const formEl = bindings.createElementNative("form");
+  const buttonEl = bindings.createElementNative("button");
+  bindings.appendChildNative(formEl, buttonEl);
+
+  const wrappedBtn = bindings.wrapNodeAsJSValue(buttonEl);
+  const form = getProperty(wrappedBtn, "form");
+  assertEquals(form.type, "object");
+  const formTag = getProperty(form, "tagName");
+  assertEquals((formTag as { value: string }).value, "FORM");
 });
 
 // =========================================================================
