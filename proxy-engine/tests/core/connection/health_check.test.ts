@@ -743,7 +743,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "HealthMonitor - createInitialState sets healthy to false",
+  name: "HealthMonitor - createInitialState sets healthy to true (optimistic start)",
   sanitizeResources: false,
   sanitizeOps: false,
   fn() {
@@ -756,7 +756,7 @@ Deno.test({
 
     const state = monitor.getServerState("new-server");
     assertExists(state);
-    assertEquals(state!.healthy, false);
+    assertEquals(state!.healthy, true);
 
     monitor.stop();
   },

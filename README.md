@@ -444,11 +444,13 @@ cd crates/webgpu_x && cargo test
 - Complete type system (11 type files: HTTP, DOM, CSS, rendering, network, JavaScript, storage, events, WebGPU)
 - Network layer: TCP connection management, TLS 1.3 implementation with handshake and certificate validation, connection pooling, DNS resolution
 - HTTP protocol: Request/response parsing, header handling, connection reuse
-- HTML tokenizer: Full state machine with 60+ tokenization states
+- HTML tokenizer: Full state machine with 80+ tokenization states
 - CSS parser: Selector matching, specificity calculation, cascade resolution
-- JavaScript engine: V8 isolate management, execution contexts, heap management
+- JavaScript engine: V8 isolate management, execution contexts, heap management, bytecode compilation with 11 ops, bytecodex FFI optimization (721 tests)
+- CSS at-rules: `@media`, `@keyframes`, `@font-face`, `@import` parsing with media query matching, percentage length resolution
 - Storage types: Interfaces for localStorage, sessionStorage, IndexedDB, cookies, quota management
-- WebGPU rendering: Offscreen rendering via Deno's native WebGPU, GPU readback, WGSL compositor shaders
+- WebGPU rendering: Offscreen rendering via Deno's native WebGPU, GPU readback, WGSL compositor shaders, compositeLayer GPU compositing
+- Window subsystem: `Window` + `WindowContext` classes with OS abstractions
 
 **Proxy Engine** :
 
@@ -461,6 +463,10 @@ cd crates/webgpu_x && cargo test
 - Network primitives: TCP sockets, IP address handling, buffer pools
 - Event system: Event loop, async handling, priority queuing
 - Process/thread management: Multi-process architecture, worker pools, task scheduling
+- Proxy types: Reverse proxy, load balancer, auth proxy, WebSocket proxy, SSE proxy, TLS proxy, event-driven proxy
+- Load balancing: Round-robin, least connections, weighted, IP hash, least response time, random (1878 tests)
+- ALPN protocol negotiation: TLS ClientHello parsing and extension building
+- HTTP/2 GOAWAY: Stream draining and graceful connection shutdown
 
 **Query Engine** :
 
@@ -473,6 +479,9 @@ cd crates/webgpu_x && cargo test
 - Executor: Query execution engine
 - Type system: Primitive types, collections, functions
 - Error handling: Comprehensive error types and recovery
+- Browser wiring: DOM functions (CLICK, TYPE, TEXT, HTML, ATTR, COUNT, EXISTS) async with browser controller
+- Result formatting: Multiple output formats (JSON, CSV, table)
+- Dependency graph: GraphX-backed `DependencyGraphBuilder` with topological sort and cycle detection
 
 **Pixpane** :
 
@@ -505,6 +514,9 @@ cd crates/webgpu_x && cargo test
 - Plugin lifecycle: All contributions return Disposable for automatic cleanup
 - Plugin registry: Discovery, validation, and loading of plugins
 - Configuration: RuntimeConfig with plugin enablement (opt-in by default)
+- Lifecycle components: LifecycleManager, HealthChecker, UnifiedMetricsCollector, EventCoordinator
+- BrowserPool: acquire/release pattern with idle timeout, max lifetime, automatic cleanup
+- GraphX integration: PluginManager uses GraphX DAG + topologicalSort for activation ordering (98 plugin tests)
 
 **MCP Server** :
 
@@ -516,6 +528,9 @@ cd crates/webgpu_x && cargo test
 - Activity tracking: Persistent file-based logging of screenshots and activities
 - Data persistence: Screenshots saved to `.browserx/usage_data/screenshots/`, activity logs in JSONL format
 - Lazy initialization: Fast startup (<100ms) with services initialized on first use
+- Runtime integration: ServiceInitializer with BrowserPool delegation, health checks, metrics
+- Session management: SessionManager delegates to Runtime BrowserPool with critical shutdown ordering
+- Graph tools: `browserx_visualize_dom`, `browserx_dependency_graph`, `browserx_plugin_graph`
 
 **DevTools** :
 
@@ -524,6 +539,28 @@ cd crates/webgpu_x && cargo test
 - Event system: EventBus for cross-domain pub/sub communication
 - Test coverage: 847+ tests across 24 test files
 
+**GraphX** :
+
+- Graph data structures: Graph (undirected), DiGraph (directed), DAG (directed acyclic)
+- Algorithms: BFS, DFS, Dijkstra shortest path, topological sort, cycle detection, connected components
+- Layout engines: Force-directed (Fruchterman-Reingold), hierarchical (Sugiyama), radial, grid
+- SVG rendering: Headless SVG generation with themes, labels, arrowheads
+- Cross-codebase integration: Runtime PluginManager, Query Engine DependencyGraphBuilder, MCP visualization tools
+- Test coverage: 164 tests across graph structures, algorithms, layout, and rendering
+
+**bytecodex** :
+
+- Constant folding: Folds arithmetic on constant operands into single constants
+- Dead store elimination: Removes unused register stores
+- Peephole optimization: Pattern-matches small instruction windows
+- Bytecode validation: Opcode validity, operand counts, constant pool bounds, jump targets
+- Disassembly: Human-readable bytecode output
+- V8Compiler integration: `compile(source, { optimize: true })` runs bytecodex FFI pass (15 Rust tests)
+
+**transportx** :
+
+- QUIC/HTTP3 transport: Connection management and stream multiplexing via quiche FFI
+
 ### 🚧 In Progress
 
 **Browser Engine:**
@@ -531,22 +568,16 @@ cd crates/webgpu_x && cargo test
 - Layout engine: Box model calculation, block/flexbox/grid layout algorithms, text measurement
 - Paint engine: Display list generation, rasterization
 - Compositor: Layer management, tiling, GPU texture uploads, VSync synchronization
-- JavaScript execution: V8 bytecode compilation, JIT optimization, event loop integration
 - Full rendering pipeline: End-to-end integration from HTML to pixels
 
 **Proxy Engine:**
 
-- Load balancer implementations: Active load balancing algorithms (round-robin, least connections, IP hash)
-- WebSocket proxying: Full duplex proxying, frame handling
 - Metrics collection: Request tracking, latency histograms, throughput measurement
 - Distributed tracing: Trace context propagation, span collection
 
 **Query Engine:**
 
-- Browser adapter: Integration with browser engine for DOM/CSSOM queries
-- Proxy adapter: Integration with proxy engine for network/cache queries
 - Advanced SQL features: Subqueries, joins, aggregations, window functions
-- Query result formatting: Multiple output formats (JSON, CSV, table)
 
 **Integration:**
 
@@ -568,7 +599,6 @@ cd crates/webgpu_x && cargo test
 
 - CLI interface: Interactive query shell for browser/proxy inspection
 - Web UI: Browser-based inspector for debugging and metrics visualization
-- DevTools protocol: Chrome DevTools Protocol compatibility
 - Performance profiler: CPU/memory/network profiling tools
 
 **Testing & Quality:**

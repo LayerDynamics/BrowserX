@@ -259,28 +259,30 @@ console.log(metrics);
 
 ### ✅ Implemented
 
-- Folder structure
-- Type definitions
+- Folder structure and type definitions
 - Lexer with 80+ token types
 - Parser with recursive descent parsing
-- AST node definitions
+- AST node definitions for all statement types
 - Main QueryEngine class
-- Query execution pipeline skeleton
+- Semantic Analyzer: Type checking and validation
+- Query Optimizer: Constant folding, predicate pushdown, cache utilization
+- Execution Planner: Physical execution plan generation with dependency graph (GraphX-backed)
+- Query Executor: Step-by-step query execution with async browser controller integration
+- Browser Controller: DOM functions (CLICK, TYPE, TEXT, HTML, ATTR, COUNT, EXISTS) all async with `isAsync: true`
+- Proxy Controller: Integration with proxy engine for network/cache queries
+- Result Formatter: Multiple output formats (JSON, CSV, table)
+- Security Validator: Permission enforcement and sandboxing
+- Dependency Graph: `DependencyGraphBuilder` backed by GraphX `DiGraph` with topological sort and cycle detection
+- Browser wiring: `setCurrentBrowserController()` called at execute(), `clearBrowserContext()` in finally block
+- Error handling: Comprehensive error types and recovery
 
 ### 🚧 In Progress
 
-- Semantic Analyzer
-- Query Optimizer
-- Execution Planner
-- Query Executor
-- Browser Controller
-- Proxy Controller
-- Result Formatter
-- Security Validator
-- State Manager
-- Metrics Collector
-- Error Recovery Manager
-- Resource Manager
+- State Manager: Cross-query state persistence
+- Metrics Collector: Query performance tracking and reporting
+- Error Recovery Manager: Advanced error recovery strategies
+- Resource Manager: Browser instance and connection lifecycle
+- Advanced SQL features: Subqueries, joins, aggregations, window functions
 
 ## Development
 

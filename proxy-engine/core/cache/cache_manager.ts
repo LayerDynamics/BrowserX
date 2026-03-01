@@ -439,9 +439,13 @@ class HTTPCacheManager {
       return count;
     }
 
-    // Escape special regex characters to prevent ReDoS from user-supplied patterns
-    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(escaped);
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern);
+    } catch {
+      console.warn(`[CACHE PURGE] Invalid regex pattern: ${pattern}`);
+      return 0;
+    }
 
     for (const [key, entry] of this.memoryCache.entries()) {
       if (regex.test(key)) {

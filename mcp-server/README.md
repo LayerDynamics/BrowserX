@@ -21,7 +21,7 @@ deno task mcp:start:http
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` or `http` |
-| `MCP_PORT` | `3000` | HTTP port (if http transport) |
+| `MCP_PORT` | `9847` | HTTP port (if http transport) |
 | `MCP_PERMISSIONS` | `AUTOMATION` | Permission level: `READONLY`, `AUTOMATION`, `FULL` |
 | `MCP_MAX_SESSIONS` | `10` | Max concurrent browser sessions |
 
@@ -68,6 +68,14 @@ deno run --allow-all mod.ts --http --port=9847
 | `proxy_cache_clear` | Clear cache entries matching pattern |
 | `proxy_add_interceptor` | Add request interceptor (allow/block/modify) |
 | `proxy_remove_interceptor` | Remove request interceptor |
+
+### Graph Visualization Tools
+
+| Tool | Description |
+|------|-------------|
+| `browserx_visualize_dom` | Visualize DOM tree as SVG graph |
+| `browserx_dependency_graph` | Visualize query execution dependency graph |
+| `browserx_plugin_graph` | Visualize runtime plugin dependency graph |
 
 ## Resources
 
@@ -234,6 +242,17 @@ Activity tracking can be disabled via the ActivityTracker:
 context.activityTracker.setEnabled(false);
 ```
 
+## Runtime Integration
+
+The MCP server is fully integrated with the BrowserX Runtime lifecycle:
+
+- **SessionManager** delegates browser instance lifecycle to Runtime's `BrowserPool` (acquire/release)
+- **ServiceInitializer** provides lazy initialization — Runtime starts on first browser tool call, not at server startup
+- **Health checks**: `session-manager` → healthy/degraded based on capacity
+- **Metrics**: `browserx_mcp_active_sessions`, `sessions_created_total`, `sessions_closed_total`
+- **Critical shutdown ordering**: SessionManager → Runtime (sessions release pool instances first)
+- Falls back to standalone `BrowserEngine` creation when no pool is provided (legacy mode)
+
 ## Architecture
 
 ```text
@@ -244,7 +263,8 @@ MCP Server
 ├── tools/           # Tool implementations
 │   ├── query-tools.ts
 │   ├── browser-tools.ts
-│   └── proxy-tools.ts
+│   ├── proxy-tools.ts
+│   └── graph-tools.ts  # DOM, dependency, plugin graph visualization
 ├── resources/       # Resource providers
 ├── prompts/         # Prompt templates
 ├── security/        # Permission guard, input validation

@@ -136,7 +136,7 @@ const compositor = engine.getCompositor();
 
 ### Prerequisites
 
-- Deno 1.40+ (https://deno.land)
+- Deno 2.x+ (https://deno.land)
 
 ### Running the Browser
 
@@ -267,9 +267,11 @@ View documentation in your IDE by hovering over method names.
 - **Paint Engine**: Display list generation and recording
 - **Compositor**: Layer composition, tiling, and GPU upload
 
-### JavaScript Layer
+### JavaScript Layer (721 tests)
 
 - **V8 Integration**: Full V8 isolate and context management
+- **Bytecode Compilation**: 11 bytecode operations (CALL, CONSTRUCT, GET/SET_PROPERTY, GET/SET_KEYED, CREATE_OBJECT/ARRAY/CLOSURE, LDA/STA_CONTEXT_SLOT)
+- **bytecodex FFI**: Rust-based optimization pass via `V8Compiler.compile(source, { optimize: true })`
 - **Event Loop**: Macro/micro task scheduling
 - **Web APIs**: window, console, setTimeout, DOM manipulation
 - **Garbage Collection**: Automatic memory management
