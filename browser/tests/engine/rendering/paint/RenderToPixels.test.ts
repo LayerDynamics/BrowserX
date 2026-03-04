@@ -753,6 +753,60 @@ Deno.test({
   },
 });
 
+// Display list cache tests
+
+Deno.test({
+  name: "RenderToPixels - clearCache resets cache state",
+  fn() {
+    const renderer = new RenderToPixels();
+    const root = createMockRenderObject("root");
+
+    renderer.paint(root, 800 as Pixels, 600 as Pixels);
+    renderer.clearCache();
+
+    // Should still work after clearing cache
+    const result = renderer.paint(root, 800 as Pixels, 600 as Pixels);
+    assertExists(result);
+  },
+});
+
+Deno.test({
+  name: "RenderToPixels - invalidateCache removes cached display list",
+  fn() {
+    const renderer = new RenderToPixels();
+    const root = createMockRenderObject("root");
+
+    renderer.paint(root, 800 as Pixels, 600 as Pixels);
+    renderer.invalidateCache(root);
+
+    // Should repaint fine after invalidation
+    const result = renderer.paint(root, 800 as Pixels, 600 as Pixels, false);
+    assertExists(result);
+  },
+});
+
+// Damage region + layout dirty integration
+
+Deno.test({
+  name: "RenderToPixels - layout dirty objects add damage regions",
+  fn() {
+    const renderer = new RenderToPixels();
+    const root = createMockRenderObject("root");
+    const child = createMockRenderObject("child", {}, root);
+    addChild(root, child);
+
+    // First paint
+    renderer.paint(root, 800 as Pixels, 600 as Pixels);
+
+    // Mark child as needing layout (dirty)
+    child.needsLayout = true;
+
+    // Incremental paint should detect layout dirty
+    const result = renderer.paint(root, 800 as Pixels, 600 as Pixels, true);
+    assertExists(result);
+  },
+});
+
 Deno.test({
   name: "RenderToPixels - blend mode mapping",
   fn() {

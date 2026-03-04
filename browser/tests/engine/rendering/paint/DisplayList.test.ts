@@ -8,10 +8,13 @@ import {
   DisplayList,
   type DrawImageCommand,
   type FillRectCommand,
+  type FillTextCommand,
   PaintCommandType,
   type RestoreCommand,
   type SaveCommand,
+  type SetShadowCommand,
   type StrokeRectCommand,
+  type StrokeTextCommand,
   type TranslateCommand,
 } from "../../../../src/engine/rendering/paint/DisplayList.ts";
 import type { CanvasImageSource } from "../../../../src/types/dom.ts";
@@ -807,5 +810,174 @@ Deno.test({
     assertEquals(bbox.y, 100);
     assertEquals(bbox.width, 300);
     assertEquals(bbox.height, 200);
+  },
+});
+
+// ============================================================================
+// FILL_TEXT / STROKE_TEXT Bounding Box Tests
+// ============================================================================
+
+Deno.test({
+  name: "DisplayList - FILL_TEXT updates bounding box",
+  fn() {
+    const list = new DisplayList();
+    const command: FillTextCommand = {
+      type: PaintCommandType.FILL_TEXT,
+      text: "Hello",
+      x: 10 as any,
+      y: 30 as any,
+      font: "16px sans-serif",
+      color: "black",
+    };
+    list.add(command);
+
+    const bbox = list.getBoundingBox();
+    assertExists(bbox);
+    // x should be 10, y should be baseline - fontSize = 30 - 16 = 14
+    assertEquals(bbox.x, 10);
+    assertEquals(bbox.y, 14);
+    // width: 5 chars * 16 * 0.6 = 48
+    assertEquals(bbox.width, 48);
+    // height: 16
+    assertEquals(bbox.height, 16);
+  },
+});
+
+Deno.test({
+  name: "DisplayList - STROKE_TEXT updates bounding box",
+  fn() {
+    const list = new DisplayList();
+    const command: StrokeTextCommand = {
+      type: PaintCommandType.STROKE_TEXT,
+      text: "AB",
+      x: 0 as any,
+      y: 20 as any,
+      font: "20px monospace",
+      color: "red",
+      lineWidth: 1 as any,
+    };
+    list.add(command);
+
+    const bbox = list.getBoundingBox();
+    assertExists(bbox);
+    assertEquals(bbox.x, 0);
+    assertEquals(bbox.y, 0); // 20 - 20 = 0
+    // width: 2 chars * 20 * 0.6 = 24
+    assertEquals(bbox.width, 24);
+    assertEquals(bbox.height, 20);
+  },
+});
+
+Deno.test({
+  name: "DisplayList - FILL_TEXT expands existing bounding box",
+  fn() {
+    const list = new DisplayList();
+    list.add({
+      type: PaintCommandType.FILL_RECT,
+      x: 0 as any,
+      y: 0 as any,
+      width: 50 as any,
+      height: 50 as any,
+      color: "red",
+    });
+    list.add({
+      type: PaintCommandType.FILL_TEXT,
+      text: "Long text here!!",
+      x: 100 as any,
+      y: 200 as any,
+      font: "16px sans-serif",
+      color: "black",
+    } as FillTextCommand);
+
+    const bbox = list.getBoundingBox();
+    assertExists(bbox);
+    // Should expand to include both rect and text
+    assertEquals(bbox.x, 0);
+    assertEquals(bbox.y, 0);
+    // text right edge: 100 + 16*16*0.6 = 100 + 153.6 = 253.6
+    assert(bbox.width > 200);
+    // text bottom: 200
+    assert(bbox.height >= 200);
+  },
+});
+
+// ============================================================================
+// Display List Caching & Recording Context Tests
+// ============================================================================
+
+Deno.test({
+  name: "DisplayList - merge copies commands from source",
+  fn() {
+    const src = new DisplayList();
+    src.add({ type: PaintCommandType.SAVE });
+    src.add({ type: PaintCommandType.FILL_RECT, x: 0 as any, y: 0 as any, width: 10 as any, height: 10 as any, color: "red" });
+
+    const dst = new DisplayList();
+    dst.merge(src);
+
+    assertEquals(dst.length(), 2);
+    assertEquals(dst.getCommands()[0].type, PaintCommandType.SAVE);
+    assertEquals(dst.getCommands()[1].type, PaintCommandType.FILL_RECT);
+  },
+});
+
+// ============================================================================
+// Shadow-aware Bounding Box Tests
+// ============================================================================
+
+Deno.test({
+  name: "DisplayList - SET_SHADOW expands subsequent command bounding boxes",
+  fn() {
+    const list = new DisplayList();
+
+    // Set a shadow with offset 5px, 5px, blur 10px
+    list.add({
+      type: PaintCommandType.SET_SHADOW,
+      offsetX: 5 as any,
+      offsetY: 5 as any,
+      blur: 10 as any,
+      color: "rgba(0,0,0,0.5)",
+    });
+
+    // Add a rect at (100, 100) 50x50
+    list.add({
+      type: PaintCommandType.FILL_RECT,
+      x: 100 as any,
+      y: 100 as any,
+      width: 50 as any,
+      height: 50 as any,
+      color: "red",
+    });
+
+    const bbox = list.getBoundingBox();
+    assertExists(bbox);
+    // Shadow extent = |5| + |5| + 10 = 20
+    // bbox should be expanded: x=100-20=80, y=100-20=80, w=50+40=90, h=50+40=90
+    assertEquals(bbox.x, 80);
+    assertEquals(bbox.y, 80);
+    assertEquals(bbox.width, 90);
+    assertEquals(bbox.height, 90);
+  },
+});
+
+Deno.test({
+  name: "DisplayList - bounding box not expanded without shadow",
+  fn() {
+    const list = new DisplayList();
+    list.add({
+      type: PaintCommandType.FILL_RECT,
+      x: 10 as any,
+      y: 10 as any,
+      width: 50 as any,
+      height: 50 as any,
+      color: "blue",
+    });
+
+    const bbox = list.getBoundingBox();
+    assertExists(bbox);
+    assertEquals(bbox.x, 10);
+    assertEquals(bbox.y, 10);
+    assertEquals(bbox.width, 50);
+    assertEquals(bbox.height, 50);
   },
 });
