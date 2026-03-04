@@ -75,7 +75,11 @@ export type RuntimeEvent =
   | { type: "metrics_counter_changed"; name: string; value: number }
   | { type: "metrics_gauge_changed"; name: string; value: number }
   | { type: "metrics_server_started"; port: number; hostname: string }
-  | { type: "metrics_server_stopped" };
+  | { type: "metrics_server_stopped" }
+  | { type: "serial_device_opened"; instanceId: string; portName: string }
+  | { type: "serial_device_closed"; instanceId: string; reason: string }
+  | { type: "serial_device_released"; instanceId: string }
+  | { type: "serial_device_error"; instanceId: string; error: Error };
 
 /**
  * Runtime event listener callback

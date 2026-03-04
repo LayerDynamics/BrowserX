@@ -8,4 +8,5 @@ export * from "./NormalFlowLayout.ts";
 export * from "./FlexboxLayout.ts";
 export * from "./GridLayout.ts";
 export * from "./TextLayout.ts";
+export * from "./TableLayout.ts";
 export * from "./LayoutConstraints.ts";

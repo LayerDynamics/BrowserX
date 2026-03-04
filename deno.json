@@ -9,7 +9,8 @@
     "./graphx",
     "./crates/webgpu_x",
     "./crates/transportx",
-    "./crates/bytecodex"
+    "./crates/bytecodex",
+    "./crates/serialx"
   ],
   "nodeModulesDir": "none",
   "lock": true,
@@ -17,7 +18,8 @@
     "@std/assert": "jsr:@std/assert@^1.0.16",
     "@browserx/webgpu_x": "jsr:@browserx/webgpu_x",
     "@browserx/transportx": "./crates/transportx/transportx.ts",
-    "@browserx/bytecodex": "./crates/bytecodex/bytecodex.ts"
+    "@browserx/bytecodex": "./crates/bytecodex/bytecodex.ts",
+    "@browserx/serialx": "./crates/serialx/serialx.ts"
   },
   "tasks": {
     "browser:check": "cd browser && deno task check",
@@ -94,6 +96,9 @@
     "transportx:bindings": "cd crates/transportx && deno task bindings",
     "transportx:test": "cd crates/transportx && deno task test",
     "transportx:check": "cd crates/transportx && deno task check",
+
+    "serialx:build": "cd crates/serialx && deno task build",
+    "serialx:bindings": "cd crates/serialx && deno task bindings",
 
     "check:all": "deno task browser:check && deno task devtools:check && deno task proxy:check && deno task query:check && deno task runtime:check && deno task mcp:check && deno task graphx:check",
     "test:all": "deno task browser:test && deno task devtools:test && deno task proxy:test && deno task query:test && deno task runtime:test && deno task graphx:test",

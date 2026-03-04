@@ -1,0 +1,38 @@
+[package]
+name = "serialx"
+version = "0.1.0"
+edition = "2021"
+authors = ["LayerDynamics"]
+license = "MIT OR Apache-2.0"
+description = "Serial port and device communication library for BrowserX via FFI"
+repository = "https://github.com/LayerDynamics/BrowserX"
+readme = "README.md"
+keywords = ["deno", "ffi", "serial", "devices", "printer"]
+categories = ["hardware-support", "api-bindings"]
+
+[lib]
+name = "serialx"
+crate-type = ["cdylib"]
+
+[dependencies]
+deno_bindgen = "0.8.1"
+serialport = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lazy_static = "1.5.0"
+parking_lot = "0.12"
+log = "0.4"
+env_logger = "0.11"
+base64 = "0.22"
+
+[dev-dependencies]
+serial_test = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0

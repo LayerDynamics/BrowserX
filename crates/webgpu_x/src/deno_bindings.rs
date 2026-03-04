@@ -53,36 +53,20 @@ pub fn buffer_pool_evict() {
 // STAGING BELT
 // ============================================================================
 
-/// Result of a staging write operation
-#[deno_bindgen]
-pub struct StagingWrite {
-    pub buffer_handle: u64,
-    pub offset: u64,
-    pub size: u64,
-}
-
-/// Statistics about staging belt usage
-#[deno_bindgen]
-pub struct StagingBeltStats {
-    pub active_chunks: u32,
-    pub free_chunks: u32,
-    pub chunk_size: u64,
-    pub total_allocated: u64,
-}
-
 #[deno_bindgen]
 pub fn staging_belt_create(chunk_size: u64) -> u64 {
     crate::memory::staging_belt::staging_belt_create(chunk_size)
 }
 
+/// Write to staging belt
+/// Returns JSON: {"buffer_handle": u64, "offset": u64, "size": u64}
 #[deno_bindgen]
-pub fn staging_belt_write(belt_handle: u64, size: u64) -> StagingWrite {
+pub fn staging_belt_write(belt_handle: u64, size: u64) -> String {
     let write = crate::memory::staging_belt::staging_belt_write(belt_handle, size);
-    StagingWrite {
-        buffer_handle: write.buffer_handle,
-        offset: write.offset,
-        size: write.size,
-    }
+    format!(
+        r#"{{"buffer_handle":{},"offset":{},"size":{}}}"#,
+        write.buffer_handle, write.offset, write.size
+    )
 }
 
 #[deno_bindgen]
@@ -90,15 +74,15 @@ pub fn staging_belt_finish(belt_handle: u64) {
     crate::memory::staging_belt::staging_belt_finish(belt_handle);
 }
 
+/// Get staging belt statistics
+/// Returns JSON: {"active_chunks": u32, "free_chunks": u32, "chunk_size": u64, "total_allocated": u64}
 #[deno_bindgen]
-pub fn staging_belt_stats(belt_handle: u64) -> StagingBeltStats {
+pub fn staging_belt_stats(belt_handle: u64) -> String {
     let stats = crate::memory::staging_belt::staging_belt_stats(belt_handle);
-    StagingBeltStats {
-        active_chunks: stats.active_chunks,
-        free_chunks: stats.free_chunks,
-        chunk_size: stats.chunk_size,
-        total_allocated: stats.total_allocated,
-    }
+    format!(
+        r#"{{"active_chunks":{},"free_chunks":{},"chunk_size":{},"total_allocated":{}}}"#,
+        stats.active_chunks, stats.free_chunks, stats.chunk_size, stats.total_allocated
+    )
 }
 
 #[deno_bindgen]
@@ -228,31 +212,19 @@ pub fn texture_calculate_mip_levels(width: u32, height: u32) -> u32 {
 }
 
 /// Calculate texture dimensions at specific mip level
-/// Returns (width, height) as separate values via MipSize struct
+/// Returns JSON: {"width": u32, "height": u32}
 #[deno_bindgen]
-pub struct MipSize {
-    pub width: u32,
-    pub height: u32,
-}
-
-#[deno_bindgen]
-pub fn texture_get_mip_size(width: u32, height: u32, mip_level: u32) -> MipSize {
+pub fn texture_get_mip_size(width: u32, height: u32, mip_level: u32) -> String {
     let (w, h) = crate::texture::get_mip_level_size(width, height, mip_level);
-    MipSize { width: w, height: h }
+    format!(r#"{{"width":{},"height":{}}}"#, w, h)
 }
 
 /// Calculate 3D texture dimensions at specific mip level
+/// Returns JSON: {"width": u32, "height": u32, "depth": u32}
 #[deno_bindgen]
-pub struct MipSize3D {
-    pub width: u32,
-    pub height: u32,
-    pub depth: u32,
-}
-
-#[deno_bindgen]
-pub fn texture_get_mip_size_3d(width: u32, height: u32, depth: u32, mip_level: u32) -> MipSize3D {
+pub fn texture_get_mip_size_3d(width: u32, height: u32, depth: u32, mip_level: u32) -> String {
     let (w, h, d) = crate::texture::get_mip_level_size_3d(width, height, depth, mip_level);
-    MipSize3D { width: w, height: h, depth: d }
+    format!(r#"{{"width":{},"height":{},"depth":{}}}"#, w, h, d)
 }
 
 // ============================================================================
@@ -278,19 +250,12 @@ pub fn shader_detect_stage(file_path: &str) -> u32 {
     }
 }
 
-/// Shader cache statistics
-#[deno_bindgen]
-pub struct ShaderCacheStats {
-    pub cached_shaders: u32,
-}
-
 /// Get shader cache statistics
+/// Returns JSON: {"cached_shaders": u32}
 #[deno_bindgen]
-pub fn shader_cache_stats(cache_handle: u64) -> ShaderCacheStats {
+pub fn shader_cache_stats(cache_handle: u64) -> String {
     let stats = crate::shader::shader_cache_stats(cache_handle);
-    ShaderCacheStats {
-        cached_shaders: stats.cached_shaders,
-    }
+    format!(r#"{{"cached_shaders":{}}}"#, stats.cached_shaders)
 }
 
 /// Check if shader file has changed

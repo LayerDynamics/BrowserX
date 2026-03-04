@@ -235,6 +235,27 @@ export class RenderBox extends RenderObject {
       this.layout.height = 0 as Pixels;
     }
 
+    // Apply aspect-ratio: if one dimension is auto and we have a ratio
+    const aspectRatio = this.style.getPropertyValue("aspect-ratio");
+    if (aspectRatio && aspectRatio !== "auto") {
+      const ratio = this.parseAspectRatio(aspectRatio);
+      if (ratio > 0) {
+        const heightIsAuto = !heightValue || heightValue === "auto";
+        const widthIsAuto = !widthValue || widthValue === "auto";
+
+        if (heightIsAuto && !widthIsAuto) {
+          // Width set, compute height from ratio
+          this.layout.height = (this.layout.width / ratio) as Pixels;
+        } else if (widthIsAuto && !heightIsAuto) {
+          // Height set, compute width from ratio
+          this.layout.width = (this.layout.height * ratio) as Pixels;
+        } else if (heightIsAuto && widthIsAuto) {
+          // Both auto — use width from constraints, compute height
+          this.layout.height = (this.layout.width / ratio) as Pixels;
+        }
+      }
+    }
+
     // Apply height constraints
     const minHeight = this.getPixelValue("min-height");
     const maxHeight = this.getPixelValue("max-height", constraints.maxHeight);
@@ -245,6 +266,21 @@ export class RenderBox extends RenderObject {
     if (maxHeight > 0 && maxHeight < Number.POSITIVE_INFINITY) {
       this.layout.height = Math.min(this.layout.height, maxHeight) as Pixels;
     }
+  }
+
+  /**
+   * Parse aspect-ratio value (e.g., "16 / 9", "1.5", "1")
+   * Returns width/height ratio, or 0 if invalid
+   */
+  private parseAspectRatio(value: string): number {
+    if (value.includes("/")) {
+      const parts = value.split("/").map((s) => parseFloat(s.trim()));
+      if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[1] !== 0) {
+        return parts[0] / parts[1];
+      }
+    }
+    const num = parseFloat(value);
+    return isNaN(num) ? 0 : num;
   }
 
   /**

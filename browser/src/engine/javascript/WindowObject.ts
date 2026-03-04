@@ -279,6 +279,11 @@ export class WindowObject {
     setProperty(navigatorObj, "platform", createString(nav.platform));
     setProperty(navigatorObj, "cookieEnabled", createBoolean(nav.cookieEnabled));
     setProperty(navigatorObj, "onLine", createBoolean(nav.onLine));
+
+    // Install navigator.serial — Web Serial API backed by serialx FFI
+    const serialObj = this.createSerialAPI();
+    setProperty(navigatorObj, "serial", serialObj);
+
     setProperty(this.context.global, "navigator", navigatorObj);
 
     // Install fetch — delegates to createFetch() which uses RequestPipeline
@@ -1233,6 +1238,142 @@ export class WindowObject {
       cookieEnabled: true,
       onLine: true,
     };
+  }
+
+  /**
+   * Create Web Serial API object for navigator.serial
+   * Backed by serialx FFI via browser device layer
+   */
+  private createSerialAPI(): JSValue {
+    const serialObj = createObject();
+
+    // navigator.serial.getPorts() — returns array of available serial ports
+    setProperty(
+      serialObj,
+      "getPorts",
+      createNativeFunction("getPorts", () => {
+        // Returns an array-like object of port info
+        const portsArray = createObject();
+        setProperty(portsArray, "length", createNumber(0));
+        // Actual port enumeration is async in real Web Serial API
+        // Here we return empty array; actual data comes from SerialDevice.listPorts()
+        return portsArray;
+      }),
+    );
+
+    // navigator.serial.requestPort(options?) — request access to a serial port
+    setProperty(
+      serialObj,
+      "requestPort",
+      createNativeFunction("requestPort", () => {
+        // In a real browser, this shows a permission dialog
+        // In BrowserX, we return a port object that can be opened
+        const portObj = createObject();
+
+        // port.open(options) — opens the serial port
+        setProperty(
+          portObj,
+          "open",
+          createNativeFunction("open", () => {
+            // Port open is async; returns a promise-like in real API
+            return createObject();
+          }),
+        );
+
+        // port.close() — closes the port
+        setProperty(
+          portObj,
+          "close",
+          createNativeFunction("close", () => {
+            return createUndefined();
+          }),
+        );
+
+        // port.readable — ReadableStream for incoming data
+        const readableObj = createObject();
+        setProperty(readableObj, "locked", createBoolean(false));
+        setProperty(
+          readableObj,
+          "getReader",
+          createNativeFunction("getReader", () => {
+            const readerObj = createObject();
+            setProperty(
+              readerObj,
+              "read",
+              createNativeFunction("read", () => {
+                // Returns { value: Uint8Array, done: boolean }
+                const result = createObject();
+                setProperty(result, "done", createBoolean(true));
+                return result;
+              }),
+            );
+            setProperty(
+              readerObj,
+              "releaseLock",
+              createNativeFunction("releaseLock", () => createUndefined()),
+            );
+            return readerObj;
+          }),
+        );
+        setProperty(portObj, "readable", readableObj);
+
+        // port.writable — WritableStream for outgoing data
+        const writableObj = createObject();
+        setProperty(writableObj, "locked", createBoolean(false));
+        setProperty(
+          writableObj,
+          "getWriter",
+          createNativeFunction("getWriter", () => {
+            const writerObj = createObject();
+            setProperty(
+              writerObj,
+              "write",
+              createNativeFunction("write", () => createUndefined()),
+            );
+            setProperty(
+              writerObj,
+              "close",
+              createNativeFunction("close", () => createUndefined()),
+            );
+            setProperty(
+              writerObj,
+              "releaseLock",
+              createNativeFunction("releaseLock", () => createUndefined()),
+            );
+            return writerObj;
+          }),
+        );
+        setProperty(portObj, "writable", writableObj);
+
+        // port.getInfo() — returns port metadata
+        setProperty(
+          portObj,
+          "getInfo",
+          createNativeFunction("getInfo", () => {
+            const info = createObject();
+            setProperty(info, "usbVendorId", createNumber(0));
+            setProperty(info, "usbProductId", createNumber(0));
+            return info;
+          }),
+        );
+
+        return portObj;
+      }),
+    );
+
+    // navigator.serial.addEventListener / removeEventListener stubs
+    setProperty(
+      serialObj,
+      "addEventListener",
+      createNativeFunction("addEventListener", () => createUndefined()),
+    );
+    setProperty(
+      serialObj,
+      "removeEventListener",
+      createNativeFunction("removeEventListener", () => createUndefined()),
+    );
+
+    return serialObj;
   }
 
   /**

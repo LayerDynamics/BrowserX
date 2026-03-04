@@ -37,7 +37,8 @@ export type DomainName =
     | "Rendering"
     | "Console"
     | "Overlay"
-    | "Emulation";
+    | "Emulation"
+    | "Serial";
 
 /**
  * Fully-qualified method name: "Domain.method"

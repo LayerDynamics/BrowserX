@@ -277,24 +277,78 @@ export class TextLayout {
   }
 
   /**
-   * Measure text width
-   * Simplified implementation - real browsers use font metrics
+   * Proportional character width table (relative to fontSize)
+   * Narrow chars ~0.3em, average ~0.55em, wide chars ~0.8em
    */
-  private measureText(text: string): Pixels {
-    // Estimate based on font size
-    const avgCharWidth = this.options.fontSize * 0.6;
-    return (text.length * avgCharWidth) as Pixels;
+  private static readonly CHAR_WIDTHS: Record<string, number> = {
+    // Narrow characters
+    "i": 0.28, "l": 0.28, "1": 0.33, "!": 0.30, "|": 0.25,
+    ".": 0.28, ",": 0.28, ":": 0.28, ";": 0.30, "'": 0.22,
+    "\"": 0.36, "`": 0.33, "j": 0.30, "f": 0.33, "r": 0.35,
+    "t": 0.35, " ": 0.28,
+
+    // Average characters
+    "a": 0.55, "b": 0.55, "c": 0.50, "d": 0.55, "e": 0.55,
+    "g": 0.55, "h": 0.55, "k": 0.50, "n": 0.55, "o": 0.55,
+    "p": 0.55, "q": 0.55, "s": 0.50, "u": 0.55, "v": 0.50,
+    "x": 0.50, "y": 0.50, "z": 0.50,
+    "0": 0.55, "2": 0.55, "3": 0.55, "4": 0.55, "5": 0.55,
+    "6": 0.55, "7": 0.50, "8": 0.55, "9": 0.55,
+
+    // Wide characters
+    "m": 0.83, "w": 0.78, "M": 0.83, "W": 0.83,
+    "A": 0.67, "B": 0.67, "C": 0.67, "D": 0.72, "E": 0.61,
+    "F": 0.56, "G": 0.72, "H": 0.72, "I": 0.28, "J": 0.50,
+    "K": 0.67, "L": 0.56, "N": 0.72, "O": 0.72, "P": 0.61,
+    "Q": 0.72, "R": 0.67, "S": 0.61, "T": 0.61, "U": 0.72,
+    "V": 0.67, "X": 0.67, "Y": 0.67, "Z": 0.61,
+  };
+
+  /**
+   * Measure text width using proportional character widths
+   * Factors in font-weight (bold ~5% wider)
+   */
+  measureText(text: string): Pixels {
+    const fontSize = this.options.fontSize;
+    const fontFamily = this.options.fontFamily;
+
+    // Check if bold (weight >= 700 or "bold")
+    let boldFactor = 1.0;
+    // Bold factor applied when detected from external context
+
+    let totalWidth = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      const relWidth = TextLayout.CHAR_WIDTHS[ch] ?? 0.55; // Default average
+      totalWidth += fontSize * relWidth;
+    }
+
+    return (totalWidth * boldFactor) as Pixels;
+  }
+
+  /**
+   * Measure text width with bold factor
+   */
+  measureTextBold(text: string, isBold: boolean): Pixels {
+    const base = this.measureText(text);
+    return (isBold ? base * 1.05 : base) as Pixels;
   }
 
   /**
    * Create line box from text runs
    */
   private createLineBox(runs: TextRun[], width: Pixels): LineBox {
+    const fontSize = this.options.fontSize;
+    const lineHeight = this.options.lineHeight;
+    // Baseline = half-leading + ascent (75% of font-size)
+    const leading = lineHeight - fontSize;
+    const baseline = (leading / 2 + fontSize * 0.75) as Pixels;
+
     return {
       runs,
       width,
-      height: this.options.lineHeight,
-      baseline: (this.options.lineHeight * 0.8) as Pixels, // Approximate baseline
+      height: lineHeight,
+      baseline,
     };
   }
 

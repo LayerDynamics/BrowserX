@@ -26,3 +26,6 @@ export { RenderingDomain } from "./rendering/rendering-domain.ts";
 export { DebuggerDomain } from "./debugger/debugger-domain.ts";
 export { OverlayDomain } from "./overlay/overlay-domain.ts";
 export { EmulationDomain } from "./emulation/emulation-domain.ts";
+
+// Device domains
+export { SerialDomain } from "./serial/serial-domain.ts";

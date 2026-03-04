@@ -15,6 +15,7 @@ import type { LayoutConstraints } from "../../../types/rendering.ts";
 import { NormalFlowLayout } from "./NormalFlowLayout.ts";
 import { FlexboxLayout } from "./FlexboxLayout.ts";
 import { GridLayout } from "./GridLayout.ts";
+import { TableLayout } from "./TableLayout.ts";
 
 /**
  * Type guard to check if a RenderObject is a RenderBox
@@ -49,12 +50,14 @@ export class LayoutEngine {
   private normalFlowLayout: NormalFlowLayout;
   private flexboxLayout: FlexboxLayout;
   private gridLayout: GridLayout;
+  private tableLayout: TableLayout;
   private layoutStats: LayoutStats;
 
   constructor() {
     this.normalFlowLayout = new NormalFlowLayout();
     this.flexboxLayout = new FlexboxLayout();
     this.gridLayout = new GridLayout();
+    this.tableLayout = new TableLayout();
     this.layoutStats = {
       totalNodes: 0,
       layoutTime: 0,
@@ -116,7 +119,7 @@ export class LayoutEngine {
 
   /**
    * Layout children of a node
-   * Chooses appropriate layout algorithm
+   * Chooses appropriate layout algorithm, then recurses into grandchildren
    */
   private layoutChildren(parent: RenderObject, constraints: LayoutConstraints): void {
     const display = parent.style.getPropertyValue("display");
@@ -133,6 +136,11 @@ export class LayoutEngine {
         this.layoutGridChildren(parent, constraints);
         break;
 
+      case "table":
+      case "inline-table":
+        this.layoutTableChildren(parent, constraints);
+        break;
+
       case "block":
       case "flow-root":
         this.layoutBlockChildren(parent, constraints);
@@ -147,6 +155,34 @@ export class LayoutEngine {
         // Default to block layout
         this.layoutBlockChildren(parent, constraints);
         break;
+    }
+
+    // Recurse into children that have their own children needing layout
+    for (const child of parent.children) {
+      if (child.children.length > 0 && child.layout) {
+        const childConstraints = this.getConstraintsForNode(child, {
+          width: constraints.maxWidth,
+          height: constraints.maxHeight,
+        });
+        // Ensure each grandchild gets doLayout called, then recurse
+        for (const grandchild of child.children) {
+          if (grandchild.needsLayout) {
+            grandchild.doLayout(childConstraints);
+          }
+        }
+        this.layoutChildren(child, childConstraints);
+      }
+    }
+
+    // After all children are laid out, update parent's LayoutBox.children references
+    // so paint/composite can walk the LayoutBox tree
+    if (parent.layout && parent.children.length > 0) {
+      const childLayouts = parent.children
+        .filter((c) => c.layout !== null)
+        .map((c) => c.layout!);
+      if (childLayouts.length > 0) {
+        (parent.layout as any).children = childLayouts;
+      }
     }
   }
 
@@ -210,6 +246,21 @@ export class LayoutEngine {
     }
 
     this.gridLayout.layoutContainer(parent, parent.children, constraints);
+  }
+
+  /**
+   * Layout children using table layout
+   */
+  private layoutTableChildren(parent: RenderObject, constraints: LayoutConstraints): void {
+    if (!isRenderBox(parent)) {
+      return;
+    }
+
+    const contentHeight = this.tableLayout.layoutTable(parent, parent.children, constraints);
+
+    if (parent.layout && parent.style.getPropertyValue("height") === "auto") {
+      parent.layout.height = contentHeight;
+    }
   }
 
   /**

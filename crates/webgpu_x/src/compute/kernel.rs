@@ -1,6 +1,8 @@
 use deno_bindgen::deno_bindgen;
+use serde::{Deserialize, Serialize};
 
 /// Kernel parameter type
+#[derive(Serialize, Deserialize)]
 pub enum KernelParamType {
     Buffer,
     Texture,
@@ -9,6 +11,7 @@ pub enum KernelParamType {
 }
 
 /// Kernel parameter
+#[derive(Serialize, Deserialize)]
 pub struct KernelParam {
     pub name: String,
     pub param_type: KernelParamType,
@@ -17,6 +20,7 @@ pub struct KernelParam {
 }
 
 /// Kernel specification
+#[derive(Serialize, Deserialize)]
 pub struct KernelSpec {
     pub name: String,
     pub workgroup_size_x: u32,
@@ -113,16 +117,6 @@ pub fn kernel_generate_wgsl(spec: KernelSpec) -> String {
     wgsl
 }
 
-/// Kernel builder for simple kernels
-pub struct SimpleKernelBuilder {
-    pub name: String,
-    pub workgroup_size: u32,
-    pub input_buffers: Vec<String>,
-    pub output_buffers: Vec<String>,
-    pub uniforms: Vec<String>,
-    pub body: String,
-}
-
 /// Create simple 1D kernel
 pub fn create_simple_kernel_1d(
     name: String,
@@ -149,6 +143,17 @@ pub fn create_simple_kernel_1d(
         uniforms: Vec::new(),
         body: String::new(),
     }
+}
+
+/// Kernel builder for simple kernels
+#[derive(Serialize, Deserialize)]
+pub struct SimpleKernelBuilder {
+    pub name: String,
+    pub workgroup_size: u32,
+    pub input_buffers: Vec<String>,
+    pub output_buffers: Vec<String>,
+    pub uniforms: Vec<String>,
+    pub body: String,
 }
 
 /// Build WGSL from simple kernel
@@ -195,4 +200,136 @@ pub fn simple_kernel_build(builder: SimpleKernelBuilder) -> String {
     wgsl.push_str("\n}\n");
 
     wgsl
+}
+
+// ============================================================================
+// DENO FFI BINDINGS
+// ============================================================================
+
+/// Create a kernel specification
+/// Returns JSON-serialized KernelSpec
+#[deno_bindgen]
+pub fn kernel_create_spec(
+    name: &str,
+    workgroup_x: u32,
+    workgroup_y: u32,
+    workgroup_z: u32,
+) -> String {
+    let spec = create_kernel_spec(name.to_string(), workgroup_x, workgroup_y, workgroup_z);
+    serde_json::to_string(&spec).unwrap_or_default()
+}
+
+/// Add a parameter to a kernel specification
+/// spec_json: JSON-serialized KernelSpec
+/// param_type: 0=Buffer, 1=Texture, 2=Sampler, 3=Uniform
+/// Returns updated JSON-serialized KernelSpec
+#[deno_bindgen]
+pub fn kernel_spec_add_param(
+    spec_json: &str,
+    name: &str,
+    param_type: u32,
+    binding: u32,
+    group: u32,
+) -> String {
+    let spec: KernelSpec = match serde_json::from_str(spec_json) {
+        Ok(s) => s,
+        Err(_) => return String::new(),
+    };
+
+    let ptype = match param_type {
+        0 => KernelParamType::Buffer,
+        1 => KernelParamType::Texture,
+        2 => KernelParamType::Sampler,
+        3 => KernelParamType::Uniform,
+        _ => return String::new(),
+    };
+
+    let updated = kernel_add_param(spec, name.to_string(), ptype, binding, group);
+    serde_json::to_string(&updated).unwrap_or_default()
+}
+
+/// Set shader code on a kernel specification
+/// spec_json: JSON-serialized KernelSpec
+/// Returns updated JSON-serialized KernelSpec
+#[deno_bindgen]
+pub fn kernel_spec_set_shader(spec_json: &str, shader_code: &str) -> String {
+    let spec: KernelSpec = match serde_json::from_str(spec_json) {
+        Ok(s) => s,
+        Err(_) => return String::new(),
+    };
+
+    let updated = kernel_set_shader(spec, shader_code.to_string());
+    serde_json::to_string(&updated).unwrap_or_default()
+}
+
+/// Generate WGSL shader code from a kernel specification
+/// spec_json: JSON-serialized KernelSpec
+/// Returns generated WGSL source code
+#[deno_bindgen]
+pub fn kernel_spec_generate_wgsl(spec_json: &str) -> String {
+    let spec: KernelSpec = match serde_json::from_str(spec_json) {
+        Ok(s) => s,
+        Err(_) => return String::new(),
+    };
+
+    kernel_generate_wgsl(spec)
+}
+
+/// Create a simple 1D compute kernel builder
+/// Returns JSON-serialized SimpleKernelBuilder
+#[deno_bindgen]
+pub fn kernel_create_simple_1d(
+    name: &str,
+    workgroup_size: u32,
+    input_count: u32,
+    output_count: u32,
+) -> String {
+    let builder = create_simple_kernel_1d(
+        name.to_string(),
+        workgroup_size,
+        input_count,
+        output_count,
+    );
+    serde_json::to_string(&builder).unwrap_or_default()
+}
+
+/// Set the body of a simple kernel builder
+/// builder_json: JSON-serialized SimpleKernelBuilder
+/// Returns updated JSON-serialized SimpleKernelBuilder
+#[deno_bindgen]
+pub fn kernel_simple_set_body(builder_json: &str, body: &str) -> String {
+    let mut builder: SimpleKernelBuilder = match serde_json::from_str(builder_json) {
+        Ok(b) => b,
+        Err(_) => return String::new(),
+    };
+
+    builder.body = body.to_string();
+    serde_json::to_string(&builder).unwrap_or_default()
+}
+
+/// Add a uniform to a simple kernel builder
+/// builder_json: JSON-serialized SimpleKernelBuilder
+/// Returns updated JSON-serialized SimpleKernelBuilder
+#[deno_bindgen]
+pub fn kernel_simple_add_uniform(builder_json: &str, uniform_name: &str) -> String {
+    let mut builder: SimpleKernelBuilder = match serde_json::from_str(builder_json) {
+        Ok(b) => b,
+        Err(_) => return String::new(),
+    };
+
+    builder.uniforms.push(uniform_name.to_string());
+    serde_json::to_string(&builder).unwrap_or_default()
+}
+
+/// Build WGSL from a simple kernel builder
+/// builder_json: JSON-serialized SimpleKernelBuilder
+/// Returns generated WGSL source code
+#[deno_bindgen]
+pub fn kernel_simple_build(builder_json: &str) -> String {
+    let builder: SimpleKernelBuilder = match serde_json::from_str(builder_json) {
+        Ok(b) => b,
+        Err(_) => return String::new(),
+    };
+
+    simple_kernel_build(builder)
 }

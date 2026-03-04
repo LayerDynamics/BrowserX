@@ -7,3 +7,4 @@ export { registerQueryTools } from "./query-tools.ts";
 export { registerBrowserTools } from "./browser-tools.ts";
 export { registerProxyTools } from "./proxy-tools.ts";
 export { registerGraphTools } from "./graph-tools.ts";
+export { registerDeviceTools, cleanupSerialDevices } from "./device-tools.ts";

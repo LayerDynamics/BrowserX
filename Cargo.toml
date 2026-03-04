@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pixpane", "crates/webgpu_x", "crates/transportx"]
+members = ["crates/pixpane", "crates/webgpu_x", "crates/transportx", "crates/serialx"]
 exclude = ["crates/target", "target"]
 resolver = "2"
 

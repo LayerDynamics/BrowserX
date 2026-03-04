@@ -30,6 +30,9 @@ export class LayoutBoxImpl implements ILayoutBox {
   /** Optional DOM node ID for CDP DOM-layout correlation */
   nodeId?: number;
 
+  /** Sticky offset for compositor to apply during scroll */
+  stickyOffset: Pixels = 0 as Pixels;
+
   /**
    * Get content box dimensions
    */

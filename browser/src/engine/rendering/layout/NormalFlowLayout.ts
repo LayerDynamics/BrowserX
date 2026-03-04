@@ -15,6 +15,102 @@ import type { LayoutConstraints } from "../../../types/rendering.ts";
 import { TextLayout, type TextLayoutOptions } from "./TextLayout.ts";
 
 /**
+ * Float rect — tracks a floated element's occupied region
+ */
+export interface FloatRect {
+  x: Pixels;
+  y: Pixels;
+  width: Pixels;
+  height: Pixels;
+  side: "left" | "right";
+}
+
+/**
+ * Float context — tracks active floats within a BFC
+ */
+export class FloatContext {
+  private leftFloats: FloatRect[] = [];
+  private rightFloats: FloatRect[] = [];
+
+  addFloat(rect: FloatRect): void {
+    if (rect.side === "left") {
+      this.leftFloats.push(rect);
+    } else {
+      this.rightFloats.push(rect);
+    }
+  }
+
+  /**
+   * Get available width at a given Y position, accounting for active floats
+   */
+  getAvailableWidthAt(y: Pixels, containerWidth: Pixels): {
+    leftOffset: Pixels;
+    availableWidth: Pixels;
+  } {
+    let leftOffset = 0;
+    let rightOffset = 0;
+
+    for (const f of this.leftFloats) {
+      if (y >= f.y && y < (f.y + f.height)) {
+        leftOffset = Math.max(leftOffset, f.x + f.width);
+      }
+    }
+
+    for (const f of this.rightFloats) {
+      if (y >= f.y && y < (f.y + f.height)) {
+        rightOffset = Math.max(rightOffset, containerWidth - f.x);
+      }
+    }
+
+    return {
+      leftOffset: leftOffset as Pixels,
+      availableWidth: Math.max(0, containerWidth - leftOffset - rightOffset) as Pixels,
+    };
+  }
+
+  /**
+   * Get the Y position past all floats of the given side (for clear)
+   */
+  getClearY(side: "left" | "right" | "both"): Pixels {
+    let maxY = 0;
+
+    if (side === "left" || side === "both") {
+      for (const f of this.leftFloats) {
+        maxY = Math.max(maxY, f.y + f.height);
+      }
+    }
+
+    if (side === "right" || side === "both") {
+      for (const f of this.rightFloats) {
+        maxY = Math.max(maxY, f.y + f.height);
+      }
+    }
+
+    return maxY as Pixels;
+  }
+
+  /**
+   * Get the next Y position for placing a float of the given side
+   */
+  getNextFloatY(side: "left" | "right", containerWidth: Pixels): Pixels {
+    const floats = side === "left" ? this.leftFloats : this.rightFloats;
+    let maxY = 0;
+    for (const f of floats) {
+      maxY = Math.max(maxY, f.y + f.height);
+    }
+    return maxY as Pixels;
+  }
+
+  getLeftFloats(): FloatRect[] {
+    return [...this.leftFloats];
+  }
+
+  getRightFloats(): FloatRect[] {
+    return [...this.rightFloats];
+  }
+}
+
+/**
  * Formatting context type
  */
 export enum FormattingContext {
@@ -50,6 +146,23 @@ interface Line {
  * Implements normal flow layout algorithm for block and inline elements
  */
 export class NormalFlowLayout {
+  /** Float context for the current BFC */
+  private floatContext: FloatContext = new FloatContext();
+
+  /**
+   * Get the current float context
+   */
+  getFloatContext(): FloatContext {
+    return this.floatContext;
+  }
+
+  /**
+   * Reset float context (for new BFC)
+   */
+  resetFloatContext(): void {
+    this.floatContext = new FloatContext();
+  }
+
   /**
    * Layout children in block formatting context
    * Children stack vertically with margin collapse
@@ -68,11 +181,38 @@ export class NormalFlowLayout {
       throw new Error("Parent must have layout computed before laying out children");
     }
 
-    const availableWidth = this.getAvailableWidth(parent);
+    const containerWidth = this.getAvailableWidth(parent);
     let currentY = 0 as Pixels;
     let previousMarginBottom = 0 as Pixels;
 
+    // Reset float context for new BFC
+    this.resetFloatContext();
+
     for (const child of children) {
+      // Check if child is floated
+      const floatValue = child.style.getPropertyValue("float");
+      if (floatValue === "left" || floatValue === "right") {
+        this.layoutFloatInContext(child as RenderBox, parent, currentY);
+        continue;
+      }
+
+      // Handle clear property
+      const clearValue = child.style.getPropertyValue("clear");
+      if (clearValue === "left" || clearValue === "right" || clearValue === "both") {
+        const clearY = this.floatContext.getClearY(clearValue);
+        if (clearY > currentY) {
+          currentY = clearY;
+          previousMarginBottom = 0 as Pixels;
+        }
+      }
+
+      // Get available width accounting for floats at current Y
+      const parentContentY = (parent.layout.y + parent.layout.paddingTop + currentY);
+      const { leftOffset, availableWidth } = this.floatContext.getAvailableWidthAt(
+        parentContentY as Pixels,
+        containerWidth,
+      );
+
       // Create constraints for child
       const childConstraints: LayoutConstraints = {
         minWidth: 0 as Pixels,
@@ -93,9 +233,10 @@ export class NormalFlowLayout {
       const marginTop = child.layout.marginTop;
       const collapsedMargin = Math.max(previousMarginBottom, marginTop) as Pixels;
 
-      // Position child
+      // Position child — offset by float exclusion zone
       const childX = (parent.layout.x +
         parent.layout.paddingLeft +
+        leftOffset +
         child.layout.marginLeft) as Pixels;
       const childY = (parent.layout.y +
         parent.layout.paddingTop +
@@ -105,7 +246,6 @@ export class NormalFlowLayout {
       child.setPosition(childX, childY);
 
       // Update Y position for next child
-      // Don't include top margin (already collapsed) or bottom margin (will collapse with next)
       const childHeight = child.layout.getTotalHeight();
       const heightWithoutMargins = (childHeight -
         child.layout.marginTop -
@@ -116,7 +256,10 @@ export class NormalFlowLayout {
     }
 
     // Add final bottom margin to height
-    return (currentY + previousMarginBottom) as Pixels;
+    // Also ensure height encompasses all floats
+    const floatClearY = this.floatContext.getClearY("both");
+    const contentHeight = (currentY + previousMarginBottom) as Pixels;
+    return Math.max(contentHeight, floatClearY) as Pixels;
   }
 
   /**
@@ -137,17 +280,34 @@ export class NormalFlowLayout {
       throw new Error("Parent must have layout computed before laying out children");
     }
 
-    const availableWidth = this.getAvailableWidth(parent);
+    const containerWidth = this.getAvailableWidth(parent);
+
+    // Position lines vertically, accounting for float exclusion zones
+    let currentY = 0 as Pixels;
+
+    // Get available width at current Y accounting for floats
+    const parentContentY = (parent.layout.y + parent.layout.paddingTop + currentY);
+    const { leftOffset, availableWidth } = this.floatContext.getAvailableWidthAt(
+      parentContentY as Pixels,
+      containerWidth,
+    );
+
     const lines = this.buildLines(parent, children, availableWidth);
 
-    // Position lines vertically
-    let currentY = 0 as Pixels;
     for (const line of lines) {
+      // Re-check float exclusion at each line's Y
+      const lineAbsY = (parent.layout.y + parent.layout.paddingTop + currentY);
+      const floatInfo = this.floatContext.getAvailableWidthAt(
+        lineAbsY as Pixels,
+        containerWidth,
+      );
+
       line.y = currentY;
 
-      // Position boxes in line
+      // Position boxes in line — offset by float exclusion
       for (const box of line.boxes) {
-        const finalX = (parent.layout.x + parent.layout.paddingLeft + box.x) as Pixels;
+        const finalX = (parent.layout.x + parent.layout.paddingLeft +
+          floatInfo.leftOffset + box.x) as Pixels;
         const finalY = (parent.layout.y + parent.layout.paddingTop + currentY +
           (line.baseline - box.baseline)) as Pixels;
 
@@ -247,20 +407,29 @@ export class NormalFlowLayout {
 
   /**
    * Calculate baseline for an inline box
+   * Uses font metrics (~75% ascent) for text, bottom edge for replaced elements
    */
   private calculateBaseline(renderObject: RenderObject): Pixels {
     if (!renderObject.layout) {
       return 0 as Pixels;
     }
 
-    // For text, baseline is ~80% down
-    // For inline boxes, baseline is at bottom of content
     const isText = renderObject.constructor.name === "RenderText";
 
     if (isText) {
-      return (renderObject.layout.height * 0.8) as Pixels;
+      // Font baseline is approximately 75% of font-size (ascent)
+      // relative to the top of the line box
+      const fontSize = renderObject.getPixelValue("font-size", 16 as Pixels);
+      const lineHeight = renderObject.layout.height;
+      // Baseline = half-leading + ascent
+      const leading = (lineHeight - fontSize);
+      const ascent = fontSize * 0.75;
+      return (leading / 2 + ascent) as Pixels;
+    } else if (typeof renderObject.isReplaced === "function" && renderObject.isReplaced()) {
+      // Replaced elements: baseline at bottom edge
+      return renderObject.layout.height as Pixels;
     } else {
-      // For inline boxes, baseline is at the bottom of the content box
+      // Inline boxes: baseline from last inline child, or bottom of content
       return renderObject.layout.height as Pixels;
     }
   }
@@ -625,22 +794,32 @@ export class NormalFlowLayout {
   }
 
   /**
-   * Handle absolutely positioned element
-   * These are removed from normal flow
+   * Handle absolutely or fixed positioned element
+   * These are removed from normal flow.
+   * Fixed elements position relative to viewport, not containing block.
    */
   layoutAbsolutelyPositioned(
     renderObject: RenderBox,
     containingBlock: RenderBox,
+    viewport?: { width: Pixels; height: Pixels },
   ): void {
     if (!renderObject.layout || !containingBlock.layout) {
       return;
     }
 
-    // Apply shrink-to-fit width for auto-width absolutely positioned elements
+    const position = renderObject.style.getPropertyValue("position");
+    const isFixed = position === "fixed";
+
+    // For fixed positioning, use viewport as containing block
+    const cbX = isFixed && viewport ? (0 as Pixels) : containingBlock.layout.x;
+    const cbY = isFixed && viewport ? (0 as Pixels) : containingBlock.layout.y;
+    const cbWidth = isFixed && viewport ? viewport.width : containingBlock.layout.width;
+    const cbHeight = isFixed && viewport ? viewport.height : containingBlock.layout.height;
+
+    // Apply shrink-to-fit width for auto-width
     const widthValue = renderObject.style.getPropertyValue("width");
     if (!widthValue || widthValue === "auto") {
-      const availableWidth = containingBlock.layout.width as Pixels;
-      const shrinkWidth = this.calculateShrinkToFitWidth(renderObject, availableWidth);
+      const shrinkWidth = this.calculateShrinkToFitWidth(renderObject, cbWidth);
       renderObject.layout.width = shrinkWidth;
     }
 
@@ -650,27 +829,133 @@ export class NormalFlowLayout {
     const bottom = renderObject.style.getPropertyValue("bottom");
     const left = renderObject.style.getPropertyValue("left");
 
-    // Calculate position relative to containing block
-    let x = containingBlock.layout.x;
-    let y = containingBlock.layout.y;
+    // Calculate position relative to containing block (or viewport for fixed)
+    let x = cbX;
+    let y = cbY;
 
     if (left && left !== "auto") {
-      x = (containingBlock.layout.x + renderObject.getPixelValue("left")) as Pixels;
+      x = (cbX + renderObject.getPixelValue("left")) as Pixels;
     } else if (right && right !== "auto") {
-      x = (containingBlock.layout.x + containingBlock.layout.width -
+      x = (cbX + cbWidth -
         renderObject.layout.width -
         renderObject.getPixelValue("right")) as Pixels;
     }
 
     if (top && top !== "auto") {
-      y = (containingBlock.layout.y + renderObject.getPixelValue("top")) as Pixels;
+      y = (cbY + renderObject.getPixelValue("top")) as Pixels;
     } else if (bottom && bottom !== "auto") {
-      y = (containingBlock.layout.y + containingBlock.layout.height -
+      y = (cbY + cbHeight -
         renderObject.layout.height -
         renderObject.getPixelValue("bottom")) as Pixels;
     }
 
     renderObject.setPosition(x, y);
+  }
+
+  /**
+   * Handle sticky positioned element
+   * Sticky elements are in normal flow but store a sticky offset for scrolling.
+   * They behave as relative until scroll reaches their threshold, then fixed
+   * within their scroll container.
+   */
+  layoutStickyPositioned(
+    renderObject: RenderBox,
+    containingBlock: RenderBox,
+    scrollOffset: Pixels = 0 as Pixels,
+  ): { stickyOffset: Pixels } {
+    if (!renderObject.layout || !containingBlock.layout) {
+      return { stickyOffset: 0 as Pixels };
+    }
+
+    const top = renderObject.style.getPropertyValue("top");
+    const bottom = renderObject.style.getPropertyValue("bottom");
+
+    // Normal flow position (relative behavior)
+    const normalY = renderObject.layout.y;
+
+    // Sticky threshold
+    let stickyOffset = 0 as Pixels;
+
+    if (top && top !== "auto") {
+      const topThreshold = renderObject.getPixelValue("top");
+      // If scrolled past the element, stick it at the threshold
+      const stickyY = (containingBlock.layout.y + topThreshold) as Pixels;
+      if (scrollOffset > 0 && normalY - scrollOffset < stickyY) {
+        stickyOffset = (stickyY - (normalY - scrollOffset)) as Pixels;
+      }
+    } else if (bottom && bottom !== "auto") {
+      const bottomThreshold = renderObject.getPixelValue("bottom");
+      const containerBottom = (containingBlock.layout.y + containingBlock.layout.height) as Pixels;
+      const stickyY = (containerBottom - renderObject.layout.height - bottomThreshold) as Pixels;
+      if (normalY + scrollOffset > stickyY) {
+        stickyOffset = (stickyY - normalY - scrollOffset) as Pixels;
+      }
+    }
+
+    // Clamp sticky offset within container bounds
+    const containerTop = containingBlock.layout.y;
+    const containerBottom = (containingBlock.layout.y + containingBlock.layout.height -
+      renderObject.layout.height);
+    const adjustedY = (normalY + stickyOffset) as Pixels;
+    if (adjustedY < containerTop) {
+      stickyOffset = (containerTop - normalY) as Pixels;
+    } else if (adjustedY > containerBottom) {
+      stickyOffset = (containerBottom - normalY) as Pixels;
+    }
+
+    return { stickyOffset };
+  }
+
+  /**
+   * Layout a float within the current BFC, registering it in the float context
+   */
+  private layoutFloatInContext(
+    renderObject: RenderBox,
+    containingBlock: RenderBox,
+    currentY: Pixels,
+  ): void {
+    if (!renderObject.layout || !containingBlock.layout) {
+      return;
+    }
+
+    const floatSide = renderObject.style.getPropertyValue("float") as "left" | "right";
+    const containerWidth = this.getAvailableWidth(containingBlock);
+
+    // Apply shrink-to-fit width
+    const widthValue = renderObject.style.getPropertyValue("width");
+    if (!widthValue || widthValue === "auto") {
+      const shrinkWidth = this.calculateShrinkToFitWidth(renderObject, containerWidth);
+      renderObject.layout.width = shrinkWidth;
+    }
+
+    // Layout children to determine height
+    renderObject.doLayout({
+      minWidth: 0 as Pixels,
+      maxWidth: renderObject.layout.width,
+      minHeight: 0 as Pixels,
+      maxHeight: Number.POSITIVE_INFINITY as Pixels,
+    });
+
+    const absY = (containingBlock.layout.y + containingBlock.layout.paddingTop + currentY) as Pixels;
+
+    let x: Pixels;
+    if (floatSide === "left") {
+      x = (containingBlock.layout.x + containingBlock.layout.paddingLeft) as Pixels;
+    } else {
+      x = (containingBlock.layout.x + containingBlock.layout.paddingLeft +
+        containerWidth - renderObject.layout.width) as Pixels;
+    }
+
+    renderObject.setPosition(x, absY);
+
+    // Register in float context
+    this.floatContext.addFloat({
+      x: (x - containingBlock.layout.x - containingBlock.layout.paddingLeft) as Pixels,
+      y: currentY,
+      width: renderObject.layout.width,
+      height: renderObject.layout.height || renderObject.layout.getTotalHeight(),
+      side: floatSide,
+    });
   }
 
   /**
