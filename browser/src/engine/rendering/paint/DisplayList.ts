@@ -573,7 +573,7 @@ export class DisplayList {
     // Simplified - only check rect commands
     if ("x" in command && "y" in command && "width" in command && "height" in command) {
       return this.boxesIntersect(
-        { x: command.x, y: command.y, width: command.width, height: command.height },
+        { x: command.x as number, y: command.y as number, width: command.width as number, height: command.height as number },
         region,
       );
     }

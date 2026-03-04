@@ -2225,10 +2225,10 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
                 const sw = seg.w ?? 0;
                 const sh = seg.h ?? 0;
                 // Transform all 4 corners for correct bounding box under rotation
-                const [tx0, ty0] = transformPoint(seg.x, seg.y);
-                const [tx1, ty1] = transformPoint(seg.x + sw, seg.y);
-                const [tx2, ty2] = transformPoint(seg.x + sw, seg.y + sh);
-                const [tx3, ty3] = transformPoint(seg.x, seg.y + sh);
+                const [tx0, ty0] = transformPoint(seg.x!, seg.y!);
+                const [tx1, ty1] = transformPoint(seg.x! + sw, seg.y!);
+                const [tx2, ty2] = transformPoint(seg.x! + sw, seg.y! + sh);
+                const [tx3, ty3] = transformPoint(seg.x!, seg.y! + sh);
                 const newClip = {
                   x: Math.min(tx0, tx1, tx2, tx3),
                   y: Math.min(ty0, ty1, ty2, ty3),

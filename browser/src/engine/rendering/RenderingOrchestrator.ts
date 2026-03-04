@@ -203,10 +203,10 @@ export class RenderingOrchestrator {
       );
 
       // 4.5. Execute JavaScript (if enabled)
-      this.emitStage("script-execution", "Script Execution", "running", Date.now());
+      const scriptStart = Date.now();
+      this.emitStage("script-execution", "Script Execution", "running", scriptStart);
       let scriptExecutor: ScriptExecutor | undefined;
       if (options.enableJavaScript ?? this.enableJavaScript) {
-        const scriptStart = Date.now();
         scriptExecutor = new ScriptExecutor(
           dom,
           url.toString(),
@@ -225,7 +225,7 @@ export class RenderingOrchestrator {
         "script-execution",
         "Script Execution",
         "completed",
-        Date.now(),
+        scriptStart,
         Date.now(),
         timing.scriptExecution,
         scriptExecutor,
@@ -315,6 +315,9 @@ export class RenderingOrchestrator {
         false,
       );
 
+      // Upload paint layer tree to compositor for layer-aware compositing
+      this.compositor.updateLayerTree(paintResult.layerTree);
+
       timing.paintRecording = Date.now() - paintStart;
       this.emitStage(
         "paint",
@@ -326,7 +329,7 @@ export class RenderingOrchestrator {
         displayList,
       );
 
-      // 7.5. Pass render tree to compositor for CPU rendering
+      // 7.5. Pass render tree to compositor as fallback for CPU rendering
       if (this.compositor.isCPUMode()) {
         this.compositor.setRenderTree(rootRenderObject);
       }

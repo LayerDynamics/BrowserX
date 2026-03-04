@@ -67,7 +67,7 @@ export class RequestPipelineError extends Error {
   constructor(
     message: string,
     public readonly stage: string,
-    public readonly cause?: Error,
+    public override readonly cause?: Error,
   ) {
     super(message);
     this.name = "RequestPipelineError";

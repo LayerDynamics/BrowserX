@@ -894,9 +894,8 @@ export class IgnitionInterpreter {
     if (obj.type === JSValueType.OBJECT || obj.type === JSValueType.FUNCTION) {
       // Inline cache check: same object identity + same property name
       const cached = this.propertyCache.get(cacheKey);
-      if (cached && cached.name === name && cached.objectRef.deref() === obj.value) {
-        // Verify the property still exists with same value (monomorphic guard)
-        const current = obj.value.properties.get(name);
+      if (cached && cached.name === name && cached.objectRef.deref() === (obj.value as unknown as Record<string, unknown>)) {
+        const current = (obj.value as import("./JSValue.ts").JSObject).properties.get(name);
         if (current !== undefined && current === cached.value) {
           this.accumulator = cached.value;
           this.cacheHits++;
@@ -953,7 +952,7 @@ export class IgnitionInterpreter {
 
       // Invalidate any inline cache entries that reference this object + property
       for (const [key, entry] of this.propertyCache) {
-        if (entry.name === name && entry.objectRef.deref() === obj.value) {
+        if (entry.name === name && entry.objectRef.deref() === (obj.value as unknown as Record<string, unknown>)) {
           this.propertyCache.delete(key);
         }
       }

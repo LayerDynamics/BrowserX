@@ -695,9 +695,10 @@ export class ComputePipeline {
       );
     }
 
-    // Execute compute pass
+    // Execute compute pass — unwrap PipelineResult to native pipeline
+    const nativePipeline = pipeline.nativePipeline ?? pipeline as unknown as GPUComputePipeline;
     await this.executeComputePass(commandEncoder, {
-      pipeline,
+      pipeline: nativePipeline,
       bindGroups,
       dispatchWorkgroups: dispatch,
       label: config.label,

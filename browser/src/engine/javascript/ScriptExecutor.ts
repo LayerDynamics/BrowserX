@@ -424,7 +424,7 @@ export class ScriptExecutor {
     }
 
     // Fallback: check for documentElement
-    if (doc.documentElement) {
+    if ((doc as unknown as { documentElement?: unknown }).documentElement) {
       return;
     }
 

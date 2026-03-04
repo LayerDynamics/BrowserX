@@ -134,7 +134,7 @@ ${new TextDecoder("latin1").decode(imageData)}
 endstream`;
     } else if (isPNG) {
       // PNG requires decoding to raw RGB data, then re-compress for FlateDecode
-      const rawData = await this.decodePNG(imageData);
+      const rawData = await this.decodePNG(imageData as Uint8Array<ArrayBuffer>);
       const compressed = await this.compressDeflate(rawData);
       imageContent = `<<
   /Type /XObject
@@ -257,7 +257,7 @@ endstream`;
       const writer = ds.writable.getWriter();
       const reader = ds.readable.getReader();
 
-      const writePromise = writer.write(data).then(() => writer.close());
+      const writePromise = writer.write(data as unknown as BufferSource).then(() => writer.close());
       const chunks: Uint8Array[] = [];
 
       while (true) {
@@ -289,7 +289,7 @@ endstream`;
     const writer = cs.writable.getWriter();
     const reader = cs.readable.getReader();
 
-    const writePromise = writer.write(data).then(() => writer.close());
+    const writePromise = writer.write(data as unknown as BufferSource).then(() => writer.close());
     const chunks: Uint8Array[] = [];
 
     while (true) {

@@ -288,7 +288,7 @@ export async function checkRevocationStatus(cert: Certificate, issuerCert?: Cert
       const issuerDNBytes = (cert as Certificate & { issuerRaw?: ByteBuffer }).issuerRaw
         ?? (issuerCert as Certificate & { issuerRaw?: ByteBuffer }).issuerRaw
         ?? derEncodeDistinguishedName(cert.issuer);
-      nameHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerDNBytes));
+      nameHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerDNBytes as BufferSource));
       keyHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerCert.publicKey));
     } else {
       // No issuer cert available — use zero-byte placeholders (OCSP responder may return "unknown")
