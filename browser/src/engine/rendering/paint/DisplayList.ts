@@ -237,6 +237,8 @@ export class DisplayList {
   private commands: AnyPaintCommand[] = [];
   private boundingBox: BoundingBox | null = null;
   private readonly imageCache: Map<string, CanvasImageSource> = new Map();
+  /** Tracks the active shadow extents for conservative bbox expansion */
+  private activeShadowExtent: number = 0;
 
   /**
    * Add a command to the display list
@@ -260,6 +262,7 @@ export class DisplayList {
     this.commands = [];
     this.boundingBox = null;
     this.imageCache.clear();
+    this.activeShadowExtent = 0;
   }
 
   /**
@@ -323,6 +326,14 @@ export class DisplayList {
    * Update bounding box based on command
    */
   private updateBoundingBox(command: AnyPaintCommand): void {
+    // Track active shadow for conservative bbox expansion
+    if (command.type === PaintCommandType.SET_SHADOW) {
+      const shadowCmd = command as SetShadowCommand;
+      const extent = Math.abs(shadowCmd.offsetX) + Math.abs(shadowCmd.offsetY) + shadowCmd.blur;
+      this.activeShadowExtent = extent;
+      return;
+    }
+
     let commandBox: BoundingBox | null = null;
 
     switch (command.type) {
@@ -362,6 +373,17 @@ export class DisplayList {
         };
         break;
       }
+    }
+
+    // Expand commandBox by active shadow extent for damage correctness
+    if (commandBox && this.activeShadowExtent > 0) {
+      const ext = this.activeShadowExtent;
+      commandBox = {
+        x: (commandBox.x - ext) as Pixels,
+        y: (commandBox.y - ext) as Pixels,
+        width: (commandBox.width + ext * 2) as Pixels,
+        height: (commandBox.height + ext * 2) as Pixels,
+      };
     }
 
     if (commandBox) {

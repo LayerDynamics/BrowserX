@@ -400,11 +400,15 @@ export class RenderingOrchestrator {
       }
 
       // Wrap in save/restore for opacity
-      const opacity = style?.getPropertyValue("opacity");
-      const hasOpacity = opacity && parseFloat(opacity) < 1;
+      const opacityStr = style?.getPropertyValue("opacity");
+      const opacityValue =
+        opacityStr != null ? parseFloat(opacityStr) : Number.NaN;
+      const hasOpacity = !Number.isNaN(opacityValue) && opacityValue < 1;
+
       if (hasOpacity) {
         context.save();
-        context.setOpacity(parseFloat(opacity));
+        const clampedOpacity = Math.max(0, Math.min(1, opacityValue));
+        context.setOpacity(clampedOpacity);
       }
 
       // box-shadow — paint shadow before background
@@ -488,7 +492,7 @@ export class RenderingOrchestrator {
         // text-shadow
         const textShadow = style?.getPropertyValue("text-shadow");
         if (textShadow && textShadow !== "none") {
-          const shadow = this.parseBoxShadow(textShadow);
+          const shadow = this.parseTextShadow(textShadow);
           if (shadow) {
             context.setShadow(
               shadow.offsetX as Pixels,
@@ -570,6 +574,46 @@ export class RenderingOrchestrator {
         color: match[4].trim(),
       };
     }
+    return null;
+  }
+
+  /**
+   * Parse a text-shadow CSS value
+   * Supports 2-length (offsetX offsetY color) and 3-length (offsetX offsetY blur color) forms.
+   * Only parses the first shadow if comma-separated multiples are present.
+   */
+  private parseTextShadow(
+    value: string,
+  ): { offsetX: number; offsetY: number; blur: number; color: string } | null {
+    // Take only the first shadow if multiple are specified
+    const firstShadow = value.split(",")[0].trim();
+
+    // Try 3-length: offsetX offsetY blur color
+    const match3 = firstShadow.match(
+      /(-?\d+(?:\.\d+)?)\s*px\s+(-?\d+(?:\.\d+)?)\s*px\s+(-?\d+(?:\.\d+)?)\s*px\s+(.*)/,
+    );
+    if (match3) {
+      return {
+        offsetX: parseFloat(match3[1]),
+        offsetY: parseFloat(match3[2]),
+        blur: parseFloat(match3[3]),
+        color: match3[4].trim(),
+      };
+    }
+
+    // Try 2-length: offsetX offsetY color (blur defaults to 0)
+    const match2 = firstShadow.match(
+      /(-?\d+(?:\.\d+)?)\s*px\s+(-?\d+(?:\.\d+)?)\s*px\s+(.*)/,
+    );
+    if (match2) {
+      return {
+        offsetX: parseFloat(match2[1]),
+        offsetY: parseFloat(match2[2]),
+        blur: 0,
+        color: match2[3].trim(),
+      };
+    }
+
     return null;
   }
 }

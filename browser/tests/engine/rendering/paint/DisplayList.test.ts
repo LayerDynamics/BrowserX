@@ -12,6 +12,7 @@ import {
   PaintCommandType,
   type RestoreCommand,
   type SaveCommand,
+  type SetShadowCommand,
   type StrokeRectCommand,
   type StrokeTextCommand,
   type TranslateCommand,
@@ -917,5 +918,66 @@ Deno.test({
     assertEquals(dst.length(), 2);
     assertEquals(dst.getCommands()[0].type, PaintCommandType.SAVE);
     assertEquals(dst.getCommands()[1].type, PaintCommandType.FILL_RECT);
+  },
+});
+
+// ============================================================================
+// Shadow-aware Bounding Box Tests
+// ============================================================================
+
+Deno.test({
+  name: "DisplayList - SET_SHADOW expands subsequent command bounding boxes",
+  fn() {
+    const list = new DisplayList();
+
+    // Set a shadow with offset 5px, 5px, blur 10px
+    list.add({
+      type: PaintCommandType.SET_SHADOW,
+      offsetX: 5 as any,
+      offsetY: 5 as any,
+      blur: 10 as any,
+      color: "rgba(0,0,0,0.5)",
+    });
+
+    // Add a rect at (100, 100) 50x50
+    list.add({
+      type: PaintCommandType.FILL_RECT,
+      x: 100 as any,
+      y: 100 as any,
+      width: 50 as any,
+      height: 50 as any,
+      color: "red",
+    });
+
+    const bbox = list.getBoundingBox();
+    assertExists(bbox);
+    // Shadow extent = |5| + |5| + 10 = 20
+    // bbox should be expanded: x=100-20=80, y=100-20=80, w=50+40=90, h=50+40=90
+    assertEquals(bbox.x, 80);
+    assertEquals(bbox.y, 80);
+    assertEquals(bbox.width, 90);
+    assertEquals(bbox.height, 90);
+  },
+});
+
+Deno.test({
+  name: "DisplayList - bounding box not expanded without shadow",
+  fn() {
+    const list = new DisplayList();
+    list.add({
+      type: PaintCommandType.FILL_RECT,
+      x: 10 as any,
+      y: 10 as any,
+      width: 50 as any,
+      height: 50 as any,
+      color: "blue",
+    });
+
+    const bbox = list.getBoundingBox();
+    assertExists(bbox);
+    assertEquals(bbox.x, 10);
+    assertEquals(bbox.y, 10);
+    assertEquals(bbox.width, 50);
+    assertEquals(bbox.height, 50);
   },
 });

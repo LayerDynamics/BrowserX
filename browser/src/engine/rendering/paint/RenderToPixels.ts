@@ -67,7 +67,7 @@ export class RenderToPixels {
   private context: CanvasRenderingContext2D | null = null;
   private lastPaintedTree: RenderObject | null = null;
   private damageRegions: BoundingBox[] = [];
-  private displayListCache: WeakMap<RenderObject, DisplayList> = new WeakMap();
+  private displayListCache: WeakMap<PaintLayer, DisplayList> = new WeakMap();
 
   constructor() {
     this.paintOrder = new PaintOrder();
@@ -423,7 +423,13 @@ export class RenderToPixels {
     for (const obj of dirtyObjects) {
       const bounds = this.getLayoutBounds(obj);
       this.invalidateRegion(bounds);
-      this.displayListCache.delete(obj);
+      // Invalidate cache for the layer containing this dirty object
+      for (const layer of this.layerTree.getAllLayers()) {
+        if (layer.getRenderObjects().includes(obj)) {
+          this.displayListCache.delete(layer);
+          break;
+        }
+      }
     }
   }
 
@@ -499,9 +505,9 @@ export class RenderToPixels {
       const allClean = renderObjects.length > 0 &&
         renderObjects.every((obj) => !obj.needsPaint);
 
-      if (allClean && renderObjects.length > 0) {
-        // Check if we have a cached display list for the first render object
-        const cached = this.displayListCache.get(renderObjects[0]);
+      if (allClean) {
+        // Check if we have a cached display list for this layer
+        const cached = this.displayListCache.get(layer);
         if (cached) {
           // Replay cached display list into the layer
           const displayList = layer.getDisplayList();
@@ -515,30 +521,33 @@ export class RenderToPixels {
       // Paint normally
       layer.paint();
 
-      // Cache the display list for each render object in this layer
-      if (renderObjects.length > 0) {
-        const displayListCopy = new DisplayList();
-        for (const cmd of layer.getDisplayList().getCommands()) {
-          displayListCopy.add(cmd);
-        }
-        // Cache against the first render object as the key
-        this.displayListCache.set(renderObjects[0], displayListCopy);
+      // Cache the display list keyed by the layer itself
+      const displayListCopy = new DisplayList();
+      for (const cmd of layer.getDisplayList().getCommands()) {
+        displayListCopy.add(cmd);
       }
+      this.displayListCache.set(layer, displayListCopy);
     }
   }
 
   /**
-   * Invalidate display list cache for a render object
+   * Invalidate display list cache for a render object by finding its layer
    */
   invalidateCache(renderObject: RenderObject): void {
-    this.displayListCache.delete(renderObject);
+    if (!this.layerTree) return;
+    for (const layer of this.layerTree.getAllLayers()) {
+      if (layer.getRenderObjects().includes(renderObject)) {
+        this.displayListCache.delete(layer);
+        break;
+      }
+    }
   }
 
   /**
    * Clear the entire display list cache
    */
   clearCache(): void {
-    this.displayListCache = new WeakMap();
+    this.displayListCache = new WeakMap<PaintLayer, DisplayList>();
   }
 
   /**
