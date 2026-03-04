@@ -28,6 +28,7 @@ import { RenderingPipelineError } from "../RenderingPipeline.ts";
 import { ResourceFetcher } from "./ResourceFetcher.ts";
 import type { RequestPipeline } from "../RequestPipeline.ts";
 import { RenderToPixels } from "./paint/RenderToPixels.ts";
+import { WindowRenderer, type PresentFrameInfo } from "./WindowRenderer.ts";
 
 /**
  * RenderingOrchestrator runs the main render pipeline and manages the observer.
@@ -43,6 +44,8 @@ export class RenderingOrchestrator {
   };
   private csp?: ContentSecurityPolicy;
   private renderToPixels: RenderToPixels;
+  private windowRenderer: WindowRenderer | null = null;
+  private lastPresentFrameInfo: PresentFrameInfo | null = null;
 
   constructor(
     private resourceFetcher: ResourceFetcher,
@@ -67,6 +70,23 @@ export class RenderingOrchestrator {
     displayList: unknown;
   } | undefined {
     return this.lastRenderArtifacts;
+  }
+
+  /**
+   * Set a WindowRenderer to present frames after compositing.
+   * When set, each render() call will push pixels to the renderer.
+   */
+  setWindowRenderer(renderer: WindowRenderer | null): void {
+    this.windowRenderer = renderer;
+  }
+
+  getWindowRenderer(): WindowRenderer | null {
+    return this.windowRenderer;
+  }
+
+  /** Get the frame info from the last present() call. */
+  getLastPresentFrameInfo(): PresentFrameInfo | null {
+    return this.lastPresentFrameInfo;
   }
 
   setCSP(csp: ContentSecurityPolicy | undefined): void {
@@ -234,6 +254,8 @@ export class RenderingOrchestrator {
       // 5. Build Render Tree
       this.emitStage("style-resolution", "Style Resolution", "running", Date.now());
       const styleStart = Date.now();
+      // Set viewport dimensions on CSSOM for @media query evaluation
+      cssom.setViewport(this.width, this.height);
       const styleResolver = new StyleResolver(cssom);
       const renderTree = new RenderTree();
 
@@ -278,11 +300,33 @@ export class RenderingOrchestrator {
         layoutTree,
       );
 
-      // 6.5. Fetch images
+      // 6.5. Fetch images (both <img> tags and CSS background-image URLs)
       const enableImages = options.enableImages ?? true;
       let imageMap = new Map<string, import("../../types/dom.ts").CanvasImageSource>();
       if (enableImages) {
         imageMap = await this.resourceFetcher.fetchImages(htmlResult, url, options.signal);
+
+        // Also discover and fetch CSS background-image URLs from the render tree
+        const bgUrls = this.collectBackgroundImageUrls(rootRenderObject);
+        for (const bgUrl of bgUrls) {
+          if (!imageMap.has(bgUrl)) {
+            try {
+              const resolved = new URL(bgUrl, url);
+              const imgResult = await this.resourceFetcher.getRequestPipeline().get(resolved, { signal: options.signal });
+              const imgData = imgResult.response.body;
+              try {
+                const contentType = imgResult.response.headers?.get("content-type") || "image/png";
+                const blob = new Blob([imgData], { type: contentType });
+                const bitmap = await createImageBitmap(blob as unknown as ImageBitmapSource);
+                imageMap.set(bgUrl, bitmap as unknown as import("../../types/dom.ts").CanvasImageSource);
+              } catch {
+                imageMap.set(bgUrl, { width: 0, height: 0, close: () => {}, _data: imgData } as any);
+              }
+            } catch {
+              // Background image fetch failed — skip silently
+            }
+          }
+        }
       }
 
       // 7. Paint
@@ -314,6 +358,15 @@ export class RenderingOrchestrator {
         this.height as Pixels,
         false,
       );
+
+      // Register fetched images on all layer display lists so DRAW_IMAGE commands render
+      if (imageMap.size > 0) {
+        for (const layer of paintResult.layerTree.getAllLayers()) {
+          for (const [src, img] of imageMap) {
+            layer.getDisplayList().registerImage(src, img);
+          }
+        }
+      }
 
       // Upload paint layer tree to compositor for layer-aware compositing
       this.compositor.updateLayerTree(paintResult.layerTree);
@@ -347,6 +400,28 @@ export class RenderingOrchestrator {
         Date.now(),
         timing.compositing,
       );
+
+      // 9. Present — push pixels to native window or offscreen buffer
+      if (this.windowRenderer && this.windowRenderer.isRunning()) {
+        this.emitStage("present", "Present", "running", Date.now());
+        const presentStart = Date.now();
+        const pixels = await this.compositor.getPixels();
+        this.lastPresentFrameInfo = this.windowRenderer.present(
+          pixels,
+          this.width,
+          this.height,
+        );
+        const presentDuration = Date.now() - presentStart;
+        this.emitStage(
+          "present",
+          "Present",
+          "completed",
+          presentStart,
+          Date.now(),
+          presentDuration,
+          this.lastPresentFrameInfo,
+        );
+      }
 
       timing.total = Date.now() - startTime;
 
@@ -438,17 +513,58 @@ export class RenderingOrchestrator {
         }
       }
 
-      // Background
+      // Parse border-radius for this element
+      const borderRadiusStr = style?.getPropertyValue("border-radius");
+      let radii: [number, number, number, number] | null = null;
+      if (borderRadiusStr && borderRadiusStr !== "0" && borderRadiusStr !== "0px") {
+        const parts = borderRadiusStr.split(/\s+/).map((p: string) => parseFloat(p) || 0);
+        if (parts.some((p: number) => p > 0)) {
+          if (parts.length === 1) radii = [parts[0], parts[0], parts[0], parts[0]];
+          else if (parts.length === 2) radii = [parts[0], parts[1], parts[0], parts[1]];
+          else if (parts.length === 3) radii = [parts[0], parts[1], parts[2], parts[1]];
+          else radii = [parts[0], parts[1], parts[2], parts[3]];
+        }
+      }
+
+      // Background color
       if (style) {
         const bgColor = style.getPropertyValue("background-color");
         if (bgColor && bgColor !== "transparent") {
-          context.fillRect(
-            layoutBox.x,
-            layoutBox.y,
-            layoutBox.width,
-            layoutBox.height,
-            bgColor,
-          );
+          if (radii) {
+            context.fillRoundedRect(
+              layoutBox.x,
+              layoutBox.y,
+              layoutBox.width,
+              layoutBox.height,
+              bgColor,
+              radii,
+            );
+          } else {
+            context.fillRect(
+              layoutBox.x,
+              layoutBox.y,
+              layoutBox.width,
+              layoutBox.height,
+              bgColor,
+            );
+          }
+        }
+      }
+
+      // Background image
+      if (style) {
+        const bgImage = style.getPropertyValue("background-image");
+        if (bgImage && bgImage !== "none") {
+          const urlMatch = bgImage.match(/url\(["']?([^"')]+)["']?\)/);
+          if (urlMatch) {
+            context.drawImage(
+              urlMatch[1],
+              layoutBox.x,
+              layoutBox.y,
+              layoutBox.width,
+              layoutBox.height,
+            );
+          }
         }
       }
 
@@ -461,14 +577,26 @@ export class RenderingOrchestrator {
         if (borderColor && borderWidthStr) {
           const borderWidth = parseFloat(borderWidthStr) as Pixels;
           if (borderWidth > 0) {
-            context.strokeRect(
-              layoutBox.x,
-              layoutBox.y,
-              layoutBox.width,
-              layoutBox.height,
-              borderColor,
-              borderWidth,
-            );
+            if (radii) {
+              context.strokeRoundedRect(
+                layoutBox.x,
+                layoutBox.y,
+                layoutBox.width,
+                layoutBox.height,
+                borderColor,
+                borderWidth,
+                radii,
+              );
+            } else {
+              context.strokeRect(
+                layoutBox.x,
+                layoutBox.y,
+                layoutBox.width,
+                layoutBox.height,
+                borderColor,
+                borderWidth,
+              );
+            }
           }
         }
       }
@@ -488,7 +616,8 @@ export class RenderingOrchestrator {
       if (layoutBox.type === "text" && layoutBox.text) {
         const color = style?.getPropertyValue("color") || "#000000";
         const fontSizeStr = style?.getPropertyValue("font-size");
-        const fontSize = fontSizeStr ? parseFloat(fontSizeStr) : 16;
+        const fontSizeParsed = fontSizeStr ? parseFloat(fontSizeStr) : 16;
+        const fontSize = Number.isFinite(fontSizeParsed) ? fontSizeParsed : 16;
         const fontFamily = style?.getPropertyValue("font-family") || "sans-serif";
         const font = `${fontSize}px ${fontFamily}`;
 
@@ -506,10 +635,13 @@ export class RenderingOrchestrator {
           }
         }
 
+        // layoutBox.y is the box top; canvas fillText expects baseline y.
+        // Baseline = box top + ascent (~80% of fontSize).
+        const baseline = (layoutBox.y as number) + fontSize * 0.80;
         context.fillText(
           layoutBox.text,
           layoutBox.x,
-          layoutBox.y,
+          baseline as Pixels,
           font,
           color,
         );
@@ -618,5 +750,26 @@ export class RenderingOrchestrator {
     }
 
     return null;
+  }
+
+  /**
+   * Collect all CSS background-image URLs from the render tree.
+   */
+  private collectBackgroundImageUrls(root: import("./rendering/RenderObject.ts").RenderObject): string[] {
+    const urls: string[] = [];
+    const visit = (obj: import("./rendering/RenderObject.ts").RenderObject) => {
+      const bgImage = obj.style.getPropertyValue("background-image");
+      if (bgImage && bgImage !== "none") {
+        const urlMatch = bgImage.match(/url\(["']?([^"')]+)["']?\)/);
+        if (urlMatch) {
+          urls.push(urlMatch[1]);
+        }
+      }
+      for (const child of obj.children) {
+        visit(child);
+      }
+    };
+    visit(root);
+    return urls;
   }
 }
