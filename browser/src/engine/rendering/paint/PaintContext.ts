@@ -115,4 +115,34 @@ export class PaintContext {
       params: { alpha: opacity },
     });
   }
+
+  /**
+   * Set shadow
+   */
+  setShadow(offsetX: Pixels, offsetY: Pixels, blur: Pixels, color: string): void {
+    this.commands.push({
+      type: PaintCommandType.SET_SHADOW,
+      params: { offsetX, offsetY, blur, color },
+    });
+  }
+
+  /**
+   * Clear shadow
+   */
+  clearShadow(): void {
+    this.commands.push({
+      type: PaintCommandType.SET_SHADOW,
+      params: { offsetX: 0, offsetY: 0, blur: 0, color: "transparent" },
+    });
+  }
+
+  /**
+   * Set font
+   */
+  setFont(font: string): void {
+    this.commands.push({
+      type: PaintCommandType.SET_FONT,
+      params: { font },
+    });
+  }
 }

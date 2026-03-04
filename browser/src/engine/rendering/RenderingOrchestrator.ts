@@ -27,6 +27,7 @@ import type {
 import { RenderingPipelineError } from "../RenderingPipeline.ts";
 import { ResourceFetcher } from "./ResourceFetcher.ts";
 import type { RequestPipeline } from "../RequestPipeline.ts";
+import { RenderToPixels } from "./paint/RenderToPixels.ts";
 
 /**
  * RenderingOrchestrator runs the main render pipeline and manages the observer.
@@ -41,6 +42,7 @@ export class RenderingOrchestrator {
     displayList: unknown;
   };
   private csp?: ContentSecurityPolicy;
+  private renderToPixels: RenderToPixels;
 
   constructor(
     private resourceFetcher: ResourceFetcher,
@@ -49,7 +51,9 @@ export class RenderingOrchestrator {
     private height: number,
     private enableJavaScript: boolean,
     private storageManager?: StorageManager,
-  ) {}
+  ) {
+    this.renderToPixels = new RenderToPixels();
+  }
 
   setObserver(observer: PipelineObserver): void {
     this.observer = observer;
@@ -303,6 +307,14 @@ export class RenderingOrchestrator {
         displayList.registerImage(src, img);
       }
 
+      // Also paint through RenderToPixels for stacking-context-aware layer tree
+      const paintResult = this.renderToPixels.paint(
+        rootRenderObject,
+        this.width as Pixels,
+        this.height as Pixels,
+        false,
+      );
+
       timing.paintRecording = Date.now() - paintStart;
       this.emitStage(
         "paint",
@@ -341,6 +353,7 @@ export class RenderingOrchestrator {
         renderTree,
         layoutTree,
         displayList,
+        layerTree: paintResult.layerTree,
         scriptExecutor,
         timing: timing as RenderingTiming,
         resources: this.resourceFetcher.getResources(),
@@ -378,6 +391,47 @@ export class RenderingOrchestrator {
     try {
       const style = layoutBox.style;
 
+      // visibility: hidden — skip paint but preserve layout space
+      if (style) {
+        const visibility = style.getPropertyValue("visibility");
+        if (visibility === "hidden") {
+          return;
+        }
+      }
+
+      // Wrap in save/restore for opacity
+      const opacity = style?.getPropertyValue("opacity");
+      const hasOpacity = opacity && parseFloat(opacity) < 1;
+      if (hasOpacity) {
+        context.save();
+        context.setOpacity(parseFloat(opacity));
+      }
+
+      // box-shadow — paint shadow before background
+      if (style) {
+        const boxShadow = style.getPropertyValue("box-shadow");
+        if (boxShadow && boxShadow !== "none") {
+          const shadow = this.parseBoxShadow(boxShadow);
+          if (shadow) {
+            context.setShadow(
+              shadow.offsetX as Pixels,
+              shadow.offsetY as Pixels,
+              shadow.blur as Pixels,
+              shadow.color,
+            );
+            context.fillRect(
+              layoutBox.x,
+              layoutBox.y,
+              layoutBox.width,
+              layoutBox.height,
+              style.getPropertyValue("background-color") || "transparent",
+            );
+            context.clearShadow();
+          }
+        }
+      }
+
+      // Background
       if (style) {
         const bgColor = style.getPropertyValue("background-color");
         if (bgColor && bgColor !== "transparent") {
@@ -391,6 +445,7 @@ export class RenderingOrchestrator {
         }
       }
 
+      // Borders
       if (style) {
         const borderColor = style.getPropertyValue("border-color") ||
           style.getPropertyValue("border-top-color");
@@ -411,6 +466,7 @@ export class RenderingOrchestrator {
         }
       }
 
+      // Images
       if (layoutBox.src) {
         context.drawImage(
           layoutBox.src,
@@ -421,12 +477,28 @@ export class RenderingOrchestrator {
         );
       }
 
+      // Text
       if (layoutBox.type === "text" && layoutBox.text) {
         const color = style?.getPropertyValue("color") || "#000000";
         const fontSizeStr = style?.getPropertyValue("font-size");
         const fontSize = fontSizeStr ? parseFloat(fontSizeStr) : 16;
         const fontFamily = style?.getPropertyValue("font-family") || "sans-serif";
         const font = `${fontSize}px ${fontFamily}`;
+
+        // text-shadow
+        const textShadow = style?.getPropertyValue("text-shadow");
+        if (textShadow && textShadow !== "none") {
+          const shadow = this.parseBoxShadow(textShadow);
+          if (shadow) {
+            context.setShadow(
+              shadow.offsetX as Pixels,
+              shadow.offsetY as Pixels,
+              shadow.blur as Pixels,
+              shadow.color,
+            );
+          }
+        }
+
         context.fillText(
           layoutBox.text,
           layoutBox.x,
@@ -434,12 +506,41 @@ export class RenderingOrchestrator {
           font,
           color,
         );
+
+        if (textShadow && textShadow !== "none") {
+          context.clearShadow();
+        }
       }
 
+      // Outline (OUTLINE phase — painted after foreground)
+      if (style) {
+        const outlineColor = style.getPropertyValue("outline-color");
+        const outlineWidthStr = style.getPropertyValue("outline-width");
+        const outlineStyle = style.getPropertyValue("outline-style");
+        if (outlineColor && outlineWidthStr && outlineStyle && outlineStyle !== "none") {
+          const outlineWidth = parseFloat(outlineWidthStr) as Pixels;
+          if (outlineWidth > 0) {
+            context.strokeRect(
+              (layoutBox.x - outlineWidth) as Pixels,
+              (layoutBox.y - outlineWidth) as Pixels,
+              (layoutBox.width + outlineWidth * 2) as Pixels,
+              (layoutBox.height + outlineWidth * 2) as Pixels,
+              outlineColor,
+              outlineWidth,
+            );
+          }
+        }
+      }
+
+      // Children
       if (layoutBox.children) {
         for (const child of layoutBox.children) {
           this.paint(child, context);
         }
+      }
+
+      if (hasOpacity) {
+        context.restore();
       }
     } catch (error) {
       throw new RenderingPipelineError(
@@ -448,5 +549,27 @@ export class RenderingOrchestrator {
         error instanceof Error ? error : undefined,
       );
     }
+  }
+
+  /**
+   * Parse a box-shadow or text-shadow CSS value
+   * Simplified: handles "offsetX offsetY blur color" format
+   */
+  private parseBoxShadow(
+    value: string,
+  ): { offsetX: number; offsetY: number; blur: number; color: string } | null {
+    // Match patterns like "2px 2px 4px rgba(0,0,0,0.5)" or "2px 2px 4px #000"
+    const match = value.match(
+      /(-?\d+(?:\.\d+)?)\s*px\s+(-?\d+(?:\.\d+)?)\s*px\s+(-?\d+(?:\.\d+)?)\s*px\s+(.*)/,
+    );
+    if (match) {
+      return {
+        offsetX: parseFloat(match[1]),
+        offsetY: parseFloat(match[2]),
+        blur: parseFloat(match[3]),
+        color: match[4].trim(),
+      };
+    }
+    return null;
   }
 }

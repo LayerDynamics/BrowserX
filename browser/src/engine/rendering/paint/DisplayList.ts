@@ -180,6 +180,22 @@ export interface SetShadowCommand extends PaintCommand {
 }
 
 /**
+ * Transform matrix command
+ */
+export interface TransformMatrixCommand extends PaintCommand {
+  type: PaintCommandType.TRANSFORM;
+  matrix: import("../../../types/rendering.ts").TransformMatrix;
+}
+
+/**
+ * Set opacity command (alias for SET_GLOBAL_ALPHA via SET_OPACITY enum)
+ */
+export interface SetOpacityCommand extends PaintCommand {
+  type: PaintCommandType.SET_OPACITY;
+  alpha: number;
+}
+
+/**
  * Union of all command types
  */
 export type AnyPaintCommand =
@@ -199,7 +215,9 @@ export type AnyPaintCommand =
   | SetLineWidthCommand
   | SetFontCommand
   | SetGlobalAlphaCommand
-  | SetShadowCommand;
+  | SetShadowCommand
+  | TransformMatrixCommand
+  | SetOpacityCommand;
 
 /**
  * Bounding box for damage tracking
@@ -328,8 +346,22 @@ export class DisplayList {
         };
         break;
 
-        // Text and other commands would need proper measurement
-        // Simplified here
+      case PaintCommandType.FILL_TEXT:
+      case PaintCommandType.STROKE_TEXT: {
+        // Estimate text bounds from font size
+        const fontSize = this.extractFontSize((command as any).font || "16px sans-serif");
+        const textLength = ((command as any).text || "").length;
+        const estimatedWidth = (textLength * fontSize * 0.6) as Pixels;
+        const estimatedHeight = fontSize as Pixels;
+        commandBox = {
+          x: (command as any).x as Pixels,
+          // Text y is baseline, so shift up by fontSize
+          y: ((command as any).y - fontSize) as Pixels,
+          width: estimatedWidth,
+          height: estimatedHeight,
+        };
+        break;
+      }
     }
 
     if (commandBox) {
@@ -356,6 +388,14 @@ export class DisplayList {
         };
       }
     }
+  }
+
+  /**
+   * Extract font size in pixels from a CSS font string like "16px sans-serif"
+   */
+  private extractFontSize(font: string): number {
+    const match = font.match(/(\d+(?:\.\d+)?)\s*px/);
+    return match ? parseFloat(match[1]) : 16;
   }
 
   /**

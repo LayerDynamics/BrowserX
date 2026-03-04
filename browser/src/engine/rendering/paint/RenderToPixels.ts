@@ -67,6 +67,7 @@ export class RenderToPixels {
   private context: CanvasRenderingContext2D | null = null;
   private lastPaintedTree: RenderObject | null = null;
   private damageRegions: BoundingBox[] = [];
+  private displayListCache: WeakMap<RenderObject, DisplayList> = new WeakMap();
 
   constructor() {
     this.paintOrder = new PaintOrder();
@@ -113,9 +114,9 @@ export class RenderToPixels {
     // Promote eligible layers to GPU
     this.layerTree.promoteToGPU();
 
-    // Paint dirty layers
+    // Paint dirty layers (with caching)
     const paintStartTime = performance.now();
-    this.layerTree.paintDirtyLayers();
+    this.paintLayersWithCache(this.layerTree);
     const paintTime = performance.now() - paintStartTime;
 
     // Composite layers to canvas
@@ -407,14 +408,40 @@ export class RenderToPixels {
       return;
     }
 
-    // Find render objects that need repainting
+    // Find render objects that need repainting (paint or layout dirty)
     const dirtyObjects = this.findDirtyRenderObjects(root);
 
-    // Invalidate layers containing dirty objects
+    // Also collect objects with dirty layout flags
+    const layoutDirtyObjects = this.findLayoutDirtyObjects(root);
+    for (const obj of layoutDirtyObjects) {
+      if (!dirtyObjects.includes(obj)) {
+        dirtyObjects.push(obj);
+      }
+    }
+
+    // Invalidate layers containing dirty objects and cache
     for (const obj of dirtyObjects) {
       const bounds = this.getLayoutBounds(obj);
       this.invalidateRegion(bounds);
+      this.displayListCache.delete(obj);
     }
+  }
+
+  /**
+   * Find render objects with dirty layout flags
+   */
+  private findLayoutDirtyObjects(root: RenderObject): RenderObject[] {
+    const dirty: RenderObject[] = [];
+    const visit = (node: RenderObject) => {
+      if (node.needsLayout) {
+        dirty.push(node);
+      }
+      for (const child of node.children) {
+        visit(child);
+      }
+    };
+    visit(root);
+    return dirty;
   }
 
   /**
@@ -449,6 +476,81 @@ export class RenderToPixels {
         layer.invalidateRegion(region);
       }
     }
+  }
+
+  /**
+   * Paint layers with display list caching
+   * If a layer's render objects haven't changed (no needsPaint), replay cached display list
+   */
+  private paintLayersWithCache(layerTree: LayerTree): void {
+    const dirtyLayers = layerTree.getDirtyLayers();
+    for (const layer of dirtyLayers) {
+      // Skip layers outside all damage regions when we have damage info
+      if (this.damageRegions.length > 0) {
+        const layerBounds = layer.getBounds();
+        const intersectsDamage = this.damageRegions.some((region) =>
+          this.boundsIntersect(layerBounds, region)
+        );
+        if (!intersectsDamage) {
+          continue;
+        }
+      }
+      const renderObjects = layer.getRenderObjects();
+      const allClean = renderObjects.length > 0 &&
+        renderObjects.every((obj) => !obj.needsPaint);
+
+      if (allClean && renderObjects.length > 0) {
+        // Check if we have a cached display list for the first render object
+        const cached = this.displayListCache.get(renderObjects[0]);
+        if (cached) {
+          // Replay cached display list into the layer
+          const displayList = layer.getDisplayList();
+          displayList.clear();
+          displayList.merge(cached);
+          layer.markClean();
+          continue;
+        }
+      }
+
+      // Paint normally
+      layer.paint();
+
+      // Cache the display list for each render object in this layer
+      if (renderObjects.length > 0) {
+        const displayListCopy = new DisplayList();
+        for (const cmd of layer.getDisplayList().getCommands()) {
+          displayListCopy.add(cmd);
+        }
+        // Cache against the first render object as the key
+        this.displayListCache.set(renderObjects[0], displayListCopy);
+      }
+    }
+  }
+
+  /**
+   * Invalidate display list cache for a render object
+   */
+  invalidateCache(renderObject: RenderObject): void {
+    this.displayListCache.delete(renderObject);
+  }
+
+  /**
+   * Clear the entire display list cache
+   */
+  clearCache(): void {
+    this.displayListCache = new WeakMap();
+  }
+
+  /**
+   * Check if two bounding boxes intersect
+   */
+  private boundsIntersect(a: BoundingBox, b: BoundingBox): boolean {
+    return !(
+      a.x + a.width < b.x ||
+      b.x + b.width < a.x ||
+      a.y + a.height < b.y ||
+      b.y + b.height < a.y
+    );
   }
 
   /**

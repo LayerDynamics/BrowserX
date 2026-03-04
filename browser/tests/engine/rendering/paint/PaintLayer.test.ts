@@ -1075,3 +1075,52 @@ Deno.test({
     assert(usage >= 0);
   },
 });
+
+// ============================================================================
+// PaintLayer.createRecordingContext wiring tests
+// ============================================================================
+
+Deno.test({
+  name: "PaintLayer - paint() records commands into displayList",
+  fn() {
+    const bounds: BoundingBox = { x: 0, y: 0, width: 100, height: 100 };
+    const layer = new PaintLayer("layer-1" as LayerID, bounds);
+
+    // Create a mock render object that paints a rect
+    const ro = createMockRenderObject("ro1", true);
+    (ro as any).paint = (ctx: any) => {
+      ctx.fillRect(0, 0, 50, 50, "red");
+    };
+
+    layer.addRenderObject(ro);
+    layer.paint();
+
+    const commands = layer.getDisplayList().getCommands();
+    assert(commands.length > 0);
+    assertEquals(commands[0].type, "fillRect");
+  },
+});
+
+Deno.test({
+  name: "PaintLayer - recording context commands getter reflects displayList",
+  fn() {
+    const bounds: BoundingBox = { x: 0, y: 0, width: 100, height: 100 };
+    const layer = new PaintLayer("layer-1" as LayerID, bounds);
+
+    let capturedCtx: any = null;
+    const ro = createMockRenderObject("ro1", true);
+    (ro as any).paint = (ctx: any) => {
+      capturedCtx = ctx;
+      ctx.save();
+      ctx.fillRect(0, 0, 10, 10, "blue");
+      ctx.restore();
+    };
+
+    layer.addRenderObject(ro);
+    layer.paint();
+
+    // The commands property should reflect the display list
+    assertExists(capturedCtx);
+    assertEquals(capturedCtx.commands.length, 3); // save, fillRect, restore
+  },
+});

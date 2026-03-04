@@ -60,6 +60,7 @@ export interface RenderingResult {
   renderTree: RenderTree;
   layoutTree: LayoutBox;
   displayList: DisplayList;
+  layerTree?: import("./rendering/paint/PaintLayer.ts").LayerTree;
   scriptExecutor?: ScriptExecutor;
   timing: RenderingTiming;
   resources: ResourceInfo[];

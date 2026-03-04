@@ -281,10 +281,11 @@ export class PaintLayer {
    */
   private createRecordingContext(): PaintContext {
     const displayList = this.displayList;
-    const commands: import("./PaintCommand.ts").PaintCommand[] = [];
 
     return {
-      commands,
+      get commands() {
+        return displayList.getCommands() as import("./PaintCommand.ts").PaintCommand[];
+      },
       fillRect: (x: Pixels, y: Pixels, width: Pixels, height: Pixels, color: string) => {
         displayList.add({
           type: PaintCommandType.FILL_RECT,
