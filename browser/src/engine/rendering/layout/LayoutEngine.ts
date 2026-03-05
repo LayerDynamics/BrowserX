@@ -141,6 +141,20 @@ export class LayoutEngine {
         this.layoutTableChildren(parent, constraints);
         break;
 
+      case "table-row":
+      case "table-row-group":
+      case "table-header-group":
+      case "table-footer-group":
+        // Table rows/groups are laid out by the parent table's layoutTable()
+        // Don't re-layout as block — just recurse into cell contents
+        break;
+
+      case "table-cell":
+        // Table cells are positioned by the parent table layout
+        // Layout their inner content as block flow
+        this.layoutBlockChildren(parent, constraints);
+        break;
+
       case "block":
       case "flow-root":
         this.layoutBlockChildren(parent, constraints);

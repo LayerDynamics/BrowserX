@@ -95,8 +95,7 @@ export class RenderTreeBuilder {
     "header", "footer", "h1", "h2", "h3", "h4", "h5", "h6",
     "p", "blockquote", "pre", "figure", "figcaption",
     "ul", "ol", "dl", "dt", "dd", "form", "fieldset", "legend",
-    "details", "summary", "dialog", "address", "hr",
-    "table", "thead", "tbody", "tfoot", "tr",
+    "details", "summary", "dialog", "address", "hr", "center",
     "noscript", "template", "hgroup", "search",
   ]);
 
@@ -140,6 +139,8 @@ export class RenderTreeBuilder {
     "i": { "font-style": "italic" },
     "em": { "font-style": "italic" },
     "small": { "font-size": "13px" },
+    "center": { "text-align": "center" },
+    "font": {},
   };
 
   /**
@@ -153,13 +154,13 @@ export class RenderTreeBuilder {
     // Apply UA display defaults if author didn't set display
     const authorDisplay = style.getPropertyValue("display");
     if (!authorDisplay || authorDisplay === "inline") {
-      // Only override if no author rule set it — check if it's the CSS initial value
-      if (RenderTreeBuilder.UA_BLOCK_ELEMENTS.has(tag)) {
+      // Table elements get their specific display values (must check before block)
+      if (tag in RenderTreeBuilder.UA_TABLE_ELEMENTS) {
+        style.setProperty("display", RenderTreeBuilder.UA_TABLE_ELEMENTS[tag]);
+      } else if (RenderTreeBuilder.UA_BLOCK_ELEMENTS.has(tag)) {
         style.setProperty("display", "block");
       } else if (RenderTreeBuilder.UA_LIST_ITEM_ELEMENTS.has(tag)) {
         style.setProperty("display", "list-item");
-      } else if (tag in RenderTreeBuilder.UA_TABLE_ELEMENTS) {
-        style.setProperty("display", RenderTreeBuilder.UA_TABLE_ELEMENTS[tag]);
       }
     }
 
@@ -177,6 +178,115 @@ export class RenderTreeBuilder {
   }
 
   /**
+   * Apply HTML presentational attributes (bgcolor, color, width, align, font tag, etc.)
+   * These have lower specificity than CSS — only apply if no author style is set.
+   */
+  private applyPresentationalAttributes(element: DOMElement, style: ComputedStyle): void {
+    if (!element.getAttribute) return;
+    const tag = element.tagName?.toLowerCase();
+
+    // bgcolor attribute → background-color
+    const bgcolor = element.getAttribute("bgcolor");
+    if (bgcolor) {
+      const existing = style.getPropertyValue("background-color");
+      if (!existing || existing === "transparent" || existing === "rgba(0, 0, 0, 0)") {
+        style.setProperty("background-color", bgcolor);
+      }
+    }
+
+    // color attribute → color
+    const color = element.getAttribute("color");
+    if (color && !style.getPropertyValue("color")) {
+      style.setProperty("color", color.startsWith("#") ? color : color);
+    }
+
+    // width attribute → width (on table, td, th, img, etc.)
+    const width = element.getAttribute("width");
+    if (width) {
+      const w = width.endsWith("%") ? width : width + "px";
+      if (!style.getPropertyValue("width")) style.setProperty("width", w);
+    }
+
+    // height attribute
+    const height = element.getAttribute("height");
+    if (height) {
+      const h = height.endsWith("%") ? height : height + "px";
+      if (!style.getPropertyValue("height")) style.setProperty("height", h);
+    }
+
+    // align attribute → text-align
+    const align = element.getAttribute("align");
+    if (align && !style.getPropertyValue("text-align")) {
+      style.setProperty("text-align", align.toLowerCase());
+    }
+
+    // valign attribute → vertical-align
+    const valign = element.getAttribute("valign");
+    if (valign && !style.getPropertyValue("vertical-align")) {
+      style.setProperty("vertical-align", valign.toLowerCase());
+    }
+
+    // cellpadding on table → padding on td/th children (stored as data for layout)
+    const cellpadding = element.getAttribute("cellpadding");
+    if (cellpadding && (tag === "table")) {
+      style.setProperty("--cellpadding", cellpadding + "px");
+    }
+
+    // cellspacing on table → border-spacing
+    const cellspacing = element.getAttribute("cellspacing");
+    if (cellspacing && (tag === "table") && !style.getPropertyValue("border-spacing")) {
+      style.setProperty("border-spacing", cellspacing + "px");
+    }
+
+    // border attribute
+    const border = element.getAttribute("border");
+    if (border && !style.getPropertyValue("border-width")) {
+      const bw = border === "0" ? "0" : (border + "px");
+      style.setProperty("border-width", bw);
+      if (border !== "0") {
+        style.setProperty("border-style", "solid");
+        style.setProperty("border-color", "#000");
+      }
+    }
+
+    // <font> tag attributes
+    if (tag === "font") {
+      const fcolor = element.getAttribute("color");
+      if (fcolor) style.setProperty("color", fcolor);
+      const fsize = element.getAttribute("size");
+      if (fsize) {
+        // HTML font size: 1-7 maps to CSS px values
+        const sizeMap: Record<string, string> = {
+          "1": "10px", "2": "13px", "3": "16px", "4": "18px",
+          "5": "24px", "6": "32px", "7": "48px",
+          "-2": "10px", "-1": "13px", "+0": "16px",
+          "+1": "18px", "+2": "24px", "+3": "32px", "+4": "48px",
+        };
+        style.setProperty("font-size", sizeMap[fsize] || "16px");
+      }
+      const fface = element.getAttribute("face");
+      if (fface) style.setProperty("font-family", fface);
+    }
+
+    // Inherit cellpadding from parent table to td/th
+    if (tag === "td" || tag === "th") {
+      // Walk up to find parent table's cellpadding
+      let parent = element.parentNode;
+      while (parent) {
+        const pEl = parent as DOMElement;
+        if (pEl.tagName?.toLowerCase() === "table") {
+          const cp = pEl.getAttribute?.("cellpadding");
+          if (cp && cp !== "0" && !style.getPropertyValue("padding")) {
+            style.setProperty("padding", cp + "px");
+          }
+          break;
+        }
+        parent = pEl.parentNode;
+      }
+    }
+  }
+
+  /**
    * Create appropriate RenderObject type based on element and style
    */
   private createRenderObject(element: DOMElement, style: ComputedStyle): RenderObject {
@@ -184,6 +294,9 @@ export class RenderTreeBuilder {
 
     // Apply user-agent default styles
     this.applyUADefaults(tagName, style);
+
+    // Apply HTML presentational attributes
+    this.applyPresentationalAttributes(element, style);
 
     // Check if replaced element
     if (this.isReplacedElement(tagName)) {
