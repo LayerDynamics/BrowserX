@@ -103,6 +103,7 @@ export interface RenderObject {
   // Layout
   layout: LayoutBox | null;
   needsLayout: boolean;
+  hasDescendantsNeedingLayout: boolean;
 
   // Paint
   paintLayer: PaintLayer | null;
@@ -154,6 +155,8 @@ export enum PaintCommandType {
   SET_SHADOW = "setShadow",
   TRANSFORM = "transform",
   SET_OPACITY = "setOpacity",
+  FILL_ROUNDED_RECT = "fillRoundedRect",
+  STROKE_ROUNDED_RECT = "strokeRoundedRect",
 }
 
 /**
@@ -219,6 +222,46 @@ export interface PaintContext {
    * Set opacity
    */
   setOpacity(opacity: number): void;
+
+  /**
+   * Set shadow
+   */
+  setShadow(offsetX: Pixels, offsetY: Pixels, blur: Pixels, color: string): void;
+
+  /**
+   * Clear shadow
+   */
+  clearShadow(): void;
+
+  /**
+   * Set font
+   */
+  setFont(font: string): void;
+
+  /**
+   * Fill rounded rectangle
+   */
+  fillRoundedRect(
+    x: Pixels,
+    y: Pixels,
+    width: Pixels,
+    height: Pixels,
+    color: string,
+    radii: [number, number, number, number],
+  ): void;
+
+  /**
+   * Stroke rounded rectangle
+   */
+  strokeRoundedRect(
+    x: Pixels,
+    y: Pixels,
+    width: Pixels,
+    height: Pixels,
+    color: string,
+    lineWidth: Pixels,
+    radii: [number, number, number, number],
+  ): void;
 }
 
 /**

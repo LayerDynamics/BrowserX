@@ -356,6 +356,68 @@ export class PaintLayer {
           alpha: opacity,
         });
       },
+      setShadow: (offsetX: Pixels, offsetY: Pixels, blur: Pixels, color: string) => {
+        displayList.add({
+          type: PaintCommandType.SET_SHADOW,
+          offsetX,
+          offsetY,
+          blur,
+          color,
+        });
+      },
+      clearShadow: () => {
+        displayList.add({
+          type: PaintCommandType.SET_SHADOW,
+          offsetX: 0,
+          offsetY: 0,
+          blur: 0,
+          color: "transparent",
+        });
+      },
+      setFont: (font: string) => {
+        displayList.add({
+          type: PaintCommandType.SET_FONT,
+          font,
+        });
+      },
+      fillRoundedRect: (
+        x: Pixels,
+        y: Pixels,
+        width: Pixels,
+        height: Pixels,
+        color: string,
+        radii: [number, number, number, number],
+      ) => {
+        displayList.add({
+          type: PaintCommandType.FILL_ROUNDED_RECT,
+          x,
+          y,
+          width,
+          height,
+          color,
+          radii,
+        });
+      },
+      strokeRoundedRect: (
+        x: Pixels,
+        y: Pixels,
+        width: Pixels,
+        height: Pixels,
+        color: string,
+        lineWidth: Pixels,
+        radii: [number, number, number, number],
+      ) => {
+        displayList.add({
+          type: PaintCommandType.STROKE_ROUNDED_RECT,
+          x,
+          y,
+          width,
+          height,
+          color,
+          lineWidth,
+          radii,
+        });
+      },
     };
   }
 

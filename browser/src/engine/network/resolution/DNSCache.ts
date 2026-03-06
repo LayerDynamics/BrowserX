@@ -24,6 +24,7 @@ export class DNSCache {
   private misses: number = 0;
   private cleanupInterval: number | null = null;
   private cleanupIntervalMs: Duration = 60000; // Cleanup every 60 seconds
+  private maxSize: number = 1000; // Max cache entries to prevent unbounded growth
 
   constructor() {
     // Start automatic cleanup timer
@@ -61,6 +62,14 @@ export class DNSCache {
    * @param result - DNS result to cache
    */
   set(result: DNSResult): void {
+    // Evict oldest entries if at capacity
+    if (this.cache.size >= this.maxSize && !this.cache.has(result.hostname)) {
+      // Remove the first (oldest) entry
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
+    }
     this.cache.set(result.hostname, result);
   }
 

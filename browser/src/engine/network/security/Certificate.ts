@@ -174,6 +174,12 @@ function buildCertificateChain(
  * Verify certificate signature
  */
 async function verifySignature(cert: Certificate, issuer: Certificate): Promise<boolean> {
+  // Reject weak signature algorithms
+  if (cert.signatureAlgorithm === "RSA-SHA1" || cert.signatureAlgorithm === "RSA-MD5") {
+    console.error(`Rejecting certificate with weak signature algorithm: ${cert.signatureAlgorithm}`);
+    return false;
+  }
+
   // The TBS (To-Be-Signed) certificate data is what was signed
   const tbsData = cert.tbsCertificate;
   if (!tbsData) {
@@ -288,7 +294,7 @@ export async function checkRevocationStatus(cert: Certificate, issuerCert?: Cert
       const issuerDNBytes = (cert as Certificate & { issuerRaw?: ByteBuffer }).issuerRaw
         ?? (issuerCert as Certificate & { issuerRaw?: ByteBuffer }).issuerRaw
         ?? derEncodeDistinguishedName(cert.issuer);
-      nameHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerDNBytes));
+      nameHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerDNBytes as BufferSource));
       keyHashBytes = new Uint8Array(await crypto.subtle.digest("SHA-1", issuerCert.publicKey));
     } else {
       // No issuer cert available — use zero-byte placeholders (OCSP responder may return "unknown")
@@ -1110,30 +1116,68 @@ function parseOID(data: ByteBuffer, offset: number): string {
     const oidBytes = data.slice(offset + 2, offset + 2 + len);
 
     // Common signature algorithm OIDs
+    // 1.2.840.113549.1.1.1 — RSA encryption
+    if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01])) {
+      return "RSA";
+    }
+    // 1.2.840.113549.1.1.4 — MD5WithRSA
+    if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x04])) {
+      return "RSA-MD5";
+    }
+    // 1.2.840.113549.1.1.5 — SHA1WithRSA
+    if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x05])) {
+      return "RSA-SHA1";
+    }
+    // 1.2.840.113549.1.1.11 — SHA256WithRSA
     if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b])) {
       return "RSA-SHA256";
     }
+    // 1.2.840.113549.1.1.12 — SHA384WithRSA
     if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0c])) {
       return "RSA-SHA384";
     }
+    // 1.2.840.113549.1.1.13 — SHA512WithRSA
     if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d])) {
       return "RSA-SHA512";
     }
+    // 1.2.840.113549.1.1.14 — SHA224WithRSA
+    if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0e])) {
+      return "RSA-SHA224";
+    }
+    // 1.2.840.10045.4.3.2 — ECDSA-SHA256
     if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02])) {
       return "ECDSA-SHA256";
     }
+    // 1.2.840.10045.4.3.3 — ECDSA-SHA384
     if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03])) {
       return "ECDSA-SHA384";
     }
-  }
-  // Decode OID bytes to dotted notation for error message
-  if (data[offset] === 0x06) {
-    const len = data[offset + 1];
-    const oidBytes = data.slice(offset + 2, offset + 2 + len);
+    // 1.2.840.10045.4.3.4 — ECDSA-SHA512
+    if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x04])) {
+      return "ECDSA-SHA512";
+    }
+    // 1.2.840.10045.4.3.1 — ECDSA-SHA224
+    if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x01])) {
+      return "ECDSA-SHA224";
+    }
+    // 1.2.840.10045.2.1 — EC public key
+    if (matchesOID(oidBytes, [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01])) {
+      return "EC";
+    }
+    // 1.3.101.112 — Ed25519
+    if (matchesOID(oidBytes, [0x2b, 0x65, 0x70])) {
+      return "Ed25519";
+    }
+    // 1.3.101.113 — Ed448
+    if (matchesOID(oidBytes, [0x2b, 0x65, 0x71])) {
+      return "Ed448";
+    }
+    // Unknown OID — return dotted notation string instead of throwing
     const oidStr = decodeOIDBytes(oidBytes);
-    throw new Error("Unknown signature algorithm OID: " + oidStr);
+    return "OID:" + oidStr;
   }
-  throw new Error("Unknown signature algorithm OID: no OID tag found");
+  // No OID tag — return generic string instead of throwing
+  return "UNKNOWN";
 }
 
 /**

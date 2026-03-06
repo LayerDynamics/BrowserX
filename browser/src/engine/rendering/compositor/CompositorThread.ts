@@ -411,28 +411,39 @@ export class CompositorThread {
       throw new Error("[CompositorThread] composite() called before initialization");
     }
 
-    // CPU rendering mode - use RenderToPixels
+    // CPU rendering mode - use LayerTree compositing or RenderToPixels fallback
     if (this.cpuRenderMode) {
-      if (!this.renderToPixels) {
-        throw new Error("[CompositorThread] CPU mode but RenderToPixels not initialized");
-      }
+      if (this.layerTree) {
+        // Layer-aware path: composite the paint layer tree via Canvas 2D
+        const ctx = this.canvas.getContext("2d");
+        if (!ctx) {
+          throw new Error("[CompositorThread] Failed to get 2D context for CPU composite");
+        }
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.layerTree.paintDirtyLayers();
+        this.layerTree.composite(ctx);
+        this.cpuCanvas = this.canvas;
+      } else {
+        // Fallback: re-paint from render tree via RenderToPixels
+        if (!this.renderToPixels) {
+          throw new Error("[CompositorThread] CPU mode but RenderToPixels not initialized");
+        }
 
-      if (!this.lastRenderObject) {
-        throw new Error(
-          "[CompositorThread] CPU mode but no render tree set - call setRenderTree() before composite()",
+        if (!this.lastRenderObject) {
+          throw new Error(
+            "[CompositorThread] CPU mode but no render tree set - call setRenderTree() before composite()",
+          );
+        }
+
+        const paintResult = this.renderToPixels.paint(
+          this.lastRenderObject,
+          this.canvas.width as Pixels,
+          this.canvas.height as Pixels,
+          false,
         );
+
+        this.cpuCanvas = paintResult.canvas;
       }
-
-      // Paint render tree to Canvas 2D - let errors propagate
-      const paintResult = this.renderToPixels.paint(
-        this.lastRenderObject,
-        this.canvas.width as Pixels,
-        this.canvas.height as Pixels,
-        false, // full repaint
-      );
-
-      // Store result canvas for getPixels() extraction
-      this.cpuCanvas = paintResult.canvas;
 
       this.frameCount++;
       return;
@@ -606,8 +617,8 @@ export class CompositorThread {
     // CPU rendering mode - extract pixels from Canvas 2D
     if (this.cpuRenderMode) {
       if (!this.cpuCanvas) {
-        // No composite() was called yet — attempt one now if we have a render tree
-        if (this.lastRenderObject) {
+        // No composite() was called yet — attempt one now if we have data
+        if (this.layerTree || this.lastRenderObject) {
           this.composite();
         }
         if (!this.cpuCanvas) {

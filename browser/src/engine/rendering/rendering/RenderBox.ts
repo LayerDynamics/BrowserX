@@ -173,6 +173,7 @@ export class RenderBox extends RenderObject {
     }
 
     this.needsLayout = false;
+    // Note: hasDescendantsNeedingLayout is cleared by LayoutEngine after children are laid out
     this.markNeedsPaint();
   }
 
@@ -320,24 +321,69 @@ export class RenderBox extends RenderObject {
   }
 
   /**
-   * Paint background
+   * Paint background (color and image)
    */
   protected paintBackground(context: PaintContext): void {
     if (!this.layout) return;
 
+    const paddingBox = this.layout.getPaddingBox();
+    const radii = this.getBorderRadii();
+
+    // Background color
     const backgroundColor = this.getColorValue("background-color", "transparent");
-    if (backgroundColor === "transparent") {
-      return;
+    if (backgroundColor !== "transparent") {
+      if (radii) {
+        context.fillRoundedRect(
+          paddingBox.x,
+          paddingBox.y,
+          paddingBox.width,
+          paddingBox.height,
+          backgroundColor,
+          radii,
+        );
+      } else {
+        context.fillRect(
+          paddingBox.x,
+          paddingBox.y,
+          paddingBox.width,
+          paddingBox.height,
+          backgroundColor,
+        );
+      }
     }
 
-    const paddingBox = this.layout.getPaddingBox();
-    context.fillRect(
-      paddingBox.x,
-      paddingBox.y,
-      paddingBox.width,
-      paddingBox.height,
-      backgroundColor,
-    );
+    // Background image
+    const bgImage = this.style.getPropertyValue("background-image");
+    if (bgImage && bgImage !== "none") {
+      // Extract URL from url("...") or url(...)
+      const urlMatch = bgImage.match(/url\(["']?([^"')]+)["']?\)/);
+      if (urlMatch) {
+        context.drawImage(
+          urlMatch[1],
+          paddingBox.x,
+          paddingBox.y,
+          paddingBox.width,
+          paddingBox.height,
+        );
+      }
+    }
+  }
+
+  /**
+   * Parse border-radius into [topLeft, topRight, bottomRight, bottomLeft] or null if none.
+   */
+  protected getBorderRadii(): [number, number, number, number] | null {
+    const br = this.style.getPropertyValue("border-radius");
+    if (!br || br === "0" || br === "0px") return null;
+
+    // Parse shorthand: "10px" or "10px 5px" or "10px 5px 3px 1px"
+    const parts = br.split(/\s+/).map((p: string) => parseFloat(p) || 0);
+    if (parts.every((p: number) => p === 0)) return null;
+
+    if (parts.length === 1) return [parts[0], parts[0], parts[0], parts[0]];
+    if (parts.length === 2) return [parts[0], parts[1], parts[0], parts[1]];
+    if (parts.length === 3) return [parts[0], parts[1], parts[2], parts[1]];
+    return [parts[0], parts[1], parts[2], parts[3]];
   }
 
   /**
@@ -348,7 +394,33 @@ export class RenderBox extends RenderObject {
 
     const borderBox = this.layout.getBorderBox();
     const paddingBox = this.layout.getPaddingBox();
+    const radii = this.getBorderRadii();
 
+    // If border-radius is set AND all borders have the same width and color,
+    // use a single rounded rect stroke instead of 4 individual fills.
+    if (radii) {
+      const uniformWidth = this.layout.borderTopWidth;
+      const uniformColor = this.getColorValue("border-top-color", "black");
+      const allSame = uniformWidth > 0 &&
+        this.layout.borderRightWidth === uniformWidth &&
+        this.layout.borderBottomWidth === uniformWidth &&
+        this.layout.borderLeftWidth === uniformWidth;
+
+      if (allSame) {
+        context.strokeRoundedRect(
+          borderBox.x,
+          borderBox.y,
+          borderBox.width,
+          borderBox.height,
+          uniformColor,
+          uniformWidth,
+          radii,
+        );
+        return;
+      }
+    }
+
+    // Fallback: paint each border side as a rectangle
     // Top border
     if (this.layout.borderTopWidth > 0) {
       const borderColor = this.getColorValue("border-top-color", "black");

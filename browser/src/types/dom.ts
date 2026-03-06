@@ -360,6 +360,10 @@ export interface CanvasRenderingContext2D {
   closePath(): void;
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
+  arc(x: number, y: number, radius: number, startAngle: number, endAngle: number, counterclockwise?: boolean): void;
+  arcTo(x1: number, y1: number, x2: number, y2: number, radius: number): void;
+  quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void;
+  bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void;
   stroke(): void;
   fill(): void;
 }
@@ -2225,10 +2229,10 @@ function createElementFn(tagName: string): DOMElement | HTMLCanvasElement {
                 const sw = seg.w ?? 0;
                 const sh = seg.h ?? 0;
                 // Transform all 4 corners for correct bounding box under rotation
-                const [tx0, ty0] = transformPoint(seg.x, seg.y);
-                const [tx1, ty1] = transformPoint(seg.x + sw, seg.y);
-                const [tx2, ty2] = transformPoint(seg.x + sw, seg.y + sh);
-                const [tx3, ty3] = transformPoint(seg.x, seg.y + sh);
+                const [tx0, ty0] = transformPoint(seg.x!, seg.y!);
+                const [tx1, ty1] = transformPoint(seg.x! + sw, seg.y!);
+                const [tx2, ty2] = transformPoint(seg.x! + sw, seg.y! + sh);
+                const [tx3, ty3] = transformPoint(seg.x!, seg.y! + sh);
                 const newClip = {
                   x: Math.min(tx0, tx1, tx2, tx3),
                   y: Math.min(ty0, ty1, ty2, ty3),

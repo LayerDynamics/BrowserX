@@ -146,7 +146,7 @@ export class CompositorLayer {
     const bounds = this.paintLayer.getBounds();
 
     // Create canvas and render display list
-    const canvas = document.createElement("canvas");
+    const canvas = document.createElement("canvas") as unknown as HTMLCanvasElement;
     canvas.width = bounds.width;
     canvas.height = bounds.height;
 

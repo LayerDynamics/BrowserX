@@ -103,18 +103,23 @@ export class LayoutEngine {
    * Dispatches to appropriate layout algorithm based on display type
    */
   private layoutNode(node: RenderObject, constraints: LayoutConstraints): void {
-    // Skip if node doesn't need layout
-    if (!node.needsLayout) {
+    // Skip only if this node AND its descendants are all clean
+    if (!node.needsLayout && !node.hasDescendantsNeedingLayout) {
       return;
     }
 
-    // Perform layout
-    node.doLayout(constraints);
+    if (node.needsLayout) {
+      // Perform layout on this node
+      node.doLayout(constraints);
+    }
 
-    // Layout children based on display type
+    // Layout children based on display type (recurse even if only descendants are dirty)
     if (node.children.length > 0) {
       this.layoutChildren(node, constraints);
     }
+
+    // Clear descendant flag after children have been laid out
+    node.hasDescendantsNeedingLayout = false;
   }
 
   /**
@@ -141,6 +146,20 @@ export class LayoutEngine {
         this.layoutTableChildren(parent, constraints);
         break;
 
+      case "table-row":
+      case "table-row-group":
+      case "table-header-group":
+      case "table-footer-group":
+        // Table rows/groups are laid out by the parent table's layoutTable()
+        // Don't re-layout as block — just recurse into cell contents
+        break;
+
+      case "table-cell":
+        // Table cells are positioned by the parent table layout
+        // Layout their inner content as block flow
+        this.layoutBlockChildren(parent, constraints);
+        break;
+
       case "block":
       case "flow-root":
         this.layoutBlockChildren(parent, constraints);
@@ -160,16 +179,14 @@ export class LayoutEngine {
     // Recurse into children that have their own children needing layout
     for (const child of parent.children) {
       if (child.children.length > 0 && child.layout) {
+        // Skip children whose subtree is clean (O(1) check via propagated flag)
+        if (!child.needsLayout && !child.hasDescendantsNeedingLayout) {
+          continue;
+        }
         const childConstraints = this.getConstraintsForNode(child, {
           width: constraints.maxWidth,
           height: constraints.maxHeight,
         });
-        // Ensure each grandchild gets doLayout called, then recurse
-        for (const grandchild of child.children) {
-          if (grandchild.needsLayout) {
-            grandchild.doLayout(childConstraints);
-          }
-        }
         this.layoutChildren(child, childConstraints);
       }
     }
@@ -181,7 +198,7 @@ export class LayoutEngine {
         .filter((c) => c.layout !== null)
         .map((c) => c.layout!);
       if (childLayouts.length > 0) {
-        (parent.layout as any).children = childLayouts;
+        parent.layout.children = childLayouts;
       }
     }
   }
@@ -302,15 +319,22 @@ export class LayoutEngine {
    * Reflow a subtree
    */
   private reflowSubtree(node: RenderObject, viewport: ViewportSize): void {
+    if (!node.needsLayout && !node.hasDescendantsNeedingLayout) {
+      return; // Skip entire clean subtree
+    }
+
     if (node.needsLayout) {
       // Get constraints from parent or viewport
       const constraints = this.getConstraintsForNode(node, viewport);
       this.layoutNode(node, constraints);
     }
 
-    // Recursively reflow children
-    for (const child of node.children) {
-      this.reflowSubtree(child, viewport);
+    // Recursively reflow children only if descendants are dirty
+    if (node.hasDescendantsNeedingLayout) {
+      for (const child of node.children) {
+        this.reflowSubtree(child, viewport);
+      }
+      node.hasDescendantsNeedingLayout = false;
     }
   }
 
@@ -323,10 +347,10 @@ export class LayoutEngine {
       const parentLayout = node.parent.layout;
       return {
         minWidth: 0 as Pixels,
-        maxWidth: (parentLayout.width - parentLayout.paddingLeft -
+        maxWidth: Math.max(0, parentLayout.width - parentLayout.paddingLeft -
           parentLayout.paddingRight) as Pixels,
         minHeight: 0 as Pixels,
-        maxHeight: (parentLayout.height - parentLayout.paddingTop -
+        maxHeight: Math.max(0, parentLayout.height - parentLayout.paddingTop -
           parentLayout.paddingBottom) as Pixels,
       };
     }
@@ -380,6 +404,7 @@ export class LayoutEngine {
   clearLayoutFlags(root: RenderObject): void {
     this.visitTree(root, (node) => {
       node.needsLayout = false;
+      node.hasDescendantsNeedingLayout = false;
     });
   }
 
@@ -440,13 +465,16 @@ export class LayoutEngine {
    * Check if layout is stable (no more reflows needed)
    */
   isLayoutStable(root: RenderObject): boolean {
-    let stable = true;
-    this.visitTree(root, (node) => {
-      if (node.needsLayout) {
-        stable = false;
-      }
-    });
-    return stable;
+    return this.isSubtreeStable(root);
+  }
+
+  private isSubtreeStable(node: RenderObject): boolean {
+    if (node.needsLayout) return false;
+    if (!node.hasDescendantsNeedingLayout) return true;
+    for (const child of node.children) {
+      if (!this.isSubtreeStable(child)) return false;
+    }
+    return true;
   }
 
   /**

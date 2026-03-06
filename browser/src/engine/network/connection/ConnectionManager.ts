@@ -61,8 +61,8 @@ export class ConnectionManager {
    * @param useTLS - Whether to use TLS
    * @returns Pooled connection
    */
-  async acquire(host: string, port: Port, useTLS: boolean): Promise<PooledConnection> {
-    return this.pool.acquire(host, port, useTLS);
+  async acquire(host: string, port: Port, useTLS: boolean, hostname?: string): Promise<PooledConnection> {
+    return this.pool.acquire(host, port, useTLS, hostname);
   }
 
   /**

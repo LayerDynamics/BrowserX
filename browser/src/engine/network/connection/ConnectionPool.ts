@@ -5,15 +5,89 @@
  * Implements per-origin connection limits and idle connection management.
  */
 
-import type { ConnectionID, Port } from "../../../types/identifiers.ts";
-import type { Certificate, PooledConnection, Socket } from "../../../types/network.ts";
-import { ConnectionState } from "../../../types/network.ts";
+import type { ConnectionID, Port, ByteBuffer, FileDescriptor, ByteCount } from "../../../types/identifiers.ts";
+import type { Certificate, PooledConnection, Socket, SocketStats, SocketReadOptions, SocketWriteOptions } from "../../../types/network.ts";
+import { ConnectionState, SocketState } from "../../../types/network.ts";
 import { AddressFamily, SocketImpl, SocketType } from "../primitives/Socket.ts";
 import { type TCPConfig, TCPConnection } from "../primitives/TCPConnection.ts";
 import { loadSystemCAs } from "../security/Certificate.ts";
 import { TLSConnection } from "../security/TLSConnection.ts";
 import { TLSSocket } from "../security/TLSSocket.ts";
 import { ConnectionPoolStats, createConnectionPoolStats } from "./ConnectionPoolStats.ts";
+
+/**
+ * Socket wrapper around Deno.TlsConn for native TLS connections.
+ * Uses Deno's built-in TLS with OS certificate store for reliable cert validation.
+ */
+class DenoTlsSocket implements Socket {
+  private conn: Deno.TlsConn;
+  private _state: SocketState = SocketState.OPEN;
+  private _bytesRead: ByteCount = 0 as ByteCount;
+  private _bytesWritten: ByteCount = 0 as ByteCount;
+  private host: string;
+  private port: Port;
+  private sni: string;
+
+  readonly fd: FileDescriptor = 0 as FileDescriptor;
+  readonly localAddress: string = "0.0.0.0";
+  readonly localPort: Port = 0 as Port;
+
+  get state(): SocketState { return this._state; }
+  get remoteAddress(): string { return this.host; }
+  get remotePort(): Port { return this.port; }
+  get serverName(): string { return this.sni; }
+
+  constructor(conn: Deno.TlsConn, host: string, port: Port, sni: string) {
+    this.conn = conn;
+    this.host = host;
+    this.port = port;
+    this.sni = sni;
+  }
+
+  async connect(_host: string, _port: Port): Promise<void> {
+    // Already connected via Deno.connectTls
+  }
+
+  async read(buffer: ByteBuffer, _options?: SocketReadOptions): Promise<number | null> {
+    try {
+      const n = await this.conn.read(buffer);
+      if (n !== null) this._bytesRead = (this._bytesRead + n) as ByteCount;
+      return n;
+    } catch {
+      this._state = SocketState.CLOSED;
+      return null;
+    }
+  }
+
+  async write(data: ByteBuffer, _options?: SocketWriteOptions): Promise<number> {
+    try {
+      const n = await this.conn.write(data);
+      this._bytesWritten = (this._bytesWritten + n) as ByteCount;
+      return n;
+    } catch {
+      this._state = SocketState.CLOSED;
+      throw new Error("Socket write failed");
+    }
+  }
+
+  async close(): Promise<void> {
+    this._state = SocketState.CLOSED;
+    try { this.conn.close(); } catch { /* already closed */ }
+  }
+
+  getStats(): SocketStats {
+    const now = Date.now();
+    return {
+      bytesRead: this._bytesRead,
+      bytesWritten: this._bytesWritten,
+      readOperations: 0,
+      writeOperations: 0,
+      errors: 0,
+      createdAt: now,
+      lastActiveAt: now,
+    } as unknown as SocketStats;
+  }
+}
 
 const DEFAULT_TCP_CONFIG: TCPConfig = {
   connectTimeout: 30000, // 30 seconds
@@ -26,6 +100,15 @@ const DEFAULT_TCP_CONFIG: TCPConfig = {
   maxSegmentSize: 1460, // Standard MSS
   windowSize: 65535, // 64KB window
 };
+
+/** Default timeout for native TLS (Deno.connectTls) connections in ms */
+const NATIVE_TLS_CONNECT_TIMEOUT_MS = 10_000;
+
+/** Default timeout for custom TLS handshake fallback in ms */
+const CUSTOM_TLS_HANDSHAKE_TIMEOUT_MS = 5_000;
+
+/** Interval between automatic idle-connection cleanup sweeps in ms */
+const AUTO_CLEANUP_INTERVAL_MS = 30_000;
 
 export class ConnectionPool {
   private connections: Map<string, PooledConnection[]> = new Map();
@@ -163,7 +246,6 @@ export class ConnectionPool {
       const pendingCount = this.pendingAcquisitions.get(key) || 0;
       if (activeCount + pendingCount >= this.maxConnectionsPerOrigin) {
         // Wait for an available connection, then loop back to retry
-        this.stats.missCount++;
         const waitStart = Date.now();
         await this.waitForAvailableConnection(key);
         const waitTime = Date.now() - waitStart;
@@ -174,8 +256,7 @@ export class ConnectionPool {
       // Track this pending acquisition to prevent over-allocation
       this.pendingAcquisitions.set(key, pendingCount + 1);
 
-      // Create new connection
-      // Increment miss count since we're not reusing an existing connection
+      // Create new connection — count as cache miss (no idle connection reused)
       this.stats.missCount++;
 
       try {
@@ -225,29 +306,23 @@ export class ConnectionPool {
       connection.lastUsedAt = Date.now();
       this.updateStats();
 
-      // Notify the first waiter for any key that this connection belongs to
-      for (const [key, keyWaiters] of this.waiters.entries()) {
-        if (keyWaiters.length > 0) {
-          const pool = this.connections.get(key);
-          if (pool) {
-            const hasIdle = pool.some((c) => c.state === ConnectionState.IDLE);
-            const activeCount = pool.filter((c) => c.state === ConnectionState.IN_USE).length;
-            if (hasIdle || activeCount < this.maxConnectionsPerOrigin) {
-              const waiter = keyWaiters.shift()!;
-              clearTimeout(waiter.timer);
-              waiter.resolve();
-              if (keyWaiters.length === 0) {
-                this.waiters.delete(key);
-              }
-            }
-          } else {
-            // Pool gone, wake waiter
-            const waiter = keyWaiters.shift()!;
-            clearTimeout(waiter.timer);
-            waiter.resolve();
-            if (keyWaiters.length === 0) {
-              this.waiters.delete(key);
-            }
+      // Find the pool key for this connection and only notify its waiters
+      let connectionKey: string | undefined;
+      for (const [key, pool] of this.connections.entries()) {
+        if (pool.includes(connection)) {
+          connectionKey = key;
+          break;
+        }
+      }
+
+      if (connectionKey) {
+        const keyWaiters = this.waiters.get(connectionKey);
+        if (keyWaiters && keyWaiters.length > 0) {
+          const waiter = keyWaiters.shift()!;
+          clearTimeout(waiter.timer);
+          waiter.resolve();
+          if (keyWaiters.length === 0) {
+            this.waiters.delete(connectionKey);
           }
         }
       }
@@ -367,53 +442,106 @@ export class ConnectionPool {
     useTLS: boolean,
     sniHostname?: string,
   ): Promise<Socket> {
-    const socket = new SocketImpl(AddressFamily.IPv4, SocketType.STREAM);
-    const tcpConnection = new TCPConnection(socket, DEFAULT_TCP_CONFIG);
-
-    // Establish TCP connection first (using IP address)
-    await tcpConnection.connect(host, port);
-
     if (useTLS) {
-      // Use provided SNI hostname, or fall back to host if not provided
+      // Use Deno's native TLS for reliable certificate validation
       const tlsServerName = sniHostname || host;
+      try {
+        // Wrap Deno.connectTls in a 10s timeout to prevent hanging on unresponsive servers
+        let nativeTlsTimer: number | undefined;
+        let conn: Deno.TlsConn;
+        const tlsConnectPromise = Deno.connectTls({
+          hostname: tlsServerName,
+          port,
+          alpnProtocols: ["http/1.1"],
+        });
+        try {
+          conn = await Promise.race([
+            tlsConnectPromise,
+            new Promise<never>((_, reject) => {
+              nativeTlsTimer = setTimeout(() => reject(new Error(`TLS connection to ${tlsServerName}:${port} timed out after ${NATIVE_TLS_CONNECT_TIMEOUT_MS}ms`)), NATIVE_TLS_CONNECT_TIMEOUT_MS) as unknown as number;
+            }),
+          ]);
+        } catch (err) {
+          // If timeout won the race, the TLS connect may still resolve later — close it to prevent leak
+          tlsConnectPromise.then((c) => { try { c.close(); } catch { /* already closed */ } }).catch(() => {});
+          throw err;
+        } finally {
+          if (nativeTlsTimer !== undefined) clearTimeout(nativeTlsTimer);
+        }
+        return new DenoTlsSocket(conn, host, port as Port, tlsServerName);
+      } catch (nativeErr) {
+        // Only fall back to custom TLS if Deno.connectTls is truly unavailable,
+        // NOT on certificate validation errors (which should propagate)
+        const errMsg = (nativeErr as Error).message || "";
+        if (
+          errMsg.includes("certificate") ||
+          errMsg.includes("CERTIFICATE") ||
+          errMsg.includes("self-signed") ||
+          errMsg.includes("expired") ||
+          errMsg.includes("hostname mismatch") ||
+          errMsg.includes("unknown CA") ||
+          errMsg.includes("InvalidData") ||
+          errMsg.includes("timed out")
+        ) {
+          throw nativeErr; // Don't mask cert/timeout errors with custom TLS fallback
+        }
+        // Fallback to custom TLS stack if Deno.connectTls unavailable
+        // Wrap entire custom handshake in 5s timeout for fail-fast behavior
+        // Track the underlying socket so we can close it on timeout even if
+        // the TLS handshake hasn't completed (before TLSSocket wrapping)
+        let rawSocket: SocketImpl | undefined;
+        const customTlsPromise = (async () => {
+          const af = host.includes(":") ? AddressFamily.IPv6 : AddressFamily.IPv4;
+          const socket = new SocketImpl(af, SocketType.STREAM);
+          rawSocket = socket;
+          const tcpConnection = new TCPConnection(socket, DEFAULT_TCP_CONFIG);
+          await tcpConnection.connect(host, port);
 
-      // Load system CA certificates for validation
-      const trustedCAs = await this.getSystemCAs();
+          const trustedCAs = await this.getSystemCAs();
+          const tlsConnection = new TLSConnection(socket, {
+            minVersion: 0x0303,
+            maxVersion: 0x0304,
+            cipherSuites: [0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8],
+            verifyPeerCertificate: true,
+            trustedCAs,
+            allowSelfSigned: false,
+            serverName: tlsServerName,
+            alpnProtocols: ["http/1.1"],
+            enableSessionResumption: false,
+            sessionTicketLifetime: 7200000,
+          });
+          await tlsConnection.connect(tlsServerName);
+          return new TLSSocket(tlsConnection);
+        })();
 
-      // Create TLS connection over established TCP
-      // Certificate validation enabled for production security
-      const tlsConnection = new TLSConnection(socket, {
-        minVersion: 0x0303, // TLS 1.2 minimum for broad compatibility
-        maxVersion: 0x0304, // TLS 1.3
-        cipherSuites: [
-          // TLS 1.3 cipher suites
-          0x1301,
-          0x1302,
-          0x1303,
-          // TLS 1.2 cipher suites (for servers that don't support TLS 1.3)
-          0xc02b,
-          0xc02f,
-          0xc02c,
-          0xc030,
-          0xcca9,
-          0xcca8,
-        ],
-        verifyPeerCertificate: true, // Enable certificate validation for security
-        trustedCAs, // System root CA certificates
-        allowSelfSigned: false, // Reject self-signed certificates in production
-        serverName: tlsServerName, // Use hostname for SNI, not IP address
-        alpnProtocols: ["http/1.1"],
-        enableSessionResumption: false,
-        sessionTicketLifetime: 7200000,
-      });
-
-      // Perform TLS handshake
-      await tlsConnection.connect(tlsServerName);
-
-      // Return TLSSocket wrapper for encrypted I/O
-      return new TLSSocket(tlsConnection);
+        let customTlsTimer: number | undefined;
+        try {
+          return await Promise.race([
+            customTlsPromise,
+            new Promise<never>((_, reject) => {
+              customTlsTimer = setTimeout(() => reject(new Error(`Custom TLS handshake to ${tlsServerName}:${port} timed out after ${CUSTOM_TLS_HANDSHAKE_TIMEOUT_MS}ms`)), CUSTOM_TLS_HANDSHAKE_TIMEOUT_MS) as unknown as number;
+            }),
+          ]);
+        } catch (err) {
+          // Close the underlying raw socket to prevent leak even if TLS wrapping never completed
+          if (rawSocket) {
+            try { await rawSocket.close(); } catch { /* already closed */ }
+          }
+          // If timeout won, the custom TLS handshake may still complete — close to prevent leak
+          customTlsPromise.then((sock) => {
+            try { sock.close(); } catch { /* already closed */ }
+          }).catch(() => {});
+          throw err;
+        } finally {
+          if (customTlsTimer !== undefined) clearTimeout(customTlsTimer);
+        }
+      }
     }
 
+    const af = host.includes(":") ? AddressFamily.IPv6 : AddressFamily.IPv4;
+    const socket = new SocketImpl(af, SocketType.STREAM);
+    const tcpConnection = new TCPConnection(socket, DEFAULT_TCP_CONFIG);
+    await tcpConnection.connect(host, port);
     return socket;
   }
 
@@ -479,6 +607,6 @@ export class ConnectionPool {
       this.closeIdleConnections().catch((error) => {
         console.error("Error during automatic connection cleanup:", error);
       });
-    }, 30000); // Clean up every 30 seconds
+    }, AUTO_CLEANUP_INTERVAL_MS);
   }
 }

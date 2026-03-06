@@ -554,7 +554,7 @@ export class WebGPUCompositorLayer {
     }
 
     // Create canvas for rasterization
-    const canvas = document.createElement("canvas");
+    const canvas = document.createElement("canvas") as unknown as { width: number; height: number; getContext(id: string): any };
     canvas.width = this.config.width;
     canvas.height = this.config.height;
 
@@ -573,7 +573,7 @@ export class WebGPUCompositorLayer {
     const bitmap = await createImageBitmap(canvas as unknown as ImageBitmapSource);
 
     // Get pixel data from bitmap via canvas
-    const tempCanvas = document.createElement("canvas");
+    const tempCanvas = document.createElement("canvas") as unknown as { width: number; height: number; getContext(id: string): any };
     tempCanvas.width = bitmap.width;
     tempCanvas.height = bitmap.height;
     const tempContext = tempCanvas.getContext("2d");
@@ -615,7 +615,7 @@ export class WebGPUCompositorLayer {
       }
 
       // Create canvas for this tile
-      const canvas = document.createElement("canvas");
+      const canvas = document.createElement("canvas") as unknown as { width: number; height: number; getContext(id: string): any };
       canvas.width = tile.bounds.width;
       canvas.height = tile.bounds.height;
 
@@ -640,7 +640,7 @@ export class WebGPUCompositorLayer {
       const bitmap = await createImageBitmap(canvas as unknown as ImageBitmapSource);
 
       // Extract pixel data
-      const tempCanvas = document.createElement("canvas");
+      const tempCanvas = document.createElement("canvas") as unknown as { width: number; height: number; getContext(id: string): any };
       tempCanvas.width = bitmap.width;
       tempCanvas.height = bitmap.height;
       const tempContext = tempCanvas.getContext("2d");
