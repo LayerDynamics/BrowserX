@@ -33,6 +33,7 @@ export abstract class RenderObject {
   // Layout state
   layout: LayoutBox | null = null;
   needsLayout: boolean = true;
+  hasDescendantsNeedingLayout: boolean = false;
 
   // Paint state
   paintLayer: PaintLayer | null = null;
@@ -59,7 +60,14 @@ export abstract class RenderObject {
     this.needsLayout = true;
     this.pixelValueCache.clear();
 
-    // Propagate up the tree
+    // Propagate descendant dirty flag up the tree
+    let ancestor = this.parent;
+    while (ancestor && !ancestor.hasDescendantsNeedingLayout) {
+      ancestor.hasDescendantsNeedingLayout = true;
+      ancestor = ancestor.parent;
+    }
+
+    // Propagate needsLayout up the tree
     if (this.parent) {
       this.parent.markNeedsLayout();
     }

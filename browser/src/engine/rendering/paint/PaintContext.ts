@@ -145,4 +145,39 @@ export class PaintContext {
       params: { font },
     });
   }
+
+  /**
+   * Fill rounded rectangle
+   */
+  fillRoundedRect(
+    x: Pixels,
+    y: Pixels,
+    width: Pixels,
+    height: Pixels,
+    color: string,
+    radii: [number, number, number, number],
+  ): void {
+    this.commands.push({
+      type: PaintCommandType.FILL_ROUNDED_RECT,
+      params: { x, y, width, height, color, radii },
+    });
+  }
+
+  /**
+   * Stroke rounded rectangle
+   */
+  strokeRoundedRect(
+    x: Pixels,
+    y: Pixels,
+    width: Pixels,
+    height: Pixels,
+    color: string,
+    lineWidth: Pixels,
+    radii: [number, number, number, number],
+  ): void {
+    this.commands.push({
+      type: PaintCommandType.STROKE_ROUNDED_RECT,
+      params: { x, y, width, height, color, lineWidth, radii },
+    });
+  }
 }

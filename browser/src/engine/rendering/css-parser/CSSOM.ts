@@ -138,6 +138,26 @@ export class CSSOM {
           origin: entry.origin,
         });
       }
+
+      // Evaluate inline @media rules from the stylesheet
+      if (entry.stylesheet.mediaRules) {
+        for (const mediaRule of entry.stylesheet.mediaRules) {
+          if (this.matchesMediaQuery(mediaRule.condition)) {
+            for (const rule of mediaRule.rules) {
+              // Check if rule matches this element
+              for (const selector of rule.selectorList) {
+                if (selector.matches(element)) {
+                  matchingRules.push({
+                    rule,
+                    origin: entry.origin,
+                  });
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
     // Sort by cascade order:

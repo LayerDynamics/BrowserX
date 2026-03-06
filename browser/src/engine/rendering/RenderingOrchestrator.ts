@@ -31,6 +31,13 @@ import { RenderToPixels } from "./paint/RenderToPixels.ts";
 import { WindowRenderer, type PresentFrameInfo } from "./WindowRenderer.ts";
 
 /**
+ * Approximate ascent-to-font-size ratio for baseline positioning.
+ * Most Latin fonts have an ascent of ~80% of em-square. Used when
+ * actual font metrics are unavailable.
+ */
+const DEFAULT_ASCENT_RATIO = 0.80;
+
+/**
  * RenderingOrchestrator runs the main render pipeline and manages the observer.
  */
 export class RenderingOrchestrator {
@@ -308,23 +315,25 @@ export class RenderingOrchestrator {
 
         // Also discover and fetch CSS background-image URLs from the render tree
         const bgUrls = this.collectBackgroundImageUrls(rootRenderObject);
-        for (const bgUrl of bgUrls) {
-          if (!imageMap.has(bgUrl)) {
+        const newBgUrls = bgUrls.filter((bgUrl) => !imageMap.has(bgUrl));
+        const bgResults = await Promise.allSettled(
+          newBgUrls.map(async (bgUrl) => {
+            const resolved = new URL(bgUrl, url);
+            const imgResult = await this.resourceFetcher.getRequestPipeline().get(resolved, { signal: options.signal });
+            const imgData = imgResult.response.body;
             try {
-              const resolved = new URL(bgUrl, url);
-              const imgResult = await this.resourceFetcher.getRequestPipeline().get(resolved, { signal: options.signal });
-              const imgData = imgResult.response.body;
-              try {
-                const contentType = imgResult.response.headers?.get("content-type") || "image/png";
-                const blob = new Blob([imgData], { type: contentType });
-                const bitmap = await createImageBitmap(blob as unknown as ImageBitmapSource);
-                imageMap.set(bgUrl, bitmap as unknown as import("../../types/dom.ts").CanvasImageSource);
-              } catch {
-                imageMap.set(bgUrl, { width: 0, height: 0, close: () => {}, _data: imgData } as any);
-              }
+              const contentType = imgResult.response.headers?.get("content-type") || "image/png";
+              const blob = new Blob([imgData], { type: contentType });
+              const bitmap = await createImageBitmap(blob as unknown as ImageBitmapSource);
+              return { bgUrl, image: bitmap as unknown as import("../../types/dom.ts").CanvasImageSource };
             } catch {
-              // Background image fetch failed — skip silently
+              return { bgUrl, image: { width: 0, height: 0, close: () => {}, _data: imgData } as any };
             }
+          }),
+        );
+        for (const result of bgResults) {
+          if (result.status === "fulfilled") {
+            imageMap.set(result.value.bgUrl, result.value.image);
           }
         }
       }
@@ -333,31 +342,41 @@ export class RenderingOrchestrator {
       this.emitStage("paint", "Paint", "running", Date.now());
       const paintStart = Date.now();
       const displayList = new DisplayList();
-      const paintContext = new PaintContext();
-      this.paint(layoutTree, paintContext);
 
-      for (const command of paintContext.getCommands()) {
-        const params = command.params && typeof command.params === "object"
-          ? command.params as Record<string, unknown>
-          : {};
-        const displayCommand = {
-          type: command.type,
-          ...params,
-        } as import("./paint/DisplayList.ts").AnyPaintCommand;
-        displayList.add(displayCommand);
-      }
-
-      for (const [src, img] of imageMap) {
-        displayList.registerImage(src, img);
-      }
-
-      // Also paint through RenderToPixels for stacking-context-aware layer tree
+      // Paint through RenderToPixels for stacking-context-aware layer tree
+      // This is the primary paint pass used by the compositor
       const paintResult = this.renderToPixels.paint(
         rootRenderObject,
         this.width as Pixels,
         this.height as Pixels,
         false,
       );
+
+      // Count nodes — only run the legacy PaintContext pass for smaller DOMs
+      // to populate the displayList artifact. For large DOMs the pass is skipped
+      // and displayListTruncated is set on the result.
+      const DISPLAY_LIST_NODE_THRESHOLD = options.displayListNodeThreshold ?? 5000;
+      const nodeCount = layoutEngine.getStats().totalNodes;
+      const displayListTruncated = nodeCount > DISPLAY_LIST_NODE_THRESHOLD;
+      if (!displayListTruncated) {
+        const paintContext = new PaintContext();
+        this.paint(layoutTree, paintContext);
+
+        for (const command of paintContext.getCommands()) {
+          const params = command.params && typeof command.params === "object"
+            ? command.params as Record<string, unknown>
+            : {};
+          const displayCommand = {
+            type: command.type,
+            ...params,
+          } as import("./paint/DisplayList.ts").AnyPaintCommand;
+          displayList.add(displayCommand);
+        }
+      }
+
+      for (const [src, img] of imageMap) {
+        displayList.registerImage(src, img);
+      }
 
       // Register fetched images on all layer display lists so DRAW_IMAGE commands render
       if (imageMap.size > 0) {
@@ -431,6 +450,7 @@ export class RenderingOrchestrator {
         renderTree,
         layoutTree,
         displayList,
+        displayListTruncated,
         layerTree: paintResult.layerTree,
         scriptExecutor,
         timing: timing as RenderingTiming,
@@ -637,7 +657,7 @@ export class RenderingOrchestrator {
 
         // layoutBox.y is the box top; canvas fillText expects baseline y.
         // Baseline = box top + ascent (~80% of fontSize).
-        const baseline = (layoutBox.y as number) + fontSize * 0.80;
+        const baseline = (layoutBox.y as number) + fontSize * DEFAULT_ASCENT_RATIO;
         context.fillText(
           layoutBox.text,
           layoutBox.x,
@@ -691,36 +711,13 @@ export class RenderingOrchestrator {
   }
 
   /**
-   * Parse a box-shadow or text-shadow CSS value
-   * Simplified: handles "offsetX offsetY blur color" format
+   * Parse a shadow CSS value (shared by box-shadow and text-shadow).
+   * Handles 3-length "offsetX offsetY blur color" and 2-length "offsetX offsetY color".
+   * Takes the first comma-separated shadow if multiples are present.
    */
-  private parseBoxShadow(
+  private parseShadowValue(
     value: string,
   ): { offsetX: number; offsetY: number; blur: number; color: string } | null {
-    // Match patterns like "2px 2px 4px rgba(0,0,0,0.5)" or "2px 2px 4px #000"
-    const match = value.match(
-      /(-?\d+(?:\.\d+)?)\s*px\s+(-?\d+(?:\.\d+)?)\s*px\s+(-?\d+(?:\.\d+)?)\s*px\s+(.*)/,
-    );
-    if (match) {
-      return {
-        offsetX: parseFloat(match[1]),
-        offsetY: parseFloat(match[2]),
-        blur: parseFloat(match[3]),
-        color: match[4].trim(),
-      };
-    }
-    return null;
-  }
-
-  /**
-   * Parse a text-shadow CSS value
-   * Supports 2-length (offsetX offsetY color) and 3-length (offsetX offsetY blur color) forms.
-   * Only parses the first shadow if comma-separated multiples are present.
-   */
-  private parseTextShadow(
-    value: string,
-  ): { offsetX: number; offsetY: number; blur: number; color: string } | null {
-    // Take only the first shadow if multiple are specified
     const firstShadow = value.split(",")[0].trim();
 
     // Try 3-length: offsetX offsetY blur color
@@ -750,6 +747,18 @@ export class RenderingOrchestrator {
     }
 
     return null;
+  }
+
+  private parseBoxShadow(
+    value: string,
+  ): { offsetX: number; offsetY: number; blur: number; color: string } | null {
+    return this.parseShadowValue(value);
+  }
+
+  private parseTextShadow(
+    value: string,
+  ): { offsetX: number; offsetY: number; blur: number; color: string } | null {
+    return this.parseShadowValue(value);
   }
 
   /**

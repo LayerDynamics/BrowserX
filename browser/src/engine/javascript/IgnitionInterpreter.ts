@@ -110,6 +110,19 @@ export class IgnitionInterpreter {
   private cacheHits = 0;
   private cacheMisses = 0;
 
+  /** Exception handler stack for try/catch */
+  private exceptionHandlers: Array<{
+    catchOffset: number;
+    frameDepth: number;
+    bytecodeRef: Uint8Array;
+  }> = [];
+
+  /** Caught exception value (set by THROW, read by SET_CATCH_PARAM) */
+  private caughtException: JSValue = createUndefined();
+
+  /** Pending 'this' binding for next method call (set by STA_CONTEXT_SLOT "this", consumed by CALL) */
+  private pendingThisBinding: JSValue | null = null;
+
   constructor(heap: V8Heap | null = null) {
     this.accumulator = createUndefined();
     this.registers = [];
@@ -165,7 +178,19 @@ export class IgnitionInterpreter {
             `Script exceeded instruction budget of ${this.maxInstructions} instructions (possible infinite loop)`,
           );
         }
-        this.executeInstruction(bytecode);
+        try {
+          this.executeInstruction(bytecode);
+        } catch (e) {
+          // If we have a JS-level exception handler, route to it
+          if (this.exceptionHandlers.length > 0) {
+            const msg = e instanceof Error ? e.message : String(e);
+            this.throwException(createString(msg));
+            this.stats.instructionsExecuted++;
+            instructionsThisExecution++;
+            continue;
+          }
+          throw e;
+        }
         this.stats.instructionsExecuted++;
         instructionsThisExecution++;
       }
@@ -361,6 +386,28 @@ export class IgnitionInterpreter {
           accumulator: this.accumulator,
           registers: this.registers,
         });
+        break;
+
+      // Exception handling
+      case Opcode.TRY_START:
+        this.executeTRY_START(bytecode);
+        break;
+      case Opcode.TRY_END:
+        this.executeTRY_END();
+        break;
+      case Opcode.THROW:
+        this.executeTHROW(bytecode);
+        break;
+      case Opcode.SET_CATCH_PARAM:
+        this.executeSET_CATCH_PARAM(bytecode);
+        break;
+
+      // Operators
+      case Opcode.TYPEOF:
+        this.executeTYPEOF();
+        break;
+      case Opcode.INSTANCEOF:
+        this.executeINSTANCEOF(bytecode);
         break;
 
       default:
@@ -720,16 +767,23 @@ export class IgnitionInterpreter {
       savedAccumulator: this.accumulator,
     });
 
-    // Create function execution context
+    // Create function execution context with optional 'this' from method call
+    const thisValue = this.pendingThisBinding || createUndefined();
+    this.pendingThisBinding = null;
     const outer = this.currentContext.lexicalEnvironment;
     const realm = this.currentContext.realm!;
     const funcCtx = createFunctionExecutionContext(
       func,
-      createUndefined(),
+      thisValue,
       undefined,
       outer,
       realm,
     );
+
+    // Bind 'this' in function context
+    if (thisValue.type !== JSValueType.UNDEFINED) {
+      funcCtx.lexicalEnvironment.bindings.set("this", thisValue);
+    }
 
     // Bind parameters
     if (funcNode) {
@@ -807,7 +861,15 @@ export class IgnitionInterpreter {
     }
 
     // Create new object with constructor's prototype
-    const newObj = createObject(fn.prototype || null);
+    // Check both fn.prototype field and fn.properties.get("prototype")
+    let ctorProto = fn.prototype || null;
+    if (!ctorProto && fn.properties?.has("prototype")) {
+      const protoProp = fn.properties.get("prototype");
+      if (protoProp && protoProp.type === JSValueType.OBJECT) {
+        ctorProto = protoProp.value as import("./JSValue.ts").JSObject;
+      }
+    }
+    const newObj = createObject(ctorProto);
     if (newObj.type === JSValueType.OBJECT) {
       newObj.value.constructor = fn;
     }
@@ -1075,6 +1137,11 @@ export class IgnitionInterpreter {
     const nameIndex = this.readOperand(bytecode);
     const name = this.constantPool[nameIndex] as string;
 
+    // Track 'this' for method calls
+    if (name === "this") {
+      this.pendingThisBinding = this.accumulator;
+    }
+
     // Set in current execution context's environment chain
     const success = setIdentifierReference(
       this.currentContext.lexicalEnvironment,
@@ -1307,6 +1374,150 @@ export class IgnitionInterpreter {
    */
   isExecuting(): boolean {
     return this.isRunning;
+  }
+
+  // ======================================================================
+  // Exception handling opcodes
+  // ======================================================================
+
+  /**
+   * TRY_START - Register exception handler
+   * Operand: catch handler offset (absolute bytecode position)
+   */
+  private executeTRY_START(bytecode: Uint8Array): void {
+    const catchOffset = this.readOperand(bytecode);
+    this.exceptionHandlers.push({
+      catchOffset,
+      frameDepth: this.frameStack.length,
+      bytecodeRef: bytecode,
+    });
+  }
+
+  /**
+   * TRY_END - Remove current exception handler
+   */
+  private executeTRY_END(): void {
+    if (this.exceptionHandlers.length > 0) {
+      this.exceptionHandlers.pop();
+    }
+  }
+
+  /**
+   * THROW - Throw exception from accumulator
+   * If a handler is registered, jump to catch; otherwise rethrow as JS Error
+   */
+  private executeTHROW(_bytecode: Uint8Array): void {
+    this.throwException(this.accumulator);
+  }
+
+  /**
+   * Internal: route exception to nearest catch handler or rethrow
+   */
+  private throwException(value: JSValue): void {
+    if (this.exceptionHandlers.length > 0) {
+      const handler = this.exceptionHandlers.pop()!;
+      // Unwind frames if we're deeper than when the handler was registered
+      while (this.frameStack.length > handler.frameDepth) {
+        const frame = this.frameStack.pop()!;
+        this.registers = frame.savedRegisters;
+        this.constantPool = frame.function.constantPool;
+        this.callStack.pop();
+        const prev = this.callStack.current();
+        if (prev) this.currentContext = prev;
+      }
+      this.caughtException = value;
+      this.programCounter = handler.catchOffset;
+    } else {
+      // No handler — convert to real throw
+      const msg = value.type === JSValueType.STRING
+        ? value.value as string
+        : value.type === JSValueType.OBJECT && (value.value as unknown as Record<string, unknown>)?.message
+        ? String((value.value as unknown as Record<string, unknown>).message)
+        : "value" in value ? String(value.value) : "undefined";
+      throw new Error(msg);
+    }
+  }
+
+  /**
+   * SET_CATCH_PARAM - Store caught exception into a variable name
+   * Operand: constant pool index of the variable name
+   */
+  private executeSET_CATCH_PARAM(bytecode: Uint8Array): void {
+    const nameIndex = this.readOperand(bytecode);
+    const name = this.constantPool[nameIndex] as string;
+    // Store exception in current scope
+    this.currentContext.lexicalEnvironment.bindings.set(name, this.caughtException);
+    // Also put it in the accumulator for convenience
+    this.accumulator = this.caughtException;
+  }
+
+  // ======================================================================
+  // Operator opcodes
+  // ======================================================================
+
+  /**
+   * TYPEOF - typeof accumulator → string in accumulator
+   */
+  private executeTYPEOF(): void {
+    const val = this.accumulator;
+    let result: string;
+    switch (val.type) {
+      case JSValueType.UNDEFINED:
+        result = "undefined";
+        break;
+      case JSValueType.NULL:
+        result = "object"; // typeof null === "object" per spec
+        break;
+      case JSValueType.BOOLEAN:
+        result = "boolean";
+        break;
+      case JSValueType.NUMBER:
+        result = "number";
+        break;
+      case JSValueType.STRING:
+        result = "string";
+        break;
+      case JSValueType.FUNCTION:
+        result = "function";
+        break;
+      case JSValueType.SYMBOL:
+        result = "symbol";
+        break;
+      case JSValueType.BIGINT:
+        result = "bigint";
+        break;
+      default:
+        result = "object";
+        break;
+    }
+    this.accumulator = createString(result);
+  }
+
+  /**
+   * INSTANCEOF - accumulator instanceof register → boolean in accumulator
+   * Operand: register index containing the constructor
+   */
+  private executeINSTANCEOF(bytecode: Uint8Array): void {
+    const registerIndex = this.readOperand(bytecode);
+    const obj = this.accumulator;
+    const ctor = this.registers[registerIndex] || createUndefined();
+
+    // Walk prototype chain
+    if (obj.type === JSValueType.OBJECT && ctor.type === JSValueType.FUNCTION) {
+      const ctorFn = ctor.value as JSFunction;
+      const ctorPrototype = ctorFn.properties?.get("prototype");
+      if (ctorPrototype) {
+        let proto = (obj.value as unknown as Record<string, unknown>)?.__proto__ as JSValue | undefined;
+        while (proto && proto.type !== JSValueType.NULL && proto.type !== JSValueType.UNDEFINED) {
+          if (proto === ctorPrototype) {
+            this.accumulator = createBoolean(true);
+            return;
+          }
+          proto = "value" in proto ? (proto.value as unknown as Record<string, unknown>)?.__proto__ as JSValue | undefined : undefined;
+        }
+      }
+    }
+    this.accumulator = createBoolean(false);
   }
 }
 

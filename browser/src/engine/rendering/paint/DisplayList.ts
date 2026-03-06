@@ -196,6 +196,33 @@ export interface SetOpacityCommand extends PaintCommand {
 }
 
 /**
+ * Fill rounded rectangle command
+ */
+export interface FillRoundedRectCommand extends PaintCommand {
+  type: PaintCommandType.FILL_ROUNDED_RECT;
+  x: Pixels;
+  y: Pixels;
+  width: Pixels;
+  height: Pixels;
+  color: string;
+  radii: [number, number, number, number]; // [topLeft, topRight, bottomRight, bottomLeft]
+}
+
+/**
+ * Stroke rounded rectangle command
+ */
+export interface StrokeRoundedRectCommand extends PaintCommand {
+  type: PaintCommandType.STROKE_ROUNDED_RECT;
+  x: Pixels;
+  y: Pixels;
+  width: Pixels;
+  height: Pixels;
+  color: string;
+  lineWidth: Pixels;
+  radii: [number, number, number, number]; // [topLeft, topRight, bottomRight, bottomLeft]
+}
+
+/**
  * Union of all command types
  */
 export type AnyPaintCommand =
@@ -217,7 +244,9 @@ export type AnyPaintCommand =
   | SetGlobalAlphaCommand
   | SetShadowCommand
   | TransformMatrixCommand
-  | SetOpacityCommand;
+  | SetOpacityCommand
+  | FillRoundedRectCommand
+  | StrokeRoundedRectCommand;
 
 /**
  * Bounding box for damage tracking
@@ -349,6 +378,8 @@ export class DisplayList {
         break;
 
       case PaintCommandType.DRAW_IMAGE:
+      case PaintCommandType.FILL_ROUNDED_RECT:
+      case PaintCommandType.STROKE_ROUNDED_RECT:
         commandBox = {
           x: command.x,
           y: command.y,
@@ -520,7 +551,53 @@ export class DisplayList {
         context.shadowBlur = command.blur;
         context.shadowColor = command.color;
         break;
+
+      case PaintCommandType.FILL_ROUNDED_RECT: {
+        const cmd = command as FillRoundedRectCommand;
+        context.fillStyle = cmd.color;
+        this.drawRoundedRect(context, cmd.x, cmd.y, cmd.width, cmd.height, cmd.radii);
+        context.fill();
+        break;
+      }
+
+      case PaintCommandType.STROKE_ROUNDED_RECT: {
+        const cmd = command as StrokeRoundedRectCommand;
+        context.strokeStyle = cmd.color;
+        context.lineWidth = cmd.lineWidth;
+        this.drawRoundedRect(context, cmd.x, cmd.y, cmd.width, cmd.height, cmd.radii);
+        context.stroke();
+        break;
+      }
     }
+  }
+
+  /**
+   * Draw a rounded rectangle path using arc segments.
+   */
+  private drawRoundedRect(
+    context: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    radii: [number, number, number, number],
+  ): void {
+    const [tl, tr, br, bl] = radii;
+    context.beginPath();
+    context.moveTo(x + tl, y);
+    context.lineTo(x + w - tr, y);
+    if (tr > 0) context.arcTo(x + w, y, x + w, y + tr, tr);
+    else context.lineTo(x + w, y);
+    context.lineTo(x + w, y + h - br);
+    if (br > 0) context.arcTo(x + w, y + h, x + w - br, y + h, br);
+    else context.lineTo(x + w, y + h);
+    context.lineTo(x + bl, y + h);
+    if (bl > 0) context.arcTo(x, y + h, x, y + h - bl, bl);
+    else context.lineTo(x, y + h);
+    context.lineTo(x, y + tl);
+    if (tl > 0) context.arcTo(x, y, x + tl, y, tl);
+    else context.lineTo(x, y);
+    context.closePath();
   }
 
   /**

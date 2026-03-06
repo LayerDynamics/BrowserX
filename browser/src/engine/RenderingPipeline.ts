@@ -54,6 +54,8 @@ export interface RenderingOptions {
   timeout?: number;
   signal?: AbortSignal;
   storageManager?: StorageManager;
+  /** Maximum node count before the legacy display list pass is skipped. Default: 5000 */
+  displayListNodeThreshold?: number;
 }
 
 /**
@@ -65,6 +67,8 @@ export interface RenderingResult {
   renderTree: RenderTree;
   layoutTree: LayoutBox;
   displayList: DisplayList;
+  /** True when the display list was not populated because the DOM exceeded the node threshold */
+  displayListTruncated?: boolean;
   layerTree?: import("./rendering/paint/PaintLayer.ts").LayerTree;
   scriptExecutor?: ScriptExecutor;
   timing: RenderingTiming;

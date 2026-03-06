@@ -163,42 +163,66 @@ export class RequestPipeline {
     const startTime = Date.now();
     const timeout = options.timeout ?? 30000; // Default 30 second timeout
 
-    // Wrap the request in a timeout
-    const requestPromise = this.doRequest(url, options, startTime);
+    // Create an internal AbortController so timeout/abort actually cancels doRequest
+    const internalController = new AbortController();
+    const internalSignal = internalController.signal;
 
-    const racers: Promise<RequestResult | never>[] = [requestPromise];
+    // If the caller provided a signal, forward its abort to our internal controller
+    let externalAbortHandler: (() => void) | undefined;
+    if (options.signal) {
+      if (options.signal.aborted) {
+        internalController.abort(options.signal.reason);
+      } else {
+        externalAbortHandler = () => {
+          internalController.abort(
+            options.signal!.reason || new RequestPipelineError("Request aborted", "aborted"),
+          );
+        };
+        options.signal.addEventListener("abort", externalAbortHandler, { once: true });
+      }
+    }
+
+    // Pass internal signal to doRequest so checkpoints can observe cancellation
+    const internalOptions = { ...options, signal: internalSignal };
+    const requestPromise = this.doRequest(url, internalOptions, startTime);
 
     let timeoutId: number | undefined;
-    if (timeout > 0) {
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            new RequestPipelineError(
-              `Request timed out after ${timeout}ms`,
-              "timeout",
-            ),
-          );
-        }, timeout) as unknown as number;
-      });
-      racers.push(timeoutPromise);
-    }
 
-    // Add abort signal to the race if provided
-    if (options.signal) {
-      const abortPromise = new Promise<never>((_, reject) => {
-        options.signal!.addEventListener("abort", () => {
-          reject(options.signal!.reason || new RequestPipelineError("Request aborted", "aborted"));
-        }, { once: true });
-      });
-      racers.push(abortPromise);
-    }
+    const cleanup = () => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      // Remove the forwarding listener to release the closure
+      if (externalAbortHandler && options.signal) {
+        options.signal.removeEventListener("abort", externalAbortHandler);
+      }
+    };
 
     try {
-      const result = await Promise.race(racers);
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      if (timeout > 0) {
+        const result = await Promise.race([
+          requestPromise,
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              const err = new RequestPipelineError(
+                `Request timed out after ${timeout}ms`,
+                "timeout",
+              );
+              internalController.abort(err);
+              reject(err);
+            }, timeout) as unknown as number;
+          }),
+        ]);
+        cleanup();
+        return result;
+      }
+      const result = await requestPromise;
+      cleanup();
       return result;
     } catch (err) {
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      cleanup();
+      // Ensure doRequest is cancelled on any rejection
+      if (!internalSignal.aborted) {
+        internalController.abort(err);
+      }
       throw err;
     }
   }
@@ -300,7 +324,7 @@ export class RequestPipeline {
       // Pass hostname for TLS SNI - must be hostname, not IP address
       this.emitStage("tcp-connection", "TCP Connection", "running", Date.now());
       const connStart = Date.now();
-      const connection = await this.connectionPool.acquire(
+      const connection = await this.connectionManager.acquire(
         targetIP,
         port as Port,
         isSecure,
@@ -355,7 +379,9 @@ export class RequestPipeline {
         // 5. Receive HTTP response
         this.emitStage("http-receive", "HTTP Receive", "running", Date.now());
         const respStart = Date.now();
-        const chunks: Uint8Array[] = [];
+        const maxResponseSize = 100 * 1024 * 1024; // 100MB max
+        // Use a single growing buffer to avoid O(n²) concatenation per chunk
+        let receiveBuffer = new Uint8Array(65536); // Initial 64KB, grows as needed
         let totalBytes = 0;
         let headersComplete = false;
         let isChunked = false;
@@ -383,22 +409,30 @@ export class RequestPipeline {
             break; // Connection closed
           }
 
-          chunks.push(chunk.slice(0, bytesRead));
+          // Grow buffer if needed (double until sufficient)
+          while (totalBytes + bytesRead > receiveBuffer.length) {
+            const newBuffer = new Uint8Array(receiveBuffer.length * 2);
+            newBuffer.set(receiveBuffer);
+            receiveBuffer = newBuffer;
+          }
+          receiveBuffer.set(chunk.subarray(0, bytesRead), totalBytes);
           totalBytes += bytesRead;
 
           // Check if headers are complete
           if (!headersComplete) {
-            const partialResponse = this.concatChunks(chunks, totalBytes);
-            // Search for \r\n\r\n (0x0d 0x0a 0x0d 0x0a) in raw bytes to avoid
-            // byte/char offset mismatch with multi-byte UTF-8 in headers
-            const headerEndByteIndex = this.findHeaderEnd(partialResponse);
+            // Search for \r\n\r\n only in the region where new data was appended,
+            // including 3 bytes before the new data to catch boundary splits
+            const searchStart = Math.max(0, totalBytes - bytesRead - 3);
+            const headerEndByteIndex = this.findHeaderEndInRange(
+              receiveBuffer, searchStart, totalBytes,
+            );
 
             if (headerEndByteIndex !== -1) {
               headersComplete = true;
               bodyStartIndex = headerEndByteIndex + 4;
 
               // Decode only the header portion for text-based checks
-              const text = decoder.decode(partialResponse.slice(0, headerEndByteIndex));
+              const text = decoder.decode(receiveBuffer.subarray(0, headerEndByteIndex));
               // Check for chunked encoding or content-length
               const lowerText = text.toLowerCase();
               if (lowerText.includes("transfer-encoding: chunked")) {
@@ -420,8 +454,7 @@ export class RequestPipeline {
                 if (Number.isNaN(parsedLength) || parsedLength < 0) {
                   throw new Error(`Invalid Content-Length value: ${clMatch[1]}`);
                 }
-                // Validate Content-Length doesn't exceed max response size (10MB)
-                const maxResponseSize = 10 * 1024 * 1024;
+                // Validate Content-Length doesn't exceed max response size (100MB)
                 if (parsedLength > maxResponseSize) {
                   throw new Error(
                     `Content-Length ${parsedLength} exceeds maximum allowed size of ${maxResponseSize} bytes`,
@@ -434,22 +467,17 @@ export class RequestPipeline {
 
           // Check if response is complete
           if (headersComplete) {
-            const partialResponse = this.concatChunks(chunks, totalBytes);
-
             if (isChunked) {
-              // Check for chunked terminator: 0\r\n followed by optional trailers and final \r\n
-              // RFC 7230 Section 4.1: chunked-body = *chunk last-chunk trailer-part CRLF
-              // last-chunk = "0" *( ";" chunk-ext ) CRLF
-              // trailer-part = *( header-field CRLF )
-              const text = decoder.decode(partialResponse.slice(bodyStartIndex));
-              // Find the zero-length chunk (can be "0\r\n" or "0;ext\r\n")
-              const zeroChunkMatch = text.match(/\r\n0(?:;[^\r\n]*)?\r\n/);
-              if (zeroChunkMatch) {
-                // Zero-length chunk found - check if the message ends with \r\n\r\n
-                // (either no trailers: "0\r\n\r\n" or trailers followed by "\r\n\r\n")
-                if (text.endsWith("\r\n\r\n")) {
-                  break; // Chunked response complete
-                }
+              // Check for chunked terminator in the tail region of the body.
+              // The terminator is 7 bytes: \r\n 0 \r\n \r\n — only need to scan
+              // the newly received data plus a small overlap.
+              const bodyStart = bodyStartIndex;
+              const searchFrom = Math.max(bodyStart, totalBytes - bytesRead - 6);
+              const foundTerminator = this.findChunkedTerminator(
+                receiveBuffer, searchFrom, totalBytes, bodyStart,
+              );
+              if (foundTerminator) {
+                break; // Chunked response complete
               }
             } else if (contentLength >= 0) {
               const bodyBytes = totalBytes - bodyStartIndex;
@@ -457,16 +485,14 @@ export class RequestPipeline {
                 break; // Content-Length reached
               }
             } else {
-              // No content-length or chunked - read a bit more then stop
-              // This handles responses with no body
-              if (totalBytes > bodyStartIndex) {
-                break;
-              }
+              // No content-length and not chunked — Connection: close semantics.
+              // Read until the server closes the connection (read returns null/0).
+              // The loop continues; we break when read() returns null below.
             }
           }
 
-          // Safety limit - should match Content-Length validation (10MB)
-          if (totalBytes > 10 * 1024 * 1024) { // 10MB max
+          // Safety limit - should match Content-Length validation (100MB)
+          if (totalBytes > maxResponseSize) {
             break;
           }
         }
@@ -475,15 +501,38 @@ export class RequestPipeline {
           throw new Error("No response received from server");
         }
 
-        const responseData = this.concatChunks(chunks, totalBytes);
+        const responseData = receiveBuffer.subarray(0, totalBytes);
 
         // Parse response
         const response = this.parseResponse(responseData as ByteBuffer, request.id);
         response.fromCache = false;
         timing.download = Date.now() - respStart - (timing.firstByte || 0);
 
+        // Decompress body if Content-Encoding is set
+        const contentEncoding = response.headers.get("content-encoding")?.toLowerCase();
+        if (contentEncoding && response.body && response.body.byteLength > 0) {
+          try {
+            let decompressed: Uint8Array | null = null;
+            if (contentEncoding === "gzip" || contentEncoding === "x-gzip") {
+              decompressed = await this.decompressBody(response.body, "gzip");
+            } else if (contentEncoding === "deflate") {
+              decompressed = await this.decompressBody(response.body, "deflate");
+            }
+            if (decompressed) {
+              response.body = decompressed as ByteBuffer;
+              // Remove content-encoding since we've decoded it
+              response.headers.delete("content-encoding");
+              // Update content-length to reflect decoded size
+              response.headers.set("content-length", String(decompressed.byteLength));
+            }
+          } catch {
+            // If decompression fails, keep the original body —
+            // server may have lied about encoding, or body may not actually be compressed
+          }
+        }
+
         // Release connection back to pool
-        await this.connectionPool.release(connection);
+        await this.connectionManager.release(connection);
         connectionReleased = true;
 
         // 6. Store in cache (if cacheable)
@@ -533,6 +582,16 @@ export class RequestPipeline {
               maxRedirects: maxRedirects - 1,
               _visitedUrls: visitedUrls,
             };
+
+            // Per RFC 7231: 303 See Other always redirects as GET
+            // 302 Found historically treated as GET (de facto standard)
+            if (response.statusCode === 303 || response.statusCode === 302) {
+              redirectOptions.method = "GET";
+              // Remove body for GET requests
+              delete redirectOptions.body;
+            }
+            // 307/308 preserve the original method
+
             return await this.request(redirectUrl, redirectOptions);
           }
         }
@@ -559,7 +618,7 @@ export class RequestPipeline {
         // Ensure connection is always released back to the pool, even on error
         if (!connectionReleased) {
           try {
-            await this.connectionPool.release(connection);
+            await this.connectionManager.release(connection);
           } catch {
             // Ignore release errors during error handling
           }
@@ -623,21 +682,49 @@ export class RequestPipeline {
    * Resolve DNS with caching
    */
   private async resolveDNS(hostname: string): Promise<string[]> {
+    // IP address passthrough — skip DNS for IPv4/IPv6 literals
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) || hostname.startsWith("[") || hostname.includes("::")) {
+      return [hostname.replace(/^\[|\]$/g, "")];
+    }
+
     // Check cache first
     const cached = this.dnsCache.get(hostname);
     if (cached && cached.addresses.length > 0) {
       return cached.addresses;
     }
 
-    // Resolve via DNS
+    // Resolve via DNS — try custom resolver first, then Deno.resolveDns() fallback
     try {
       const result: DNSResult = await this.dnsResolver.resolve(hostname);
 
-      // Store in cache
+      // Store in cache — cache under both the queried hostname and the
+      // result hostname (which may differ due to CNAME following)
       this.dnsCache.set(result);
+      if (result.hostname !== hostname) {
+        this.dnsCache.set({ ...result, hostname });
+      }
 
       return result.addresses;
     } catch (error) {
+      // Fallback to Deno's built-in DNS resolver
+      try {
+        if (typeof Deno !== "undefined" && Deno.resolveDns) {
+          const addresses = await Deno.resolveDns(hostname, "A");
+          if (addresses.length > 0) {
+            const result: DNSResult = {
+              hostname,
+              addresses,
+              ttl: 300,
+              timestamp: Date.now(),
+            };
+            this.dnsCache.set(result);
+            return addresses;
+          }
+        }
+      } catch {
+        // Deno.resolveDns also failed — throw original error
+      }
+
       throw new RequestPipelineError(
         `DNS resolution failed for ${hostname}: ${
           error instanceof Error ? error.message : String(error)
@@ -690,7 +777,14 @@ export class RequestPipeline {
    * Returns the byte index of the first \r in the sequence, or -1 if not found.
    */
   private findHeaderEnd(data: Uint8Array): number {
-    for (let i = 0; i <= data.length - 4; i++) {
+    return this.findHeaderEndInRange(data, 0, data.length);
+  }
+
+  /**
+   * Search for \r\n\r\n within a specific byte range of a buffer
+   */
+  private findHeaderEndInRange(data: Uint8Array, start: number, end: number): number {
+    for (let i = start; i <= end - 4; i++) {
       if (
         data[i] === 0x0d &&
         data[i + 1] === 0x0a &&
@@ -701,6 +795,34 @@ export class RequestPipeline {
       }
     }
     return -1;
+  }
+
+  /**
+   * Search for chunked transfer terminator in a byte range.
+   * Looks for \r\n0\r\n\r\n (7 bytes) or 0\r\n\r\n at body start (5 bytes).
+   */
+  private findChunkedTerminator(
+    data: Uint8Array, searchFrom: number, end: number, bodyStart: number,
+  ): boolean {
+    // Check for mid-body terminator: \r\n 0 \r\n \r\n
+    for (let bi = searchFrom; bi <= end - 7; bi++) {
+      if (
+        data[bi] === 0x0D && data[bi + 1] === 0x0A &&
+        data[bi + 2] === 0x30 &&
+        data[bi + 3] === 0x0D && data[bi + 4] === 0x0A &&
+        data[bi + 5] === 0x0D && data[bi + 6] === 0x0A
+      ) {
+        return true;
+      }
+    }
+    // Check if body starts with "0\r\n\r\n" (empty body, first chunk is last)
+    if (end - bodyStart >= 5 &&
+        data[bodyStart] === 0x30 && data[bodyStart + 1] === 0x0D &&
+        data[bodyStart + 2] === 0x0A && data[bodyStart + 3] === 0x0D &&
+        data[bodyStart + 4] === 0x0A) {
+      return true;
+    }
+    return false;
   }
 
   private concatChunks(chunks: Uint8Array[], totalBytes: number): Uint8Array {
@@ -749,6 +871,7 @@ export class RequestPipeline {
     headers.set("host", url.host);
     headers.set("user-agent", "BrowserX/1.0");
     headers.set("accept", "*/*");
+    headers.set("accept-encoding", "gzip, deflate");
     headers.set("connection", "keep-alive");
 
     // Add custom headers
@@ -809,6 +932,41 @@ export class RequestPipeline {
     // Validate serialized request is parseable
     this.requestParser.parseRequest(headerData);
     return headerData;
+  }
+
+  /**
+   * Decompress a response body using DecompressionStream (Web Streams API).
+   */
+  private async decompressBody(
+    body: ByteBuffer,
+    format: "gzip" | "deflate",
+  ): Promise<Uint8Array> {
+    const ds = new DecompressionStream(format);
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+
+    // Write compressed data and close
+    writer.write(body);
+    writer.close();
+
+    // Read all decompressed chunks
+    const chunks: Uint8Array[] = [];
+    let totalLen = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      totalLen += value.byteLength;
+    }
+
+    // Concat into single buffer
+    const result = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return result;
   }
 
   /**
@@ -942,7 +1100,7 @@ export class RequestPipeline {
    */
   async close(): Promise<void> {
     this.dnsCache.dispose();
-    await this.connectionManager.closeAll();
+    await this.connectionPool.destroy();
   }
 
   /**
