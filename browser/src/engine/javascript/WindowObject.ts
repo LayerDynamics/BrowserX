@@ -700,6 +700,9 @@ export class WindowObject {
       }, 1),
     );
 
+    // Install Promise constructor
+    this.installPromise();
+
     // Install JSON object
     const jsonObj = createObject();
     setProperty(
@@ -2056,6 +2059,262 @@ export class WindowObject {
     }
 
     return storageObj;
+  }
+
+  /**
+   * Install Promise constructor and static methods
+   */
+  private installPromise(): void {
+    // Internal promise state tracking
+    type PromiseState = "pending" | "fulfilled" | "rejected";
+
+    interface PromiseRecord {
+      state: PromiseState;
+      value: JSValue;
+      thenCallbacks: Array<{ onFulfilled: JSValue | null; onRejected: JSValue | null; childResolve: (v: JSValue) => void; childReject: (v: JSValue) => void }>;
+    }
+
+    const resolvePromise = (record: PromiseRecord, value: JSValue) => {
+      if (record.state !== "pending") return;
+      record.state = "fulfilled";
+      record.value = value;
+      for (const cb of record.thenCallbacks) {
+        if (cb.onFulfilled && cb.onFulfilled.type === "function") {
+          const fn = cb.onFulfilled.value as import("./JSValue.ts").JSFunction;
+          if (fn.isNative && fn.nativeImpl) {
+            try {
+              const result = fn.nativeImpl(value);
+              cb.childResolve(result);
+            } catch {
+              cb.childReject(createString("callback error"));
+            }
+          } else {
+            cb.childResolve(value);
+          }
+        } else {
+          cb.childResolve(value);
+        }
+      }
+    };
+
+    const rejectPromise = (record: PromiseRecord, reason: JSValue) => {
+      if (record.state !== "pending") return;
+      record.state = "rejected";
+      record.value = reason;
+      for (const cb of record.thenCallbacks) {
+        if (cb.onRejected && cb.onRejected.type === "function") {
+          const fn = cb.onRejected.value as import("./JSValue.ts").JSFunction;
+          if (fn.isNative && fn.nativeImpl) {
+            try {
+              const result = fn.nativeImpl(reason);
+              cb.childResolve(result);
+            } catch {
+              cb.childReject(createString("callback error"));
+            }
+          } else {
+            cb.childReject(reason);
+          }
+        } else {
+          cb.childReject(reason);
+        }
+      }
+    };
+
+    const createPromiseObject = (record: PromiseRecord): JSValue => {
+      const promiseObj = createObject();
+
+      // .then(onFulfilled, onRejected)
+      setProperty(promiseObj, "then", createNativeFunction("then", (...args) => {
+        const onFulfilled = args[0] && args[0].type === "function" ? args[0] : null;
+        const onRejected = args[1] && args[1].type === "function" ? args[1] : null;
+        const childRecord: PromiseRecord = { state: "pending", value: createUndefined(), thenCallbacks: [] };
+        const childPromise = createPromiseObject(childRecord);
+
+        if (record.state === "fulfilled") {
+          if (onFulfilled && onFulfilled.type === "function") {
+            const fn = onFulfilled.value as import("./JSValue.ts").JSFunction;
+            if (fn.isNative && fn.nativeImpl) {
+              try {
+                const result = fn.nativeImpl(record.value);
+                resolvePromise(childRecord, result);
+              } catch {
+                rejectPromise(childRecord, createString("callback error"));
+              }
+            } else {
+              resolvePromise(childRecord, record.value);
+            }
+          } else {
+            resolvePromise(childRecord, record.value);
+          }
+        } else if (record.state === "rejected") {
+          if (onRejected && onRejected.type === "function") {
+            const fn = onRejected.value as import("./JSValue.ts").JSFunction;
+            if (fn.isNative && fn.nativeImpl) {
+              try {
+                const result = fn.nativeImpl(record.value);
+                resolvePromise(childRecord, result);
+              } catch {
+                rejectPromise(childRecord, createString("callback error"));
+              }
+            } else {
+              rejectPromise(childRecord, record.value);
+            }
+          } else {
+            rejectPromise(childRecord, record.value);
+          }
+        } else {
+          record.thenCallbacks.push({
+            onFulfilled,
+            onRejected,
+            childResolve: (v) => resolvePromise(childRecord, v),
+            childReject: (v) => rejectPromise(childRecord, v),
+          });
+        }
+        return childPromise;
+      }, 2));
+
+      // .catch(onRejected)
+      setProperty(promiseObj, "catch", createNativeFunction("catch", (...args) => {
+        const thenFn = getProperty(promiseObj, "then");
+        if (thenFn.type === "function") {
+          const fn = thenFn.value as import("./JSValue.ts").JSFunction;
+          if (fn.isNative && fn.nativeImpl) {
+            return fn.nativeImpl(createNull(), args[0] || createUndefined());
+          }
+        }
+        return promiseObj;
+      }, 1));
+
+      // .finally(onFinally)
+      setProperty(promiseObj, "finally", createNativeFunction("finally", (...args) => {
+        const onFinally = args[0];
+        const thenFn = getProperty(promiseObj, "then");
+        if (thenFn.type === "function") {
+          const fn = thenFn.value as import("./JSValue.ts").JSFunction;
+          if (fn.isNative && fn.nativeImpl) {
+            const wrapFulfilled = createNativeFunction("wrapFulfilled", (val) => {
+              if (onFinally && onFinally.type === "function") {
+                const cb = onFinally.value as import("./JSValue.ts").JSFunction;
+                if (cb.isNative && cb.nativeImpl) cb.nativeImpl();
+              }
+              return val || createUndefined();
+            }, 1);
+            const wrapRejected = createNativeFunction("wrapRejected", (reason) => {
+              if (onFinally && onFinally.type === "function") {
+                const cb = onFinally.value as import("./JSValue.ts").JSFunction;
+                if (cb.isNative && cb.nativeImpl) cb.nativeImpl();
+              }
+              return reason || createUndefined();
+            }, 1);
+            return fn.nativeImpl(wrapFulfilled, wrapRejected);
+          }
+        }
+        return promiseObj;
+      }, 1));
+
+      return promiseObj;
+    };
+
+    // Promise constructor: new Promise((resolve, reject) => { ... })
+    const PromiseCtor = createNativeFunction("Promise", (...args) => {
+      const executor = args[0];
+      const record: PromiseRecord = { state: "pending", value: createUndefined(), thenCallbacks: [] };
+      const promiseObj = createPromiseObject(record);
+
+      if (executor && executor.type === "function") {
+        const resolveFn = createNativeFunction("resolve", (...rArgs) => {
+          resolvePromise(record, rArgs[0] || createUndefined());
+          return createUndefined();
+        }, 1);
+        const rejectFn = createNativeFunction("reject", (...rArgs) => {
+          rejectPromise(record, rArgs[0] || createUndefined());
+          return createUndefined();
+        }, 1);
+
+        const fn = executor.value as import("./JSValue.ts").JSFunction;
+        if (fn.isNative && fn.nativeImpl) {
+          try {
+            fn.nativeImpl(resolveFn, rejectFn);
+          } catch {
+            rejectPromise(record, createString("executor error"));
+          }
+        }
+      }
+
+      return promiseObj;
+    }, 1);
+
+    // Promise.resolve(value)
+    setProperty(PromiseCtor, "resolve", createNativeFunction("resolve", (...args) => {
+      const record: PromiseRecord = { state: "fulfilled", value: args[0] || createUndefined(), thenCallbacks: [] };
+      return createPromiseObject(record);
+    }, 1));
+
+    // Promise.reject(reason)
+    setProperty(PromiseCtor, "reject", createNativeFunction("reject", (...args) => {
+      const record: PromiseRecord = { state: "rejected", value: args[0] || createUndefined(), thenCallbacks: [] };
+      return createPromiseObject(record);
+    }, 1));
+
+    // Promise.all(iterable)
+    setProperty(PromiseCtor, "all", createNativeFunction("all", (...args) => {
+      const arr = args[0];
+      const record: PromiseRecord = { state: "pending", value: createUndefined(), thenCallbacks: [] };
+      const promiseObj = createPromiseObject(record);
+
+      // For synchronous engine, resolve immediately if all values are resolved
+      if (arr && arr.type === "object") {
+        const values: JSValue[] = [];
+        const props = (arr.value as import("./JSValue.ts").JSObject).properties;
+        if (props) {
+          let allResolved = true;
+          const length = props.get("length");
+          const len = length && "value" in length ? (length.value as number) : 0;
+          for (let i = 0; i < len; i++) {
+            const item = props.get(String(i)) || createUndefined();
+            values.push(item);
+            // Check if it's a promise (has .then)
+            if (item.type === "object" && getProperty(item, "then").type === "function") {
+              allResolved = false;
+            }
+          }
+          if (allResolved) {
+            const resultArr = createObject();
+            for (let i = 0; i < values.length; i++) {
+              setProperty(resultArr, String(i), values[i]);
+            }
+            setProperty(resultArr, "length", createNumber(values.length));
+            resolvePromise(record, resultArr);
+          }
+        }
+      }
+      return promiseObj;
+    }, 1));
+
+    // Promise.race(iterable)
+    setProperty(PromiseCtor, "race", createNativeFunction("race", (...args) => {
+      const arr = args[0];
+      const record: PromiseRecord = { state: "pending", value: createUndefined(), thenCallbacks: [] };
+      const promiseObj = createPromiseObject(record);
+
+      if (arr && arr.type === "object") {
+        const props = (arr.value as import("./JSValue.ts").JSObject).properties;
+        if (props) {
+          const length = props.get("length");
+          const len = length && "value" in length ? (length.value as number) : 0;
+          for (let i = 0; i < len; i++) {
+            const item = props.get(String(i));
+            if (item) {
+              resolvePromise(record, item);
+              break;
+            }
+          }
+        }
+      }
+      return promiseObj;
+    }, 1));
+
+    setProperty(this.context.global, "Promise", PromiseCtor);
   }
 
   /**

@@ -2917,14 +2917,14 @@ export class DOMBindings {
         toggle: () => false,
         replace: () => false,
       };
-      cloned.getAttribute = (name: string) => cloned.attributes.get(name) ?? null;
+      cloned.getAttribute = (name: string) => cloned.attributes!.get(name) ?? null;
       cloned.setAttribute = (name: string, value: string) => {
-        cloned.attributes.set(name, value);
+        cloned.attributes!.set(name, value);
         if (name === "id") cloned.id = value;
         if (name === "class") cloned.className = value;
       };
-      cloned.removeAttribute = (name: string) => cloned.attributes.delete(name);
-      cloned.hasAttribute = (name: string) => cloned.attributes.has(name);
+      cloned.removeAttribute = (name: string) => cloned.attributes!.delete(name);
+      cloned.hasAttribute = (name: string) => cloned.attributes!.has(name);
       cloned.querySelector = (sel: string) => this.querySelector(cloned, sel);
       cloned.querySelectorAll = (sel: string) => this.querySelectorAll(cloned, sel);
       cloned.getElementsByTagName = (tag: string) => this.getElementsByTagName(cloned, tag);

@@ -62,6 +62,23 @@ class SimpleDOMNode {
     this.nodeId = nodeId;
   }
 
+  getAttribute(name: string): string | null {
+    return this.attributes?.get(name) ?? null;
+  }
+
+  setAttribute(name: string, value: string): void {
+    if (!this.attributes) this.attributes = new Map();
+    this.attributes.set(name, value);
+  }
+
+  hasAttribute(name: string): boolean {
+    return this.attributes?.has(name) ?? false;
+  }
+
+  removeAttribute(name: string): void {
+    this.attributes?.delete(name);
+  }
+
   appendChild(child: SimpleDOMNode): SimpleDOMNode {
     child.parentNode = this;
 

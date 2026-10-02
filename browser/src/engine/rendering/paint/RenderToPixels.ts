@@ -163,7 +163,7 @@ export class RenderToPixels {
    * Create canvas element
    */
   private createCanvas(width: Pixels, height: Pixels): HTMLCanvasElement {
-    const canvas = document.createElement("canvas");
+    const canvas = document.createElement("canvas") as unknown as HTMLCanvasElement;
     canvas.width = width;
     canvas.height = height;
     return canvas;

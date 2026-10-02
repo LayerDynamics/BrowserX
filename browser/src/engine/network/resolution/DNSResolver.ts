@@ -114,13 +114,20 @@ export class DNSResolver {
    * @param type - DNS record type (A or AAAA)
    * @returns DNS resolution result
    */
-  async resolve(hostname: string, type: DNSRecordType = DNSRecordType.A): Promise<DNSResult> {
+  async resolve(hostname: string, type: DNSRecordType = DNSRecordType.A, _cnameDepth: number = 0): Promise<DNSResult> {
     // Try DNS-over-HTTPS first if configured
     if (this.dohEndpoint) {
       try {
         return await this.queryDoH(hostname, type);
       } catch (error) {
-        this.dnsLogger.warn(`DoH query failed: ${(error as Error).message}, falling back to UDP`);
+        const msg = (error as Error).message;
+        // Handle CNAME-only responses from DoH
+        if (msg.startsWith("CNAME_ONLY:") && _cnameDepth < 10) {
+          const cnameTarget = msg.slice("CNAME_ONLY:".length);
+          this.dnsLogger.info(`Following CNAME: ${hostname} -> ${cnameTarget}`);
+          return await this.resolve(cnameTarget, type, _cnameDepth + 1);
+        }
+        this.dnsLogger.warn(`DoH query failed: ${msg}, falling back to UDP`);
       }
     }
 
@@ -133,7 +140,14 @@ export class DNSResolver {
         return await this.queryUDP(hostname, type, nameserver);
       } catch (error) {
         lastError = error as Error;
-        this.dnsLogger.warn(`DNS query to ${nameserver} failed: ${lastError.message}`);
+        const msg = lastError.message;
+        // Handle CNAME-only responses — follow the CNAME chain
+        if (msg.startsWith("CNAME_ONLY:") && _cnameDepth < 10) {
+          const cnameTarget = msg.slice("CNAME_ONLY:".length);
+          this.dnsLogger.info(`Following CNAME: ${hostname} -> ${cnameTarget}`);
+          return await this.resolve(cnameTarget, type, _cnameDepth + 1);
+        }
+        this.dnsLogger.warn(`DNS query to ${nameserver} failed: ${msg}`);
       }
     }
 
@@ -329,6 +343,12 @@ export class DNSResolver {
     }
 
     if (addresses.length === 0) {
+      // If we got a CNAME but no A/AAAA records, throw with CNAME target
+      // so the caller can follow the CNAME chain
+      if (hostname && hostname !== "" && header.ancount > 0) {
+        const err = new Error(`CNAME_ONLY:${hostname}`);
+        throw err;
+      }
       throw new Error("No addresses found in DNS response");
     }
 

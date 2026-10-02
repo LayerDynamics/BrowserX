@@ -8,6 +8,7 @@
 import type { DOMNode } from "./types/dom.ts";
 import { RequestPipeline } from "./engine/RequestPipeline.ts";
 import { RenderingPipeline } from "./engine/RenderingPipeline.ts";
+import { WindowRenderer } from "./engine/rendering/WindowRenderer.ts";
 import { StorageManager } from "./engine/storage/StorageManager.ts";
 import { CookieManager } from "./engine/storage/CookieManager.ts";
 import { QuotaManager } from "./engine/storage/QuotaManager.ts";
@@ -514,18 +515,36 @@ export async function main(): Promise<void> {
   console.log("BrowserX - Starting");
   console.log("=".repeat(60));
 
+  const width = 1024;
+  const height = 768;
+
   // Create browser instance
   const browser = new Browser({
-    width: 1024,
-    height: 768,
+    width,
+    height,
     enableJavaScript: false,
     enableStorage: true,
   });
 
   // Load default page or command-line argument
   const url = Deno.args[0] || "about:blank";
+  const headless = Deno.args.includes("--headless");
 
   if (url !== "about:blank") {
+    // Create and initialize WindowRenderer
+    const windowRenderer = new WindowRenderer({
+      mode: headless ? "offscreen" : "native",
+      title: `BrowserX — ${url}`,
+      width,
+      height,
+      resizable: true,
+      vsync: true,
+    });
+    await windowRenderer.initialize();
+
+    // Wire to rendering pipeline's orchestrator
+    browser.getRenderingPipeline().setWindowRenderer(windowRenderer);
+
     try {
       await browser.navigate(url);
 
@@ -538,19 +557,49 @@ export async function main(): Promise<void> {
     } catch (error) {
       console.error("Failed to load page:", error);
     }
-  }
 
-  console.log("\n" + "=".repeat(60));
-  console.log("Browser ready. Use browser.navigate(url) to load pages.");
-  console.log("=".repeat(60));
+    // Event loop — keep window open and responsive
+    if (!headless && windowRenderer.isRunning()) {
+      console.log("\nWindow open. Close window or press Ctrl+C to exit.");
+      let running = true;
 
-  // Keep browser running in REPL mode if no URL provided
-  if (url === "about:blank") {
+      while (running) {
+        const events = await windowRenderer.pollEvents();
+        for (const event of events) {
+          switch (event.type) {
+            case "close":
+              running = false;
+              break;
+            case "resize": {
+              const resizeData = event.data as { width?: number; height?: number } | undefined;
+              if (resizeData?.width && resizeData?.height) {
+                browser.setViewportSize(resizeData.width, resizeData.height);
+                windowRenderer.resize(resizeData.width, resizeData.height);
+                // Re-render at new size
+                try {
+                  await browser.reload();
+                } catch (_e) {
+                  // Ignore re-render errors during resize
+                }
+              }
+              break;
+            }
+          }
+        }
+        // ~60fps poll rate
+        await new Promise((resolve) => setTimeout(resolve, 16));
+      }
+
+      windowRenderer.destroy();
+    }
+
+    await browser.close();
+  } else {
+    console.log("\n" + "=".repeat(60));
+    console.log("Browser ready. Use browser.navigate(url) to load pages.");
+    console.log("=".repeat(60));
     console.log("\nREPL mode - browser instance available as 'browser'");
     (globalThis as unknown as { browser: Browser }).browser = browser;
-  } else {
-    // Close after loading if URL was provided
-    await browser.close();
   }
 }
 

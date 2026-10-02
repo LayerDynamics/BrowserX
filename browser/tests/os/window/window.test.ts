@@ -84,6 +84,41 @@ Deno.test("WindowContext - present is no-op in headless mode", async () => {
   win.close();
 });
 
+Deno.test("Window - getWindowId is 0n in headless mode", async () => {
+  const win = new Window({ title: "Test", width: 800, height: 600 });
+  await win.open();
+  assertEquals(win.getWindowId(), 0n);
+  win.close();
+});
+
+Deno.test("Window - getPixpane is null in headless mode", async () => {
+  const win = new Window({ title: "Test", width: 800, height: 600 });
+  await win.open();
+  assertEquals(win.getPixpane(), null);
+  win.close();
+});
+
+Deno.test("Window - pollEvents returns empty in headless", async () => {
+  const win = new Window({ title: "Test", width: 800, height: 600 });
+  await win.open();
+  const events = await win.pollEvents();
+  assertEquals(events.length, 0);
+  win.close();
+});
+
+Deno.test("WindowContext - present with pixels in headless increments frameCount", async () => {
+  const win = new Window({ title: "Test", width: 4, height: 4 });
+  await win.open();
+  const ctx = new WindowContext(win);
+  await ctx.initialize();
+  const pixels = new Uint8ClampedArray(4 * 4 * 4);
+  ctx.present(pixels, 4, 4);
+  ctx.present(pixels, 4, 4);
+  assertEquals(ctx.getFrameCount(), 2);
+  ctx.destroy();
+  win.close();
+});
+
 Deno.test("WindowContext - getConfig returns copy", async () => {
   const win = new Window({ title: "Test", width: 800, height: 600 });
   await win.open();

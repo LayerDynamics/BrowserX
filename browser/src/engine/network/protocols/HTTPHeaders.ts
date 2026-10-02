@@ -38,10 +38,16 @@ export class HTTPHeaderParser {
       const name = line.substring(0, colonIndex).trim().toLowerCase();
       const value = line.substring(colonIndex + 1).trim();
 
-      // Handle multiple headers with same name (e.g., Set-Cookie)
+      // Handle multiple headers with same name
       if (headers.has(name)) {
-        // Append to existing value with comma separator
-        headers.set(name, `${headers.get(name)}, ${value}`);
+        if (name === "set-cookie") {
+          // Set-Cookie headers MUST NOT be comma-joined (RFC 6265)
+          // Store as newline-separated so they can be split later
+          headers.set(name, `${headers.get(name)}\n${value}`);
+        } else {
+          // Other headers: comma-join per RFC 7230 Section 3.2.2
+          headers.set(name, `${headers.get(name)}, ${value}`);
+        }
       } else {
         headers.set(name, value);
       }

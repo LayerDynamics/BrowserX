@@ -43,10 +43,16 @@ export interface CSSRule {
 /**
  * CSS stylesheet
  */
+export interface CSSMediaRule {
+  condition: string;
+  rules: CSSRule[];
+}
+
 export interface CSSStyleSheet {
   href: string | null;
   ownerNode: DOMElement | null;
   rules: CSSRule[];
+  mediaRules: CSSMediaRule[];
   disabled: boolean;
 
   /**

@@ -254,11 +254,21 @@ export class ResourceFetcher {
     try {
       const styleElements = this.findStyleElements(dom);
 
+      // Collect inline styles immediately, build fetch promises for external sheets
+      const fetchPromises: Array<{ index: number; promise: Promise<string> }> = [];
+      let orderIndex = 0;
+
       for (const element of styleElements) {
         if (element.tagName === "link") {
+          // Only fetch rel="stylesheet" links (skip preload, icon, etc.)
+          const rel = element.attributes.get("rel");
+          if (rel && rel.toLowerCase() !== "stylesheet") {
+            continue;
+          }
           const href = element.attributes.get("href");
           if (href) {
-            const cssUrl = new URL(href, baseUrl);
+            const cssUrl = (() => { try { return new URL(href, baseUrl); } catch { return null; } })();
+            if (!cssUrl) continue;
 
             if (this.csp) {
               const pageOrigin = new URL(baseUrl.toString()).origin;
@@ -268,32 +278,97 @@ export class ResourceFetcher {
               }
             }
 
-            const result = await this.requestPipeline.get(cssUrl);
+            // Check media attribute — skip if media query won't match screen
+            const media = element.attributes.get("media");
+            if (media && media !== "all" && media !== "screen" && !media.includes("screen")) {
+              if (media === "print" || media.startsWith("print")) {
+                continue;
+              }
+            }
 
-            this.resources.push({
-              url: result.request.url,
-              type: "css",
-              size: result.response.body.byteLength,
-              fetchTime: result.timing.total,
-              cached: result.fromCache,
+            const idx = orderIndex++;
+            fetchPromises.push({
+              index: idx,
+              promise: (async () => {
+                const result = await this.requestPipeline.get(cssUrl);
+                this.resources.push({
+                  url: result.request.url,
+                  type: "css",
+                  size: result.response.body.byteLength,
+                  fetchTime: result.timing.total,
+                  cached: result.fromCache,
+                });
+                return new TextDecoder().decode(result.response.body);
+              })(),
             });
-
-            const cssText = new TextDecoder().decode(result.response.body);
-            stylesheets.push(cssText);
           }
         } else if (element.tagName === "style") {
           const textContent = this.getTextContent(element);
           if (textContent) {
-            stylesheets.push(textContent);
+            // Inline styles go at their position in document order
+            const idx = orderIndex++;
+            fetchPromises.push({ index: idx, promise: Promise.resolve(textContent) });
           }
         }
       }
+
+      // Fetch all external stylesheets in parallel, preserving document order
+      const results = await Promise.allSettled(fetchPromises.map(fp => fp.promise));
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result.status === "fulfilled" && result.value) {
+          stylesheets.push(result.value);
+        } else if (result.status === "rejected") {
+          this.logger.warn(`Failed to fetch stylesheet: ${(result.reason as Error)?.message}`);
+        }
+      }
+
+      // Fetch @import rules from collected stylesheets
+      const importedSheets = await this.fetchCSSImports(stylesheets, baseUrl);
+      stylesheets.push(...importedSheets);
 
       return stylesheets;
     } catch (error) {
       this.logger.warn("Failed to fetch some stylesheets:", error);
       return stylesheets;
     }
+  }
+
+  /**
+   * Fetch CSS @import rules recursively (max 3 levels deep)
+   */
+  private async fetchCSSImports(
+    stylesheets: string[],
+    baseUrl: string | URL,
+    depth: number = 0,
+  ): Promise<string[]> {
+    if (depth >= 3) return []; // Prevent infinite recursion
+
+    const imported: string[] = [];
+    const importRegex = /@import\s+(?:url\(\s*["']?([^"')]+)["']?\s*\)|["']([^"']+)["'])/g;
+
+    for (const css of stylesheets) {
+      let match;
+      while ((match = importRegex.exec(css)) !== null) {
+        const importUrl = match[1] || match[2];
+        if (!importUrl) continue;
+
+        try {
+          const resolvedUrl = new URL(importUrl, baseUrl);
+          const result = await this.requestPipeline.get(resolvedUrl);
+          const importedCSS = new TextDecoder().decode(result.response.body);
+          imported.push(importedCSS);
+
+          // Recursively fetch nested @imports
+          const nested = await this.fetchCSSImports([importedCSS], resolvedUrl.toString(), depth + 1);
+          imported.push(...nested);
+        } catch {
+          this.logger.warn(`Failed to fetch @import: ${importUrl}`);
+        }
+      }
+    }
+
+    return imported;
   }
 
   /**
@@ -304,11 +379,16 @@ export class ResourceFetcher {
       const cssom = new CSSOM();
 
       for (const css of stylesheets) {
-        const tokenizer = new CSSTokenizer();
-        const tokens = tokenizer.tokenize(css);
-        const parser = new CSSParser();
-        const stylesheet = parser.parse(tokens);
-        cssom.addStyleSheet(stylesheet);
+        try {
+          const tokenizer = new CSSTokenizer();
+          const tokens = tokenizer.tokenize(css);
+          const parser = new CSSParser();
+          const stylesheet = parser.parse(tokens);
+          cssom.addStyleSheet(stylesheet);
+        } catch (cssErr) {
+          this.logger.warn(`Failed to parse CSS: ${(cssErr as Error).message}`);
+          // Skip this stylesheet but continue with others
+        }
       }
 
       return cssom;

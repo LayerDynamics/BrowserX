@@ -526,7 +526,7 @@ export class WebGPUX {
    * @returns Adapter handle or 0n on failure
    */
   requestAdapter(backendType: number): bigint {
-    return gpu_request_adapter(backendType);
+    return gpu_request_adapter(backendType) as bigint;
   }
 
   /**
@@ -535,7 +535,7 @@ export class WebGPUX {
    * @returns Device handle or 0n on failure
    */
   requestDevice(adapterHandle: bigint): bigint {
-    return gpu_request_device(adapterHandle);
+    return gpu_request_device(adapterHandle) as bigint;
   }
 
   /**
@@ -2197,7 +2197,7 @@ export class WebGPUX {
    * @returns Shader module handle or 0n on failure
    */
   createShaderModule(deviceHandle: bigint, label: string, wgslCode: string): bigint {
-    return gpu_create_shader_module(deviceHandle, label, wgslCode);
+    return gpu_create_shader_module(deviceHandle, label, wgslCode) as bigint;
   }
 
   /**
@@ -2229,7 +2229,7 @@ export class WebGPUX {
       deviceHandle, label, vertexModuleHandle, vertexEntryPoint,
       fragmentModuleHandle, fragmentEntryPoint, format, blendJson,
       topology, cullMode, layoutMode,
-    );
+    ) as bigint;
   }
 
   /**
@@ -2286,7 +2286,7 @@ export class WebGPUX {
   ): bigint {
     return gpu_create_compute_pipeline(
       deviceHandle, label, shaderModuleHandle, entryPoint, layoutMode,
-    );
+    ) as bigint;
   }
 
   /**

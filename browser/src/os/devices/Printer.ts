@@ -99,7 +99,8 @@ export class Printer {
     if (opened) {
       const mod = await loadSerialx();
       if (mod && this.serialDevice.rawPort) {
-        this.escpos = new mod.EscPos(this.serialDevice.rawPort);
+        // deno-lint-ignore no-explicit-any
+        this.escpos = new mod.EscPos(this.serialDevice.rawPort as any);
         this.escpos.init();
       }
       this.printerName = port;

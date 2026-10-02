@@ -651,6 +651,7 @@ class StyleSheet implements CSSStyleSheet {
   href: string | null = null;
   ownerNode: DOMElement | null = null;
   rules: CSSRule[] = [];
+  mediaRules: import("../../../types/css.ts").CSSMediaRule[] = [];
   disabled: boolean = false;
 
   insertRule(ruleText: string, index: number = this.rules.length): number {
@@ -778,6 +779,9 @@ export class CSSParser {
         stylesheet.rules.push(rule);
       }
     }
+
+    // Copy parsed @media rules to the stylesheet so CSSOM can evaluate them
+    stylesheet.mediaRules = [...this.mediaRules];
 
     return stylesheet;
   }

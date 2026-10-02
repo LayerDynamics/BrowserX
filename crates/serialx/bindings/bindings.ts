@@ -1,5 +1,6 @@
 // Auto-generated with deno_bindgen
-function encode(v: string | Uint8Array): Uint8Array {
+// deno-lint-ignore no-explicit-any
+function encode(v: string | Uint8Array): any {
   if (typeof v !== "string") return v
   return new TextEncoder().encode(v)
 }
@@ -43,6 +44,7 @@ const { symbols } = Deno.dlopen(
     aix: uri + "libserialx.so",
     solaris: uri + "libserialx.so",
     illumos: uri + "libserialx.so",
+    android: uri + "libserialx.so",
   }[Deno.build.os],
   {
     serialx_bytes_available: {

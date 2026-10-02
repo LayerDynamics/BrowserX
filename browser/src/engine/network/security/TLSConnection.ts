@@ -515,10 +515,11 @@ export class TLSConnection {
     const encryptedMessages = await this.receiveEncryptedHandshakeMessages();
 
     const certificate = encryptedMessages.find((m) => m.type === "Certificate");
+    const certificateVerify = encryptedMessages.find((m) => m.type === "CertificateVerify");
     const serverFinished = encryptedMessages.find((m) => m.type === "Finished");
 
-    if (!certificate || !serverFinished) {
-      throw new TLSError("Invalid server handshake: missing Certificate or Finished");
+    if (!certificate || !certificateVerify || !serverFinished) {
+      throw new TLSError("Invalid server handshake: missing Certificate, CertificateVerify, or Finished");
     }
 
     // 5. Validate server certificate
@@ -549,6 +550,45 @@ export class TLSConnection {
       if (!validation.valid) {
         throw new TLSError(`Certificate validation failed: ${validation.reason}`);
       }
+    }
+
+    // 5b. Verify CertificateVerify signature over the transcript
+    // RFC 8446 Section 4.4.3: The signature is over a concatenation of:
+    //   - 64 spaces (0x20)
+    //   - "TLS 1.3, server CertificateVerify" context string
+    //   - 0x00 separator
+    //   - Hash of transcript up to (but not including) the CertificateVerify message
+    // The transcript at this point includes: ClientHello, ServerHello, EncryptedExtensions, Certificate
+    // (handshakeMessages already has CertificateVerify and Finished appended by receiveEncryptedHandshakeMessages,
+    //  so we need to compute the hash over messages BEFORE CertificateVerify)
+    const cvSignatureAlgorithm = certificateVerify.signatureAlgorithm as number;
+    const cvSignature = certificateVerify.signature as ByteBuffer;
+
+    // Find the transcript messages before CertificateVerify:
+    // receiveEncryptedHandshakeMessages appended messages in order, so we need
+    // all messages except the last two (CertificateVerify and Finished)
+    const transcriptBeforeCV = this.handshakeMessages.slice(0, this.handshakeMessages.length - 2);
+    const transcriptHash = new Uint8Array(
+      await crypto.subtle.digest(hashAlgorithm, concat(...transcriptBeforeCV)),
+    );
+
+    // Build the content that was signed
+    const contextString = new TextEncoder().encode("TLS 1.3, server CertificateVerify");
+    const signedContent = new Uint8Array(64 + contextString.length + 1 + transcriptHash.length);
+    signedContent.fill(0x20, 0, 64); // 64 spaces
+    signedContent.set(contextString, 64);
+    signedContent[64 + contextString.length] = 0x00;
+    signedContent.set(transcriptHash, 64 + contextString.length + 1);
+
+    // Determine Web Crypto algorithm from TLS signature algorithm
+    const cvValid = await this.verifyCertificateVerifySignature(
+      cvSignatureAlgorithm,
+      cvSignature,
+      signedContent,
+      this.peerCertificate,
+    );
+    if (!cvValid) {
+      throw new TLSError("CertificateVerify signature verification failed");
     }
 
     this.state = TLSHandshakeState.CERTIFICATE;
@@ -638,15 +678,31 @@ export class TLSConnection {
     let serverKeyExchangeMsg: TLSHandshakeMessage | null = null;
     let gotServerHelloDone = false;
 
+    // TLS 1.2 expects at most: Certificate, ServerKeyExchange, CertificateRequest,
+    // ServerHelloDone, plus a few ChangeCipherSpec records. Cap to prevent abuse.
+    const maxHandshakeRecords = 10;
+    let handshakeRecordCount = 0;
+
     while (!gotServerHelloDone) {
+      if (++handshakeRecordCount > maxHandshakeRecords) {
+        throw new TLSError(
+          `TLS 1.2 handshake exceeded ${maxHandshakeRecords} records without ServerHelloDone`,
+        );
+      }
+
       let record = await this.readRecord();
 
       if (record === null) {
         throw new TLSError("Connection closed unexpectedly during TLS 1.2 handshake");
       }
 
-      // Skip ChangeCipherSpec
+      // Skip ChangeCipherSpec (counted against the record limit above)
       while (record.type === TLSRecordType.CHANGE_CIPHER_SPEC) {
+        if (++handshakeRecordCount > maxHandshakeRecords) {
+          throw new TLSError(
+            `TLS 1.2 handshake exceeded ${maxHandshakeRecords} records without ServerHelloDone`,
+          );
+        }
         record = await this.readRecord();
         if (record === null) {
           throw new TLSError("Connection closed unexpectedly during TLS 1.2 handshake");
@@ -1088,86 +1144,90 @@ export class TLSConnection {
       throw new Error("TLS connection not established");
     }
 
-    // Read TLS record from socket
-    const record = await this.readRecord();
+    // Loop to skip post-handshake messages (NewSessionTicket, KeyUpdate, etc.)
+    // without recursion — a server may send many consecutive post-handshake records.
+    while (true) {
+      // Read TLS record from socket
+      const record = await this.readRecord();
 
-    if (record === null) {
-      return null; // Connection closed gracefully
-    }
+      if (record === null) {
+        return null; // Connection closed gracefully
+      }
 
-    if (record.type !== TLSRecordType.APPLICATION_DATA) {
-      // Handle close_notify alert gracefully
-      if (record.type === TLSRecordType.ALERT) {
-        const alertDesc = record.data[1];
-        if (alertDesc === TLSAlertDescription.CLOSE_NOTIFY) {
-          return null; // Connection closed gracefully
+      if (record.type !== TLSRecordType.APPLICATION_DATA) {
+        // Handle close_notify alert gracefully
+        if (record.type === TLSRecordType.ALERT) {
+          const alertDesc = record.data[1];
+          if (alertDesc === TLSAlertDescription.CLOSE_NOTIFY) {
+            return null; // Connection closed gracefully
+          }
+        }
+        throw new TLSError(`Unexpected record type: ${record.type}`);
+      }
+
+      let appData: Uint8Array;
+
+      if (this.negotiatedVersion === TLSVersion.TLS_1_2) {
+        // TLS 1.2: Decrypt with explicit nonce, no inner content type
+        appData = await this.decryptTLS12Record(record.data, TLSRecordType.APPLICATION_DATA);
+      } else {
+        // TLS 1.3: Decrypt with XOR'd nonce and strip inner content type
+
+        // Construct AAD (record header)
+        const aad = new Uint8Array(5);
+        aad[0] = TLSRecordType.APPLICATION_DATA; // 0x17
+        aad[1] = 0x03; // TLS 1.2 version for compatibility
+        aad[2] = 0x03;
+        aad[3] = (record.length >> 8) & 0xFF;
+        aad[4] = record.length & 0xFF;
+
+        // Decrypt record using application traffic keys and sequence counter
+        let plaintext: ByteBuffer;
+        try {
+          plaintext = await decrypt(
+            record.data,
+            this.sessionKeys!.serverWriteKey,
+            this.sessionKeys!.serverWriteIV,
+            this.serverRecordSeq,
+            aad as ByteBuffer,
+            this.negotiatedCipherSuite,
+          );
+          // Only increment sequence counter AFTER successful decryption
+          this.serverRecordSeq++;
+        } catch (error) {
+          throw new TLSError(
+            `TLS 1.3 record decryption failed: ${
+              (error as Error).message || "authentication tag verification failed"
+            }`,
+          );
+        }
+
+        // TLS 1.3: Inner plaintext has content type at the end
+        // Format: [data][content_type][padding zeros]
+        let actualLength = plaintext.byteLength;
+        while (actualLength > 0 && plaintext[actualLength - 1] === 0) {
+          actualLength--;
+        }
+        // Now the byte at actualLength-1 is the content type - skip it
+        if (actualLength > 0) {
+          actualLength--;
+        }
+        appData = plaintext.slice(0, actualLength);
+
+        // Check inner content type - skip post-handshake messages (e.g., NewSessionTicket)
+        const innerContentType = plaintext[actualLength];
+        if (innerContentType === TLSRecordType.HANDSHAKE) {
+          // Post-handshake message — continue loop to read next record
+          continue;
         }
       }
-      throw new TLSError(`Unexpected record type: ${record.type}`);
+
+      // Copy to buffer
+      const length = Math.min(buffer.byteLength, appData.byteLength);
+      buffer.set(appData.slice(0, length));
+
+      return length;
     }
-
-    let appData: Uint8Array;
-
-    if (this.negotiatedVersion === TLSVersion.TLS_1_2) {
-      // TLS 1.2: Decrypt with explicit nonce, no inner content type
-      appData = await this.decryptTLS12Record(record.data, TLSRecordType.APPLICATION_DATA);
-    } else {
-      // TLS 1.3: Decrypt with XOR'd nonce and strip inner content type
-
-      // Construct AAD (record header)
-      const aad = new Uint8Array(5);
-      aad[0] = TLSRecordType.APPLICATION_DATA; // 0x17
-      aad[1] = 0x03; // TLS 1.2 version for compatibility
-      aad[2] = 0x03;
-      aad[3] = (record.length >> 8) & 0xFF;
-      aad[4] = record.length & 0xFF;
-
-      // Decrypt record using application traffic keys and sequence counter
-      let plaintext: ByteBuffer;
-      try {
-        plaintext = await decrypt(
-          record.data,
-          this.sessionKeys!.serverWriteKey,
-          this.sessionKeys!.serverWriteIV,
-          this.serverRecordSeq,
-          aad as ByteBuffer,
-          this.negotiatedCipherSuite,
-        );
-        // Only increment sequence counter AFTER successful decryption
-        this.serverRecordSeq++;
-      } catch (error) {
-        throw new TLSError(
-          `TLS 1.3 record decryption failed: ${
-            (error as Error).message || "authentication tag verification failed"
-          }`,
-        );
-      }
-
-      // TLS 1.3: Inner plaintext has content type at the end
-      // Format: [data][content_type][padding zeros]
-      let actualLength = plaintext.byteLength;
-      while (actualLength > 0 && plaintext[actualLength - 1] === 0) {
-        actualLength--;
-      }
-      // Now the byte at actualLength-1 is the content type - skip it
-      if (actualLength > 0) {
-        actualLength--;
-      }
-      appData = plaintext.slice(0, actualLength);
-
-      // Check inner content type - skip post-handshake messages (e.g., NewSessionTicket)
-      const innerContentType = plaintext[actualLength];
-      if (innerContentType === TLSRecordType.HANDSHAKE) {
-        // Post-handshake message (NewSessionTicket, KeyUpdate, etc.) - skip and read next record
-        return this.read(buffer);
-      }
-    }
-
-    // Copy to buffer
-    const length = Math.min(buffer.byteLength, appData.byteLength);
-    buffer.set(appData.slice(0, length));
-
-    return length;
   }
 
   /**
@@ -1331,6 +1391,80 @@ export class TLSConnection {
   }
 
   /**
+   * Verify CertificateVerify signature using Web Crypto
+   */
+  private async verifyCertificateVerifySignature(
+    signatureAlgorithm: number,
+    signature: ByteBuffer,
+    signedContent: Uint8Array,
+    cert: Certificate,
+  ): Promise<boolean> {
+    try {
+      // Map TLS signature algorithm to Web Crypto parameters
+      let algorithm: AlgorithmIdentifier | RsaPssParams | EcdsaParams;
+      let importAlgorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams;
+      const keyUsages: KeyUsage[] = ["verify"];
+
+      switch (signatureAlgorithm) {
+        case 0x0401: // rsa_pkcs1_sha256
+          algorithm = { name: "RSASSA-PKCS1-v1_5" };
+          importAlgorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
+          break;
+        case 0x0501: // rsa_pkcs1_sha384
+          algorithm = { name: "RSASSA-PKCS1-v1_5" };
+          importAlgorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-384" };
+          break;
+        case 0x0601: // rsa_pkcs1_sha512
+          algorithm = { name: "RSASSA-PKCS1-v1_5" };
+          importAlgorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" };
+          break;
+        case 0x0804: // rsa_pss_rsae_sha256
+          algorithm = { name: "RSA-PSS", saltLength: 32 } as RsaPssParams;
+          importAlgorithm = { name: "RSA-PSS", hash: "SHA-256" };
+          break;
+        case 0x0805: // rsa_pss_rsae_sha384
+          algorithm = { name: "RSA-PSS", saltLength: 48 } as RsaPssParams;
+          importAlgorithm = { name: "RSA-PSS", hash: "SHA-384" };
+          break;
+        case 0x0806: // rsa_pss_rsae_sha512
+          algorithm = { name: "RSA-PSS", saltLength: 64 } as RsaPssParams;
+          importAlgorithm = { name: "RSA-PSS", hash: "SHA-512" };
+          break;
+        case 0x0403: // ecdsa_secp256r1_sha256
+          algorithm = { name: "ECDSA", hash: "SHA-256" } as EcdsaParams;
+          importAlgorithm = { name: "ECDSA", namedCurve: "P-256" };
+          break;
+        case 0x0503: // ecdsa_secp384r1_sha384
+          algorithm = { name: "ECDSA", hash: "SHA-384" } as EcdsaParams;
+          importAlgorithm = { name: "ECDSA", namedCurve: "P-384" };
+          break;
+        default:
+          // Unknown algorithm — cannot verify, treat as failure
+          return false;
+      }
+
+      // Import the server's public key from the certificate
+      const publicKey = await crypto.subtle.importKey(
+        "spki",
+        cert.publicKey,
+        importAlgorithm,
+        false,
+        keyUsages,
+      );
+
+      return await crypto.subtle.verify(
+        algorithm,
+        publicKey,
+        signature,
+        signedContent as ByteBuffer,
+      );
+    } catch {
+      // If Web Crypto doesn't support the algorithm or key format, fail closed
+      return false;
+    }
+  }
+
+  /**
    * Create Finished message
    */
   private async createFinished(): Promise<TLSHandshakeMessage> {
@@ -1468,9 +1602,11 @@ export class TLSConnection {
   private async receiveEncryptedHandshakeMessages(): Promise<TLSHandshakeMessage[]> {
     const messages: TLSHandshakeMessage[] = [];
 
-    // Read until we have all expected messages
-    // Server sends: EncryptedExtensions, Certificate, CertificateVerify, Finished
-    while (messages.length < 4) {
+    // Read until we receive the Finished message.
+    // Typical sequence: EncryptedExtensions, Certificate, CertificateVerify, Finished
+    // but some servers vary (e.g., PSK resumption sends only EncryptedExtensions + Finished).
+    // Cap at 10 messages to prevent infinite loops on misbehaving servers.
+    while (messages.length < 10) {
       let record = await this.readRecord();
 
       if (record === null) {
@@ -1554,7 +1690,9 @@ export class TLSConnection {
       }
     }
 
-    return messages;
+    throw new TLSError(
+      `Server sent ${messages.length} handshake messages without Finished`,
+    );
   }
 
   /**
@@ -1648,6 +1786,14 @@ export class TLSConnection {
     const version = view.getUint16(1) as TLSVersion;
     const length = view.getUint16(3);
 
+    // TLS spec caps records at 2^14 + 256 bytes (16640) for encrypted records
+    const TLS_MAX_RECORD_LENGTH = 16640;
+    if (length > TLS_MAX_RECORD_LENGTH) {
+      throw new TLSError(
+        `Record length ${length} exceeds TLS maximum of ${TLS_MAX_RECORD_LENGTH} bytes`,
+      );
+    }
+
     // Read record data
     const data = await this.readExactly(length);
 
@@ -1665,15 +1811,39 @@ export class TLSConnection {
   }
 
   /**
-   * Read exactly n bytes from socket, looping until all bytes received
+   * Read exactly n bytes from socket, looping until all bytes received.
+   * Uses an overall deadline to prevent slow-trickle attacks where a
+   * malicious server sends 1 byte at a time to hold the connection.
    */
   private async readExactly(n: number): Promise<ByteBuffer | null> {
     const buffer = new Uint8Array(n) as ByteBuffer;
     let offset = 0;
+    const READ_DEADLINE = 10_000; // 10 seconds total for the entire read
+    const deadline = Date.now() + READ_DEADLINE;
 
     while (offset < n) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new TLSError(
+          `Socket read timed out after ${READ_DEADLINE}ms (read ${offset}/${n} bytes)`,
+        );
+      }
+
       const chunk = buffer.subarray(offset) as ByteBuffer;
-      const bytesRead = await this.socket.read(chunk);
+
+      // Race socket read against overall deadline
+      let readTimer: number | undefined;
+      let bytesRead: number | null;
+      try {
+        bytesRead = await Promise.race([
+          this.socket.read(chunk),
+          new Promise<null>((_, reject) => {
+            readTimer = setTimeout(() => reject(new TLSError(`Socket read timed out after ${READ_DEADLINE}ms (read ${offset}/${n} bytes)`)), remaining) as unknown as number;
+          }),
+        ]);
+      } finally {
+        if (readTimer !== undefined) clearTimeout(readTimer);
+      }
 
       if (bytesRead === null || bytesRead === 0) {
         if (offset === 0) {
@@ -1710,8 +1880,50 @@ export class TLSConnection {
 
   private async sendAlert(alert: TLSAlert): Promise<void> {
     const alertData = new Uint8Array([alert.level, alert.description]);
-    const record = createTLSRecord(TLSRecordType.ALERT, alertData);
-    await this.socket.write(serializeTLSRecord(record));
+
+    // After handshake, alerts must be encrypted per RFC 8446 Section 6
+    if (this.state === TLSHandshakeState.ESTABLISHED && this.sessionKeys) {
+      if (this.negotiatedVersion === TLSVersion.TLS_1_2) {
+        // TLS 1.2: Encrypt alert as ALERT record type
+        const ciphertext = await this.encryptTLS12Record(
+          alertData,
+          TLSRecordType.ALERT,
+        );
+        const record = createTLSRecord(TLSRecordType.APPLICATION_DATA, ciphertext as ByteBuffer);
+        await this.socket.write(serializeTLSRecord(record));
+      } else {
+        // TLS 1.3: Inner plaintext format is [alert_data][content_type_ALERT]
+        const innerPlaintext = new Uint8Array(alertData.byteLength + 1);
+        innerPlaintext.set(alertData, 0);
+        innerPlaintext[alertData.byteLength] = TLSRecordType.ALERT; // 0x15
+
+        const ciphertextLength = innerPlaintext.byteLength + 16; // GCM tag
+
+        // Construct AAD (record header)
+        const aad = new Uint8Array(5);
+        aad[0] = TLSRecordType.APPLICATION_DATA; // 0x17 — outer type is always APPLICATION_DATA
+        aad[1] = 0x03;
+        aad[2] = 0x03;
+        aad[3] = (ciphertextLength >> 8) & 0xFF;
+        aad[4] = ciphertextLength & 0xFF;
+
+        const ciphertext = await encrypt(
+          innerPlaintext as ByteBuffer,
+          this.sessionKeys.clientWriteKey,
+          this.sessionKeys.clientWriteIV,
+          this.clientSequenceNumber++,
+          aad as ByteBuffer,
+          this.negotiatedCipherSuite,
+        );
+
+        const record = createTLSRecord(TLSRecordType.APPLICATION_DATA, ciphertext as ByteBuffer);
+        await this.socket.write(serializeTLSRecord(record));
+      }
+    } else {
+      // Pre-handshake alerts are sent unencrypted
+      const record = createTLSRecord(TLSRecordType.ALERT, alertData);
+      await this.socket.write(serializeTLSRecord(record));
+    }
   }
 
   /**
@@ -1719,8 +1931,8 @@ export class TLSConnection {
    */
   getInfo(): TLSConnectionInfo {
     return {
-      version: TLSVersion.TLS_1_3,
-      cipherSuite: "TLS_AES_128_GCM_SHA256",
+      version: this.negotiatedVersion || TLSVersion.TLS_1_3,
+      cipherSuite: CipherSuite[this.negotiatedCipherSuite] || "TLS_AES_128_GCM_SHA256",
       alpnProtocol: this.negotiatedProtocol,
       serverName: this.config.serverName,
       peerCertificate: this.peerCertificate,
@@ -2141,17 +2353,9 @@ async function computeECDHESharedSecret(
 
     return new Uint8Array(sharedSecretBits);
   } catch {
-    // Fallback: derive using simple XOR-based combination
-    // This is for environments without X25519 support
-    const sharedSecret = new Uint8Array(32);
-    for (let i = 0; i < 32; i++) {
-      // Combine private and public key bytes
-      sharedSecret[i] = privateKey[i % privateKey.length] ^
-        peerPublicKey[i % peerPublicKey.length];
-    }
-    // Hash the result to ensure uniform distribution
-    const hashBuffer = await crypto.subtle.digest("SHA-256", sharedSecret);
-    return new Uint8Array(hashBuffer);
+    // Fallback: use pure-TypeScript X25519 Montgomery ladder (RFC 7748)
+    // when Web Crypto X25519 is unavailable (e.g., older Deno versions)
+    return x25519ScalarMult(privateKey, peerPublicKey);
   }
 }
 

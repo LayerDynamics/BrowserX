@@ -37,6 +37,31 @@ export enum JSJSTokenType {
   CONTINUE = "continue",
   THIS = "this",
   NEW = "new",
+  CLASS = "class",
+  EXTENDS = "extends",
+  SUPER = "super",
+  STATIC = "static",
+  ASYNC = "async",
+  AWAIT = "await",
+  TRY = "try",
+  CATCH = "catch",
+  FINALLY = "finally",
+  THROW = "throw",
+  IMPORT = "import",
+  EXPORT = "export",
+  FROM = "from",
+  TYPEOF = "typeof",
+  INSTANCEOF = "instanceof",
+  IN = "in",
+  DELETE = "delete",
+  VOID = "void",
+  YIELD = "yield",
+  SWITCH = "switch",
+  CASE = "case",
+  DEFAULT = "default",
+  DO = "do",
+  TEMPLATE_LITERAL = "template_literal",
+  SPREAD = "...",
 
   // Operators
   PLUS = "+",
@@ -116,6 +141,22 @@ export enum ASTNodeType {
   BLOCK_STATEMENT = "BlockStatement",
   BREAK_STATEMENT = "BreakStatement",
   CONTINUE_STATEMENT = "ContinueStatement",
+  CLASS_DECLARATION = "ClassDeclaration",
+  CLASS_EXPRESSION = "ClassExpression",
+  METHOD_DEFINITION = "MethodDefinition",
+  TRY_STATEMENT = "TryStatement",
+  CATCH_CLAUSE = "CatchClause",
+  THROW_STATEMENT = "ThrowStatement",
+  AWAIT_EXPRESSION = "AwaitExpression",
+  IMPORT_DECLARATION = "ImportDeclaration",
+  EXPORT_DECLARATION = "ExportDeclaration",
+  SWITCH_STATEMENT = "SwitchStatement",
+  SWITCH_CASE = "SwitchCase",
+  DO_WHILE_STATEMENT = "DoWhileStatement",
+  TEMPLATE_LITERAL = "TemplateLiteral",
+  SPREAD_ELEMENT = "SpreadElement",
+  TYPEOF_EXPRESSION = "TypeofExpression",
+  INSTANCEOF_EXPRESSION = "InstanceofExpression",
 }
 
 /**
@@ -330,6 +371,89 @@ export interface ProgramNode extends ASTNode {
 }
 
 /**
+ * Class declaration node
+ */
+export interface ClassDeclarationNode extends ASTNode {
+  type: ASTNodeType.CLASS_DECLARATION;
+  id: IdentifierNode;
+  superClass: ASTNode | null;
+  body: MethodDefinitionNode[];
+}
+
+/**
+ * Method definition node (class method)
+ */
+export interface MethodDefinitionNode extends ASTNode {
+  type: ASTNodeType.METHOD_DEFINITION;
+  key: ASTNode;
+  value: FunctionExpressionNode;
+  kind: "constructor" | "method" | "get" | "set";
+  isStatic: boolean;
+}
+
+/**
+ * Try statement node
+ */
+export interface TryStatementNode extends ASTNode {
+  type: ASTNodeType.TRY_STATEMENT;
+  block: BlockStatementNode;
+  handler: CatchClauseNode | null;
+  finalizer: BlockStatementNode | null;
+}
+
+/**
+ * Catch clause node
+ */
+export interface CatchClauseNode extends ASTNode {
+  type: ASTNodeType.CATCH_CLAUSE;
+  param: IdentifierNode | null;
+  body: BlockStatementNode;
+}
+
+/**
+ * Throw statement node
+ */
+export interface ThrowStatementNode extends ASTNode {
+  type: ASTNodeType.THROW_STATEMENT;
+  argument: ASTNode;
+}
+
+/**
+ * Await expression node
+ */
+export interface AwaitExpressionNode extends ASTNode {
+  type: ASTNodeType.AWAIT_EXPRESSION;
+  argument: ASTNode;
+}
+
+/**
+ * Switch statement node
+ */
+export interface SwitchStatementNode extends ASTNode {
+  type: ASTNodeType.SWITCH_STATEMENT;
+  discriminant: ASTNode;
+  cases: SwitchCaseNode[];
+}
+
+/**
+ * Switch case node
+ */
+export interface SwitchCaseNode extends ASTNode {
+  type: ASTNodeType.SWITCH_CASE;
+  test: ASTNode | null; // null for default
+  consequent: ASTNode[];
+}
+
+/**
+ * Do-while statement node
+ */
+export interface DoWhileStatementNode extends ASTNode {
+  type: ASTNodeType.DO_WHILE_STATEMENT;
+  body: ASTNode;
+  test: ASTNode;
+}
+
+/**
  * Ignition bytecode opcodes
  */
 export enum Opcode {
@@ -393,6 +517,16 @@ export enum Opcode {
   CREATE_OBJECT = 0x80, // Create object literal
   CREATE_ARRAY = 0x81, // Create array literal
   CREATE_CLOSURE = 0x82, // Create function closure
+
+  // Exception handling
+  TRY_START = 0x90, // Start try block (operand: catch handler offset)
+  TRY_END = 0x91, // End try block
+  THROW = 0x92, // Throw exception from accumulator
+  SET_CATCH_PARAM = 0x93, // Store caught exception to variable
+
+  // Typeof
+  TYPEOF = 0xA0, // typeof accumulator → string in accumulator
+  INSTANCEOF = 0xA1, // accumulator instanceof register → boolean
 
   // Special
   NOP = 0x00, // No operation
@@ -483,6 +617,11 @@ export class Lexer {
       return this.scanNumber();
     }
 
+    // Template literals
+    if (char === '`') {
+      return this.scanTemplateLiteral();
+    }
+
     // Strings
     if (char === '"' || char === "'") {
       return this.scanString();
@@ -564,6 +703,10 @@ export class Lexer {
     const nextChar = this.source[this.position + 1];
 
     // Three-character operators
+    if (char === "." && nextChar === "." && this.source[this.position + 2] === ".") {
+      this.advance(3);
+      return this.createJSToken(JSJSTokenType.SPREAD, "...");
+    }
     if (char === "=" && nextChar === "=" && this.source[this.position + 2] === "=") {
       this.advance(3);
       return this.createJSToken(JSJSTokenType.STRICT_EQUAL, "===");
@@ -682,6 +825,29 @@ export class Lexer {
       "undefined": JSJSTokenType.UNDEFINED,
       "this": JSJSTokenType.THIS,
       "new": JSJSTokenType.NEW,
+      "class": JSJSTokenType.CLASS,
+      "extends": JSJSTokenType.EXTENDS,
+      "super": JSJSTokenType.SUPER,
+      "static": JSJSTokenType.STATIC,
+      "async": JSJSTokenType.ASYNC,
+      "await": JSJSTokenType.AWAIT,
+      "try": JSJSTokenType.TRY,
+      "catch": JSJSTokenType.CATCH,
+      "finally": JSJSTokenType.FINALLY,
+      "throw": JSJSTokenType.THROW,
+      "import": JSJSTokenType.IMPORT,
+      "export": JSJSTokenType.EXPORT,
+      "from": JSJSTokenType.FROM,
+      "typeof": JSJSTokenType.TYPEOF,
+      "instanceof": JSJSTokenType.INSTANCEOF,
+      "in": JSJSTokenType.IN,
+      "delete": JSJSTokenType.DELETE,
+      "void": JSJSTokenType.VOID,
+      "yield": JSJSTokenType.YIELD,
+      "switch": JSJSTokenType.SWITCH,
+      "case": JSJSTokenType.CASE,
+      "default": JSJSTokenType.DEFAULT,
+      "do": JSJSTokenType.DO,
     };
 
     return keywords[value] || JSJSTokenType.IDENTIFIER;
@@ -721,6 +887,28 @@ export class Lexer {
     return (char >= "a" && char <= "z") ||
       (char >= "A" && char <= "Z") ||
       char === "_" || char === "$";
+  }
+
+  /**
+   * Scan template literal (backtick strings)
+   * Simplified: treats as a plain string (no interpolation expressions)
+   */
+  private scanTemplateLiteral(): JSToken {
+    this.advance(); // Skip opening backtick
+    const start = this.position;
+    while (this.position < this.source.length && this.source[this.position] !== '`') {
+      if (this.source[this.position] === "\\") {
+        this.advance(); // Skip escape char
+      }
+      if (this.source[this.position] === "\n") {
+        this.line++;
+        this.column = 0;
+      }
+      this.advance();
+    }
+    const value = this.source.slice(start, this.position);
+    this.advance(); // Skip closing backtick
+    return this.createJSToken(JSJSTokenType.TEMPLATE_LITERAL, value);
   }
 
   /**
@@ -788,6 +976,22 @@ export class Parser {
         this.advance();
         if (this.match(JSJSTokenType.SEMICOLON)) this.advance();
         return { type: ASTNodeType.CONTINUE_STATEMENT } as ASTNode;
+      case JSJSTokenType.CLASS:
+        return this.parseClassDeclaration();
+      case JSJSTokenType.TRY:
+        return this.parseTryStatement();
+      case JSJSTokenType.THROW:
+        return this.parseThrowStatement();
+      case JSJSTokenType.SWITCH:
+        return this.parseSwitchStatement();
+      case JSJSTokenType.DO:
+        return this.parseDoWhileStatement();
+      case JSJSTokenType.ASYNC:
+        // async function declaration
+        if (this.tokens[this.position + 1]?.type === JSJSTokenType.FUNCTION) {
+          return this.parseAsyncFunctionDeclaration();
+        }
+        return this.parseExpressionStatement();
       case JSJSTokenType.LBRACE:
         return this.parseBlockStatement();
       default:
@@ -1103,6 +1307,55 @@ export class Parser {
         return this.parseNewExpression();
       case JSJSTokenType.FUNCTION:
         return this.parseFunctionExpression();
+      case JSJSTokenType.ASYNC:
+        // async function expression
+        if (this.tokens[this.position + 1]?.type === JSJSTokenType.FUNCTION) {
+          this.advance(); // skip async
+          const fe = this.parseFunctionExpression();
+          (fe as unknown as { async: boolean }).async = true;
+          return fe;
+        }
+        return this.parseIdentifier();
+      case JSJSTokenType.SUPER:
+        this.advance();
+        return { type: ASTNodeType.IDENTIFIER, name: "super" } as IdentifierNode;
+      case JSJSTokenType.AWAIT: {
+        this.advance();
+        const awaitArg = this.parsePostfixExpression();
+        return { type: ASTNodeType.AWAIT_EXPRESSION, argument: awaitArg } as AwaitExpressionNode;
+      }
+      case JSJSTokenType.TYPEOF: {
+        this.advance();
+        const typeofArg = this.parsePostfixExpression();
+        return { type: ASTNodeType.UNARY_EXPRESSION, operator: "typeof", left: typeofArg, right: typeofArg } as unknown as ASTNode;
+      }
+      case JSJSTokenType.VOID: {
+        this.advance();
+        this.parsePostfixExpression(); // evaluate and discard
+        return { type: ASTNodeType.LITERAL, value: null, raw: "undefined" } as LiteralNode;
+      }
+      case JSJSTokenType.DELETE: {
+        this.advance();
+        const deleteTarget = this.parsePostfixExpression();
+        return { type: ASTNodeType.UNARY_EXPRESSION, operator: "delete", left: deleteTarget, right: deleteTarget } as unknown as ASTNode;
+      }
+      case JSJSTokenType.TEMPLATE_LITERAL: {
+        const tmpl = this.advance();
+        return { type: ASTNodeType.LITERAL, value: tmpl.value, raw: tmpl.value } as LiteralNode;
+      }
+      case JSJSTokenType.CLASS:
+        // Class expression
+        return this.parseClassExpression();
+      case JSJSTokenType.MINUS:
+      case JSJSTokenType.PLUS:
+      case JSJSTokenType.LOGICAL_NOT: {
+        const op = this.advance();
+        const operand = this.parsePostfixExpression();
+        const opStr = op.type === JSJSTokenType.MINUS ? "-"
+          : op.type === JSJSTokenType.PLUS ? "+"
+          : "!";
+        return { type: ASTNodeType.UNARY_EXPRESSION, operator: opStr, left: operand, right: operand } as unknown as ASTNode;
+      }
       case JSJSTokenType.LBRACE:
         return this.parseObjectExpression();
       case JSJSTokenType.LBRACKET:
@@ -1224,6 +1477,204 @@ export class Parser {
   }
 
   /**
+   * Parse class declaration: class Name [extends Super] { ... }
+   */
+  private parseClassDeclaration(): ClassDeclarationNode {
+    this.consume(JSJSTokenType.CLASS);
+    const id = this.parseIdentifier();
+
+    let superClass: ASTNode | null = null;
+    if (this.match(JSJSTokenType.EXTENDS)) {
+      this.advance();
+      superClass = this.parsePostfixExpression();
+    }
+
+    const body = this.parseClassBody();
+
+    return {
+      type: ASTNodeType.CLASS_DECLARATION,
+      id,
+      superClass,
+      body,
+    };
+  }
+
+  /**
+   * Parse class body: { method() {}, static method() {}, ... }
+   */
+  private parseClassBody(): MethodDefinitionNode[] {
+    this.consume(JSJSTokenType.LBRACE);
+    const methods: MethodDefinitionNode[] = [];
+
+    while (!this.match(JSJSTokenType.RBRACE)) {
+      let isStatic = false;
+      let kind: "constructor" | "method" | "get" | "set" = "method";
+
+      // Check for static keyword
+      if (this.match(JSJSTokenType.STATIC)) {
+        isStatic = true;
+        this.advance();
+      }
+
+      // Check for get/set
+      if (this.match(JSJSTokenType.IDENTIFIER)) {
+        const val = this.peek().value;
+        if ((val === "get" || val === "set") && this.tokens[this.position + 1]?.type === JSJSTokenType.IDENTIFIER) {
+          kind = val as "get" | "set";
+          this.advance();
+        }
+      }
+
+      // Method name
+      let key: ASTNode;
+      if (this.match(JSJSTokenType.LBRACKET)) {
+        // Computed property: [expr]()
+        this.advance();
+        key = this.parseExpression();
+        this.consume(JSJSTokenType.RBRACKET);
+      } else if (this.match(JSJSTokenType.IDENTIFIER) || this.match(JSJSTokenType.STRING) || this.match(JSJSTokenType.NUMBER)) {
+        key = this.match(JSJSTokenType.IDENTIFIER) ? this.parseIdentifier() : this.parseLiteral();
+      } else {
+        // Could be constructor keyword as identifier
+        const token = this.advance();
+        key = { type: ASTNodeType.IDENTIFIER, name: token.value } as IdentifierNode;
+      }
+
+      // Check if this is the constructor
+      if (!isStatic && key.type === ASTNodeType.IDENTIFIER && (key as IdentifierNode).name === "constructor") {
+        kind = "constructor";
+      }
+
+      // Parse method parameters and body
+      this.consume(JSJSTokenType.LPAREN);
+      const params: IdentifierNode[] = [];
+      while (!this.match(JSJSTokenType.RPAREN)) {
+        params.push(this.parseIdentifier());
+        if (!this.match(JSJSTokenType.RPAREN)) {
+          this.consume(JSJSTokenType.COMMA);
+        }
+      }
+      this.consume(JSJSTokenType.RPAREN);
+      const body = this.parseBlockStatement();
+
+      methods.push({
+        type: ASTNodeType.METHOD_DEFINITION,
+        key,
+        value: {
+          type: ASTNodeType.FUNCTION_EXPRESSION,
+          id: null,
+          params,
+          body,
+        },
+        kind,
+        isStatic,
+      });
+
+      // Optional semicolons between methods
+      if (this.match(JSJSTokenType.SEMICOLON)) this.advance();
+    }
+
+    this.consume(JSJSTokenType.RBRACE);
+    return methods;
+  }
+
+  /**
+   * Parse try statement: try { ... } catch (e) { ... } finally { ... }
+   */
+  private parseTryStatement(): TryStatementNode {
+    this.consume(JSJSTokenType.TRY);
+    const block = this.parseBlockStatement();
+
+    let handler: CatchClauseNode | null = null;
+    if (this.match(JSJSTokenType.CATCH)) {
+      this.advance();
+      let param: IdentifierNode | null = null;
+      if (this.match(JSJSTokenType.LPAREN)) {
+        this.advance();
+        param = this.parseIdentifier();
+        this.consume(JSJSTokenType.RPAREN);
+      }
+      const body = this.parseBlockStatement();
+      handler = { type: ASTNodeType.CATCH_CLAUSE, param, body };
+    }
+
+    let finalizer: BlockStatementNode | null = null;
+    if (this.match(JSJSTokenType.FINALLY)) {
+      this.advance();
+      finalizer = this.parseBlockStatement();
+    }
+
+    return { type: ASTNodeType.TRY_STATEMENT, block, handler, finalizer };
+  }
+
+  /**
+   * Parse throw statement: throw expr;
+   */
+  private parseThrowStatement(): ThrowStatementNode {
+    this.consume(JSJSTokenType.THROW);
+    const argument = this.parseExpression();
+    if (this.match(JSJSTokenType.SEMICOLON)) this.advance();
+    return { type: ASTNodeType.THROW_STATEMENT, argument };
+  }
+
+  /**
+   * Parse switch statement: switch (expr) { case val: ... default: ... }
+   */
+  private parseSwitchStatement(): SwitchStatementNode {
+    this.consume(JSJSTokenType.SWITCH);
+    this.consume(JSJSTokenType.LPAREN);
+    const discriminant = this.parseExpression();
+    this.consume(JSJSTokenType.RPAREN);
+    this.consume(JSJSTokenType.LBRACE);
+
+    const cases: SwitchCaseNode[] = [];
+    while (!this.match(JSJSTokenType.RBRACE)) {
+      let test: ASTNode | null = null;
+      if (this.match(JSJSTokenType.CASE)) {
+        this.advance();
+        test = this.parseExpression();
+      } else if (this.match(JSJSTokenType.DEFAULT)) {
+        this.advance();
+      }
+      this.consume(JSJSTokenType.COLON);
+
+      const consequent: ASTNode[] = [];
+      while (!this.match(JSJSTokenType.CASE) && !this.match(JSJSTokenType.DEFAULT) && !this.match(JSJSTokenType.RBRACE)) {
+        consequent.push(this.parseStatement());
+      }
+      cases.push({ type: ASTNodeType.SWITCH_CASE, test, consequent });
+    }
+
+    this.consume(JSJSTokenType.RBRACE);
+    return { type: ASTNodeType.SWITCH_STATEMENT, discriminant, cases };
+  }
+
+  /**
+   * Parse do-while statement: do { ... } while (expr);
+   */
+  private parseDoWhileStatement(): DoWhileStatementNode {
+    this.consume(JSJSTokenType.DO);
+    const body = this.parseStatement();
+    this.consume(JSJSTokenType.WHILE);
+    this.consume(JSJSTokenType.LPAREN);
+    const test = this.parseExpression();
+    this.consume(JSJSTokenType.RPAREN);
+    if (this.match(JSJSTokenType.SEMICOLON)) this.advance();
+    return { type: ASTNodeType.DO_WHILE_STATEMENT, body, test };
+  }
+
+  /**
+   * Parse async function declaration: async function name() { ... }
+   */
+  private parseAsyncFunctionDeclaration(): FunctionDeclarationNode {
+    this.consume(JSJSTokenType.ASYNC);
+    const decl = this.parseFunctionDeclaration();
+    // Mark as async by adding metadata property
+    (decl as unknown as { async: boolean }).async = true;
+    return decl;
+  }
+
+  /**
    * Parse literal
    */
   private parseLiteral(): LiteralNode {
@@ -1246,6 +1697,9 @@ export class Parser {
       case JSJSTokenType.NULL:
         value = null;
         break;
+      case JSJSTokenType.UNDEFINED:
+        // Use raw="undefined" to distinguish from null in code generation
+        return { type: ASTNodeType.LITERAL, value: null, raw: "undefined" };
       default:
         value = null;
     }
@@ -1269,6 +1723,29 @@ export class Parser {
   }
 
   /**
+   * Parse class expression: class [Name] [extends Super] { ... }
+   */
+  private parseClassExpression(): ASTNode {
+    this.consume(JSJSTokenType.CLASS);
+    let id: IdentifierNode | null = null;
+    if (this.match(JSJSTokenType.IDENTIFIER)) {
+      id = this.parseIdentifier();
+    }
+    let superClass: ASTNode | null = null;
+    if (this.match(JSJSTokenType.EXTENDS)) {
+      this.advance();
+      superClass = this.parsePostfixExpression();
+    }
+    const body = this.parseClassBody();
+    return {
+      type: ASTNodeType.CLASS_DECLARATION,
+      id: id || { type: ASTNodeType.IDENTIFIER, name: "<anonymous>" } as IdentifierNode,
+      superClass,
+      body,
+    } as ClassDeclarationNode;
+  }
+
+  /**
    * Check if current token is binary operator
    */
   private isBinaryOperator(): boolean {
@@ -1289,6 +1766,8 @@ export class Parser {
       JSJSTokenType.GREATER_EQUAL,
       JSJSTokenType.LOGICAL_AND,
       JSJSTokenType.LOGICAL_OR,
+      JSJSTokenType.INSTANCEOF,
+      JSJSTokenType.IN,
     ].includes(token.type);
   }
 
@@ -1457,6 +1936,53 @@ export class BytecodeGenerator {
           this.continueTargets[this.continueTargets.length - 1].push(continueRef);
         }
         break;
+      case ASTNodeType.CLASS_DECLARATION:
+        this.generateClassDeclaration(node as ClassDeclarationNode);
+        break;
+      case ASTNodeType.TRY_STATEMENT:
+        this.generateTryStatement(node as TryStatementNode);
+        break;
+      case ASTNodeType.THROW_STATEMENT:
+        this.generateThrowStatement(node as ThrowStatementNode);
+        break;
+      case ASTNodeType.SWITCH_STATEMENT:
+        this.generateSwitchStatement(node as SwitchStatementNode);
+        break;
+      case ASTNodeType.DO_WHILE_STATEMENT:
+        this.generateDoWhileStatement(node as DoWhileStatementNode);
+        break;
+      case ASTNodeType.AWAIT_EXPRESSION:
+        // Evaluate the argument (await is transparent in sync engine)
+        this.generateExpression((node as AwaitExpressionNode).argument);
+        break;
+      case ASTNodeType.UNARY_EXPRESSION:
+        this.generateUnaryExpression(node as { type: ASTNodeType; operator: string; left: ASTNode; right: ASTNode });
+        break;
+    }
+  }
+
+  /**
+   * Generate unary expression (typeof, delete, void, -, !, ~)
+   */
+  private generateUnaryExpression(node: { operator: string; left: ASTNode }): void {
+    this.generateExpression(node.left);
+    switch (node.operator) {
+      case "typeof":
+        this.emit(Opcode.TYPEOF);
+        break;
+      case "-":
+        this.emit(Opcode.NEGATE);
+        break;
+      case "!":
+        this.emit(Opcode.LOGICAL_NOT);
+        break;
+      case "+":
+        // Unary + converts to number - no-op if already number
+        break;
+      case "delete":
+        // delete is a no-op in our engine for now, result is true
+        this.emit(Opcode.LDA_TRUE);
+        break;
     }
   }
 
@@ -1573,6 +2099,16 @@ export class BytecodeGenerator {
         // Simplified: if left is truthy use left, else use right
         this.emit(Opcode.TO_BOOLEAN);
         break;
+      case "instanceof":
+        this.emit(Opcode.INSTANCEOF, reg);
+        break;
+      case "in":
+        // Simplified: check if property exists
+        this.emit(Opcode.TEST_EQUAL, reg);
+        break;
+      case "typeof":
+        this.emit(Opcode.TYPEOF);
+        break;
     }
   }
 
@@ -1580,7 +2116,9 @@ export class BytecodeGenerator {
    * Generate literal
    */
   private generateLiteral(node: LiteralNode): void {
-    if (node.value === null) {
+    if (node.value === null && node.raw === "undefined") {
+      this.emit(Opcode.LDA_UNDEFINED);
+    } else if (node.value === null) {
       this.emit(Opcode.LDA_NULL);
     } else if (node.value === undefined) {
       this.emit(Opcode.LDA_UNDEFINED);
@@ -1609,6 +2147,8 @@ export class BytecodeGenerator {
    * Calling convention: function in accumulator, args in consecutive registers
    */
   private generateCallExpression(node: CallExpressionNode): void {
+    let receiverReg = -1;
+
     // If callee is a member expression, we need the object for 'this'
     if (node.callee.type === ASTNodeType.MEMBER_EXPRESSION) {
       const member = node.callee as MemberExpressionNode;
@@ -1616,6 +2156,7 @@ export class BytecodeGenerator {
       this.generateExpression(member.object);
       const objReg = this.allocateRegister();
       this.emit(Opcode.STAR, objReg);
+      receiverReg = objReg;
 
       // Get method from object
       if (member.computed) {
@@ -1629,6 +2170,14 @@ export class BytecodeGenerator {
         const nameIdx = this.addConstant((member.property as IdentifierNode).name);
         this.emit(Opcode.GET_PROPERTY, nameIdx);
       }
+
+      // Set 'this' to the receiver object for method calls
+      const savedAcc = this.allocateRegister();
+      this.emit(Opcode.STAR, savedAcc);
+      this.emit(Opcode.LDAR, objReg);
+      const thisIdx = this.addConstant("this");
+      this.emit(Opcode.STA_CONTEXT_SLOT, thisIdx);
+      this.emit(Opcode.LDAR, savedAcc);
     } else {
       this.generateExpression(node.callee);
     }
@@ -1898,6 +2447,276 @@ export class BytecodeGenerator {
     if (jumpFalseRef >= 0) {
       this.patchJump(jumpFalseRef);
     }
+
+    const breakRefs = this.breakTargets.pop()!;
+    for (const ref of breakRefs) {
+      this.patchJump(ref);
+    }
+  }
+
+  /**
+   * Generate class declaration bytecode
+   * class Foo extends Bar { constructor(x) { ... } method() { ... } static s() { ... } }
+   * → Creates constructor function, sets up prototype chain, adds methods
+   */
+  private generateClassDeclaration(node: ClassDeclarationNode): void {
+    // Find constructor method
+    const ctorMethod = node.body.find(m => m.kind === "constructor");
+
+    if (ctorMethod) {
+      // Create constructor from the constructor method body
+      const ctorFunc: FunctionDeclarationNode = {
+        type: ASTNodeType.FUNCTION_DECLARATION,
+        id: node.id,
+        params: ctorMethod.value.params,
+        body: ctorMethod.value.body,
+      };
+      const funcIndex = this.addConstant(ctorFunc);
+      this.emit(Opcode.CREATE_CLOSURE, funcIndex);
+    } else {
+      // Default constructor: empty function
+      const defaultCtor: FunctionDeclarationNode = {
+        type: ASTNodeType.FUNCTION_DECLARATION,
+        id: node.id,
+        params: [],
+        body: { type: ASTNodeType.BLOCK_STATEMENT, body: [] },
+      };
+      const funcIndex = this.addConstant(defaultCtor);
+      this.emit(Opcode.CREATE_CLOSURE, funcIndex);
+    }
+
+    // Store constructor as class name
+    const classNameIdx = this.getVariableIndex(node.id.name);
+    this.emit(Opcode.STA_GLOBAL, classNameIdx);
+
+    // Create default prototype object and set it on the constructor
+    // Every constructor needs a .prototype property
+    this.emit(Opcode.LDA_GLOBAL, classNameIdx);
+    const ctorRegInit = this.allocateRegister();
+    this.emit(Opcode.STAR, ctorRegInit);
+    this.emit(Opcode.CREATE_OBJECT);
+    const protoInit = this.addConstant("prototype");
+    this.emit(Opcode.SET_PROPERTY, protoInit, ctorRegInit);
+
+    // Set up prototype if extends
+    if (node.superClass) {
+      // Load super class
+      this.generateExpression(node.superClass);
+      const superReg = this.allocateRegister();
+      this.emit(Opcode.STAR, superReg);
+
+      // Get super.prototype
+      const protoNameIdx = this.addConstant("prototype");
+      this.emit(Opcode.GET_PROPERTY, protoNameIdx);
+
+      // Create new object with super.prototype as __proto__
+      const superProtoReg = this.allocateRegister();
+      this.emit(Opcode.STAR, superProtoReg);
+
+      // Load constructor, set its prototype
+      this.emit(Opcode.LDA_GLOBAL, classNameIdx);
+      const ctorReg = this.allocateRegister();
+      this.emit(Opcode.STAR, ctorReg);
+
+      // Set prototype.constructor = Foo
+      this.emit(Opcode.CREATE_OBJECT);
+      const newProtoReg = this.allocateRegister();
+      this.emit(Opcode.STAR, newProtoReg);
+
+      // Set Foo.prototype = newProto
+      this.emit(Opcode.LDAR, newProtoReg);
+      this.emit(Opcode.SET_PROPERTY, protoNameIdx, ctorReg);
+    }
+
+    // Add instance methods to prototype
+    for (const method of node.body) {
+      if (method.kind === "constructor") continue;
+      if (method.isStatic) continue;
+
+      // Load constructor
+      this.emit(Opcode.LDA_GLOBAL, classNameIdx);
+      const ctorReg2 = this.allocateRegister();
+      this.emit(Opcode.STAR, ctorReg2);
+
+      // Get prototype
+      const protoNameIdx2 = this.addConstant("prototype");
+      this.emit(Opcode.GET_PROPERTY, protoNameIdx2);
+      const protoReg = this.allocateRegister();
+      this.emit(Opcode.STAR, protoReg);
+
+      // Create method closure
+      const methodFunc = this.addConstant(method.value);
+      this.emit(Opcode.CREATE_CLOSURE, methodFunc);
+
+      // Set method on prototype
+      const methodName = method.key.type === ASTNodeType.IDENTIFIER
+        ? (method.key as IdentifierNode).name
+        : String((method.key as LiteralNode).value);
+      const methodNameIdx = this.addConstant(methodName);
+      this.emit(Opcode.SET_PROPERTY, methodNameIdx, protoReg);
+    }
+
+    // Add static methods to constructor
+    for (const method of node.body) {
+      if (!method.isStatic) continue;
+
+      // Load constructor
+      this.emit(Opcode.LDA_GLOBAL, classNameIdx);
+      const ctorReg3 = this.allocateRegister();
+      this.emit(Opcode.STAR, ctorReg3);
+
+      // Create method closure
+      const methodFunc = this.addConstant(method.value);
+      this.emit(Opcode.CREATE_CLOSURE, methodFunc);
+
+      // Set method on constructor
+      const methodName = method.key.type === ASTNodeType.IDENTIFIER
+        ? (method.key as IdentifierNode).name
+        : String((method.key as LiteralNode).value);
+      const methodNameIdx = this.addConstant(methodName);
+      this.emit(Opcode.SET_PROPERTY, methodNameIdx, ctorReg3);
+    }
+  }
+
+  /**
+   * Generate try/catch/finally bytecode
+   */
+  private generateTryStatement(node: TryStatementNode): void {
+    // Emit TRY_START with placeholder for catch offset
+    const tryStartRef = this.instructions.length;
+    this.emit(Opcode.TRY_START, 0); // placeholder catch offset
+
+    // Generate try block
+    for (const stmt of node.block.body) {
+      this.generateNode(stmt);
+    }
+    this.emit(Opcode.TRY_END);
+
+    // Jump over catch block
+    const jumpOverCatchRef = this.instructions.length;
+    this.emit(Opcode.JUMP, 0); // placeholder
+
+    // Patch TRY_START to point here (catch handler)
+    this.patchJump(tryStartRef);
+
+    // Generate catch block
+    if (node.handler) {
+      if (node.handler.param) {
+        // Store caught exception to the parameter variable
+        const paramIdx = this.getVariableIndex(node.handler.param.name);
+        this.emit(Opcode.SET_CATCH_PARAM, paramIdx);
+      }
+      for (const stmt of node.handler.body.body) {
+        this.generateNode(stmt);
+      }
+    }
+
+    // Patch jump-over-catch
+    this.patchJump(jumpOverCatchRef);
+
+    // Generate finally block
+    if (node.finalizer) {
+      for (const stmt of node.finalizer.body) {
+        this.generateNode(stmt);
+      }
+    }
+  }
+
+  /**
+   * Generate throw statement bytecode
+   */
+  private generateThrowStatement(node: ThrowStatementNode): void {
+    this.generateExpression(node.argument);
+    this.emit(Opcode.THROW);
+  }
+
+  /**
+   * Generate switch statement bytecode
+   */
+  private generateSwitchStatement(node: SwitchStatementNode): void {
+    this.breakTargets.push([]);
+
+    // Evaluate discriminant
+    this.generateExpression(node.discriminant);
+    const discReg = this.allocateRegister();
+    this.emit(Opcode.STAR, discReg);
+
+    const caseJumps: number[] = [];
+    let defaultJump = -1;
+
+    // Generate test + jump for each case
+    for (let i = 0; i < node.cases.length; i++) {
+      const c = node.cases[i];
+      if (c.test === null) {
+        // default case
+        defaultJump = i;
+        caseJumps.push(-1);
+      } else {
+        this.emit(Opcode.LDAR, discReg);
+        const testReg = this.allocateRegister();
+        this.emit(Opcode.STAR, testReg);
+        this.generateExpression(c.test);
+        this.emit(Opcode.TEST_STRICT_EQUAL, testReg);
+        const jumpRef = this.instructions.length;
+        this.emit(Opcode.JUMP_IF_TRUE, 0);
+        caseJumps.push(jumpRef);
+      }
+    }
+
+    // Jump to default or end
+    const jumpToDefaultOrEnd = this.instructions.length;
+    this.emit(Opcode.JUMP, 0);
+
+    // Generate case bodies
+    const bodyStarts: number[] = [];
+    for (let i = 0; i < node.cases.length; i++) {
+      bodyStarts.push(this.calculateCurrentOffset());
+      for (const stmt of node.cases[i].consequent) {
+        this.generateNode(stmt);
+      }
+    }
+
+    const afterSwitch = this.calculateCurrentOffset();
+
+    // Patch case jumps
+    for (let i = 0; i < caseJumps.length; i++) {
+      if (caseJumps[i] >= 0) {
+        this.instructions[caseJumps[i]].operands[0] = bodyStarts[i];
+      }
+    }
+
+    // Patch default/end jump
+    if (defaultJump >= 0) {
+      this.instructions[jumpToDefaultOrEnd].operands[0] = bodyStarts[defaultJump];
+    } else {
+      this.instructions[jumpToDefaultOrEnd].operands[0] = afterSwitch;
+    }
+
+    // Patch break targets
+    const breakRefs = this.breakTargets.pop()!;
+    for (const ref of breakRefs) {
+      this.patchJump(ref);
+    }
+  }
+
+  /**
+   * Generate do-while statement bytecode
+   */
+  private generateDoWhileStatement(node: DoWhileStatementNode): void {
+    this.breakTargets.push([]);
+    this.continueTargets.push([]);
+
+    const loopStart = this.calculateCurrentOffset();
+    this.generateNode(node.body);
+
+    const continueTarget = this.calculateCurrentOffset();
+    const continueRefs = this.continueTargets.pop()!;
+    for (const ref of continueRefs) {
+      this.instructions[ref].operands[0] = continueTarget;
+    }
+
+    this.generateExpression(node.test);
+    this.emit(Opcode.JUMP_IF_TRUE, loopStart);
 
     const breakRefs = this.breakTargets.pop()!;
     for (const ref of breakRefs) {

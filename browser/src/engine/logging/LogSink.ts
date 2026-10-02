@@ -35,13 +35,13 @@ export class StderrSink implements LogSink {
       ? "debug"
       : "log";
     if (entry.data !== undefined) {
-      (console as Record<string, (...a: unknown[]) => void>)[method](
+      (console as unknown as Record<string, (...a: unknown[]) => void>)[method](
         prefix,
         entry.message,
         entry.data,
       );
     } else {
-      (console as Record<string, (...a: unknown[]) => void>)[method](prefix, entry.message);
+      (console as unknown as Record<string, (...a: unknown[]) => void>)[method](prefix, entry.message);
     }
   }
 }

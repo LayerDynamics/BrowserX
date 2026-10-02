@@ -184,7 +184,7 @@ export class Tile {
    * Create canvas for rasterization
    */
   private createCanvas(): HTMLCanvasElement {
-    const canvas = document.createElement("canvas");
+    const canvas = document.createElement("canvas") as unknown as HTMLCanvasElement;
     canvas.width = Math.ceil(this.bounds.width * this.scale);
     canvas.height = Math.ceil(this.bounds.height * this.scale);
     return canvas;
