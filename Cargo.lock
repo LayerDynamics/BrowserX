@@ -517,6 +517,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "debug_panic"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9377eb110cece2e9431deb8d7d2ec8c116510b896741f9f2bf02b352147aa2a6"
+
+[[package]]
 name = "deno_bindgen"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -678,6 +684,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1fe0049ce51d0fb414d029e668dd72eb30bc2b739bf34296ed97bd33df544f3"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "enum_dispatch"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
+dependencies = [
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -1988,22 +2006,22 @@ checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 
 [[package]]
 name = "quiche"
-version = "0.22.0"
+version = "0.24.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28e5a763fecb47867bd3720f69ec87031ff42fda1dc88be2cb5fbb3a558fa5e4"
+checksum = "88fa45f0d2e3fc7ca8b4306408f8b15df9a3b5ac70197f84dfc6ebf58fb7e26a"
 dependencies = [
  "cmake",
+ "debug_panic",
  "either",
+ "enum_dispatch",
  "intrusive-collections",
  "libc",
  "libm",
  "log",
  "octets",
- "once_cell",
- "ring",
  "slab",
  "smallvec",
- "winapi",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2363,9 +2381,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "smithay-client-toolkit"
